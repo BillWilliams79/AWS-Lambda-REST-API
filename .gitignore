@@ -1,0 +1,12 @@
+/boto*
+/dateutil
+/jme*
+/s3*
+/six*
+/url*
+/bin
+/__pycache__
+/pymyswl
+/PyMy*
+/python_date*
+/*.zip
