@@ -17,7 +17,7 @@ def LambaTestExecute(config):
             'queryStringParameters': config['queryStringParameters'],}
 
     testEvent['body'] = json.dumps(config['testBody'])
-    varDump(testEvent['body'], 'use for test running in lambda?')
+    
     context = config['context']
 
     responseJson = lambda_handler(testEvent, context)

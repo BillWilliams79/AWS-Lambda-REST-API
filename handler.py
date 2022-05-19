@@ -64,28 +64,9 @@ def lambda_handler(event, context):
  
 def restApiFromTable(event, table):
 
-    """
-    Implement rest API for a given SQL Table.
-        JSON REST API CRUD (JRAC)
-
-    Create  -> PUT
-    Read    -> GET
-    Update  -> POST
-    Delete  -> DELETE
-
-    JSON input/output
-
-    MAJOR TODO: Open API headers, Hatteos links and pathing for FK, 
-        PATCH method (POST already does partil updates), OPTIONs method (see DRF)
-        QueryParameters such as ?Favorite_color=Orange, sorting paramters
-        Nested path and the implications: 
-            GET /math_user/79/Results - returns user 79 results
-            PUT /math_user/79/Results - creates results linked to user 79
-        HTTP view of data (human browsing)
-    """
-
     httpMethod = event['httpMethod']
 
+    # TODO better handling for json load errors and return as an input error code.
     if event['body'] != None:
         body = json.loads(event['body'])
 
@@ -97,6 +78,7 @@ def restApiFromTable(event, table):
         # PUT -> Create one Row
         sql_key_list = ', '.join(f'{key}' for key in body.keys())
         sql_value_list = ', '.join(f"'{value}'" for value in body.values())
+        # TODO: what are possible failure cases? No key/values would be a fail we could return
 
         try:
             # insert row into table
