@@ -1,5 +1,6 @@
 import json
 from handler import lambda_handler
+from classifier import varDump
 
 #
 # Generic Lambda Rest API test execututor. Uses a dictionary to pass parameters. 
@@ -16,7 +17,7 @@ def LambaTestExecute(config):
             'queryStringParameters': config['queryStringParameters'],}
 
     testEvent['body'] = json.dumps(config['testBody'])
-
+    varDump(testEvent['body'], 'use for test running in lambda?')
     context = config['context']
 
     responseJson = lambda_handler(testEvent, context)

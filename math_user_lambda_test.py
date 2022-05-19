@@ -47,7 +47,18 @@ mathUserDeleteConfig = {
     'expected_result': {},
 }
 
-LambaTestExecute(mathUserPutConfig)
-LambaTestExecute(mathUserGetConfig)
-LambaTestExecute(mathUserPostConfig)
-LambaTestExecute(mathUserDeleteConfig)
+#LambaTestExecute(mathUserPutConfig)
+#LambaTestExecute(mathUserGetConfig)
+#LambaTestExecute(mathUserPostConfig)
+#LambaTestExecute(mathUserDeleteConfig)
+
+import json
+
+dummy = json.dumps({
+    'httpMethod': 'PUT',
+    'path': mathUserPath,
+    'body': {'name': 'Will Clark',
+                 'favorite_color': 'The Thrill'}
+})
+
+print(dummy)

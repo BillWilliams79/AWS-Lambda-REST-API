@@ -85,8 +85,9 @@ def restApiFromTable(event, table):
     """
 
     httpMethod = event['httpMethod']
-    if 'body' in event:
+    if event['body'] != None:
         body = json.loads(event['body'])
+
 
     #
     # FILTER BY HTTP METHOD
