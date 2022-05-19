@@ -18,7 +18,7 @@ deleteMethod = 'DELETE'
 optionsMethod = 'OPTIONS'
 
 #
-# HTTP Response Code
+# TODO: HTTP Response Code definitions
 #
 
 
@@ -44,23 +44,13 @@ connection = pymysql.connect(host = endpoint,
                              database = db_name,)
 
 """
-FAAS ENTRY POINT: the AWS Lambda function is configured to call this function. Lambdas
-design paradigm is event driven software. Lambdas are called internally by AWS services
-using an event to pass in data. A second context object is provided and it
-
-Near replica of Felix Yu Youtube video: https://youtu.be/9eHh946qTIk
-TODO: Full definition of event and context, are there other parameters for the handler?
+FAAS ENTRY POINT: the AWS Lambda function is configured to call this function by name.
 """
 def lambda_handler(event, context): 
-    
-    """logging and debug
-    logger.info(event)
-    varDump(event,'http event from lambda_handler')
-    varDump(context, 'context from lambda_handler)
-    """
 
-    # FILTER BY REST PATH (URI endpoint?)
-    path = event['path'] 
+    # Filter events based on API endpoint
+    path = event['path']
+
     if path == mathUserPath:
         response = restApiFromTable(event, mathUserTable)
     elif path == resultPath:
@@ -86,7 +76,12 @@ def restApiFromTable(event, table):
     JSON input/output
 
     MAJOR TODO: Open API headers, Hatteos links and pathing for FK, 
-
+        PATCH method (POST already does partil updates), OPTIONs method (see DRF)
+        QueryParameters such as ?Favorite_color=Orange, sorting paramters
+        Nested path and the implications: 
+            GET /math_user/79/Results - returns user 79 results
+            PUT /math_user/79/Results - creates results linked to user 79
+        HTTP view of data (human browsing)
     """
 
     httpMethod = event['httpMethod']
@@ -105,12 +100,12 @@ def restApiFromTable(event, table):
         try:
             # insert row into table
 
-            sqlCommand = f"""
+            sqlStatement = f"""
                 INSERT INTO {table} ({sql_key_list}) 
                 VALUES ({sql_value_list});
             """
             cursor = connection.cursor()
-            cursor.execute(sqlCommand)
+            cursor.execute(sqlStatement)
             connection.commit()
         except pymysql.Error as e:
             print(f"HTTP {putMethod} FAILED: {e.args[0]} {e.args[1]}")
@@ -145,7 +140,7 @@ def restApiFromTable(event, table):
 
         try:
             # read row and format as JSON
-            sqlCommand = f"""
+            sqlStatement = f"""
                 SELECT 
                     JSON_ARRAYAGG(JSON_OBJECT({desc_string}))
                 FROM
@@ -153,7 +148,7 @@ def restApiFromTable(event, table):
                 WHERE
                     Id={Id}
             """
-            cursor.execute(sqlCommand)
+            cursor.execute(sqlStatement)
             row = cursor.fetchone()
             if row[0] != None:
                 return composeJsonResponse('200', row[0])
