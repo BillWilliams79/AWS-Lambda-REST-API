@@ -4,7 +4,7 @@ import logging
 import boto3
 
 from decimal_encoder import DecimalEncoder
-from classifier import classifier, miniClassifier
+from classifier import classifier, varDump
 from json_utils import composeJsonResponse
 from mathapp_rds import *
 
@@ -18,295 +18,210 @@ deleteMethod = 'DELETE'
 optionsMethod = 'OPTIONS'
 
 #
-# hand coded paths. hand coded execution patter
+# HTTP Response Code
 #
+
+
+# USER: REST API endpoints. Correspond directly to database tables.
 mathUserPath = '/math_user'
+mathUserTable = 'Math_User'
+
 resultPath = '/result'
+resultTable = 'Result'
 
-
-
-
-#
 # initialize logging
-#
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-#
-# connect to the RDS database using pymsql. 
-# Connection establishment outside the lambda_handler is seen as efficient
-# TODO: there is no error handling if connect doesn't work
-#
+"""
+connect to the RDS database using pymsql. 
+Connection establishment outside the lambda_handler is seen as efficient
+TODO: there is no error handling if connect doesn't work
+"""
 connection = pymysql.connect(host = endpoint,
                              user = username,
                              password = password,
                              database = db_name,)
 
-#
-# FAAS ENTRY POINT: the AWS Lambda function is configured to call this function. It can be any name so 
-# long as they are consistent (function name, aws lambda name). It is given event and context.
-#
-# Near replica of Felix Yu Youtube video: https://youtu.be/9eHh946qTIk
-# TODO: Full definition of event and context, are there other parameters for the handler?
-#
+"""
+FAAS ENTRY POINT: the AWS Lambda function is configured to call this function. Lambdas
+design paradigm is event driven software. Lambdas are called internally by AWS services
+using an event to pass in data. A second context object is provided and it
+
+Near replica of Felix Yu Youtube video: https://youtu.be/9eHh946qTIk
+TODO: Full definition of event and context, are there other parameters for the handler?
+"""
 def lambda_handler(event, context): 
-
-    #print('start lambda handler')
-    #
-    # using logging instead of console.log for debug
-    # TODO: read this information in the eventlog, whereever that is
-    #
+    
+    """logging and debug
     logger.info(event)
-    #classifier(event,'http event from handler')
+    varDump(event,'http event from lambda_handler')
+    varDump(context, 'context from lambda_handler)
+    """
 
-    #
-    # Parse event for data
-    # TODO: make httpMethod enum - is in enum? is that the check
-    # TODO: Should I process the string futher?
-    #
-    #httpMethod = event['httpMethod'] # GET, POST, PATCH, DELETE, OPTIONS
-    path = event['path'] # API path
-
-    #
-    # FILTER ZERO: filter traffic by path
-    #
+    # FILTER BY REST PATH (URI endpoint?)
+    path = event['path'] 
     if path == mathUserPath:
-        response = rest_Api_MathUser(event,)
+        response = restApiFromTable(event, mathUserTable)
     elif path == resultPath:
-        #response = rest_api_result()
-        pass
-    elif path == resultPath:
-        #response = rest_api_results()
-        pass
+        pass #response = rest_Api_Result()
     else:
         response = composeJsonResponse(404, 'Not Found')
 
-    #
-    # Utimately the lambda return's a response with an optional body.
-    #
+    # return http response
     return response
 
  
-def rest_Api_MathUser(event):
-    #
-    # implement rest API for SQL table MathUser
-    # CRUD - Create, Read, Update, Delete
-    # Create => POST, Read => GET, Update => PATCH, Delete => DELETE 
-    #
+def restApiFromTable(event, table):
+
+    """
+    Implement rest API for a given SQL Table.
+        JSON REST API CRUD (JRAC)
+
+    Create  -> PUT
+    Read    -> GET
+    Update  -> POST
+    Delete  -> DELETE
+
+    JSON input/output
+
+    MAJOR TODO: Open API headers, Hatteos links and pathing for FK, 
+
+    """
+
     httpMethod = event['httpMethod']
-    
-    if httpMethod == postMethod:
-        #
-        # Create MathUser
-        # input: event body in json format. Convert to dict via json.loads.
-        # execute sql: table desc, create list of keys that NULL = No,
-        #   check NULL=No Keys are all in the sql_key_list or fail request
-        #
-        bodydict = json.loads(event['body'])
-        #classifier(bodydict, 'event[body] from post mathuser rest api')
+    if 'body' in event:
+        body = json.loads(event['body'])
+
+    #
+    # FILTER BY HTTP METHOD
+    #
+    if httpMethod == putMethod:
+
+        # PUT -> Create one Row
+        sql_key_list = ', '.join(f'{key}' for key in body.keys())
+        sql_value_list = ', '.join(f"'{value}'" for value in body.values())
 
         try:
+            # insert row into table
 
-            #
-            # the body is a dictionary of key value pairs. The names exactly match what's in SQL, by design.
-            # we insert into SQL row. You specify the key list and then the value list.
-            # SQL expect: key_list - a list of comma separate key names: key, key, key
-            # SQL expect: value_list - list of comma separate key names, single quoted: 'value', 'value, 'value'
-            #
-            sql_key_list = ', '.join(f'{key}' for key in bodydict.keys())
-            #print(f'sql_key_list:\t {sql_key_list}')
-
-            sql_value_list = ', '.join(f"'{value}'" for value in bodydict.values())
-            #print(f'sql_value_list:\t {sql_value_list}')
-
-            #
-            # produces properly formatted SQL string to insert your object with key:value pair
-            #
             sqlCommand = f"""
-                INSERT INTO Math_User ({sql_key_list}) 
+                INSERT INTO {table} ({sql_key_list}) 
                 VALUES ({sql_value_list});
             """
-            #print(f'sql string:\t {sqlCommand}')
-            cursor = connection.cursor()
-            affected_rows = cursor.execute(sqlCommand)
-            #print(f'POST: affected_rows:\t{affected_rows}')
-            connection.commit()
-            return composeJsonResponse('200')
-        except:
-            logger.exception(f'Unable to complete SQL command {sqlCommand}')
-
-    elif httpMethod == getMethod:
-        #
-        # read MathUser SQL row
-        # Sets custom SQL string, cursor executes SQL, fetches row and responds
-        #
-        try:
-            sqlCommand = f"""
-                SELECT 
-                    JSON_ARRAYAGG(JSON_OBJECT('Id', Id, 'Name', Name))
-                FROM
-                    Math_User 
-                WHERE
-                    Id=16
-            """
-            #
-            # CRUD
-            # CREATE - POST body
-            # READ - GET ?id=1
-            # UPDATE - PUT body (less often PATCH, no longer level 3 MM REST API)
-            # DELETE - DELETE body
-            # OPTIONS
-            #
-            # URI
-            #
-            # /task?id=1 (body or params) GET ONE
-            # /tasks GET ALL
-            #
-            # /tasks?id=1   READ - with id, read one; else read all
-            #
-
             cursor = connection.cursor()
             cursor.execute(sqlCommand)
-            row = cursor.fetchone()
-            return composeJsonResponse('200', row[0])
-        except:
-            logger.exception(f'Unable to complete SQL command {sqlCommand}')
-
-    elif httpMethod == putMethod:
-
-        #
-        # Update MathUser
-        #
-        #miniClassifier(event, 'why is no body home')
-        bodydict = json.loads(event['body'])
+            connection.commit()
+        except pymysql.Error as e:
+            print(f"HTTP {putMethod} FAILED: {e.args[0]} {e.args[1]}")
+            return composeJsonResponse('500', f"{e.args[0]} {e.args[1]}")
 
         try:
+            # retrieve ID of newly created row
 
-            Id = bodydict.get('Id', '')
-            bodydict.pop('Id')
-            
-            sql_kv_string = ', '.join(f"{key} = '{value}'" for key, value in bodydict.items())
-            #print(f'PUT: sql_kv_string:\t {sql_kv_string}')
+            cursor.execute('SELECT LAST_INSERT_ID();')
+            newId = cursor.fetchone()
+        except pymysql.Error as e:
+            print(f"HTTP {putMethod} FAILED: {e.args[0]} {e.args[1]}")
+            return composeJsonResponse('201', {'Id': 'Not available'})
 
+        return composeJsonResponse('201', {'Id': newId[0]})
+
+    elif httpMethod == getMethod:
+
+        # GET -> Read one Row by Id
+        Id = event['queryStringParameters']['Id']
+
+        try:
+            # read table definition
+            cursor = connection.cursor()
+            cursor.execute(f""" DESC {table}; """)
+            rows = cursor.fetchall()
+            desc_string = ', '.join(f"'{row[0]}', {row[0]}" for row in rows)
+        except pymysql.Error as e:
+            errorMsg = f"HTTP {putMethod} SQL FAILED: {e.args[0]} {e.args[1]}"
+            print(errorMsg)
+            return composeJsonResponse('500', {'error': errorMsg})
+
+        try:
+            # read row and format as JSON
+            sqlCommand = f"""
+                SELECT 
+                    JSON_ARRAYAGG(JSON_OBJECT({desc_string}))
+                FROM
+                    {table}
+                WHERE
+                    Id={Id}
+            """
+            cursor.execute(sqlCommand)
+            row = cursor.fetchone()
+            if row[0] != None:
+                return composeJsonResponse('200', row[0])
+            else:
+                errorMsg = f"row[0], no data to read bro"
+                print(errorMsg)
+                return composeJsonResponse('404', {'error': errorMsg})
+
+        except pymysql.Error as e:
+            errorMsg = f"HTTP {putMethod} SQL FAILED: {e.args[0]} {e.args[1]}"
+            print(errorMsg)
+            return composeJsonResponse('500', {'error': errorMsg})
+        
+    elif httpMethod == postMethod:
+
+        # POST - Update one Row
+        Id = body.get('Id', '')
+        body.pop('Id')
+        
+        sql_kv_string = ', '.join(f"{key} = '{value}'" for key, value in body.items())
+
+        try:
             sqlStatement = f"""
-                UPDATE Math_User
+                UPDATE {table}
                 SET 
                     {sql_kv_string}
                 WHERE
                     Id = {Id};
             """
-            #print(f'PUT: sql string:\t {sqlStatement}')
             cursor = connection.cursor()
             affected_rows = cursor.execute(sqlStatement)
-            #print(f'PUT: affected_rows:\t{affected_rows}')
-            connection.commit()
-            return composeJsonResponse('200')
-        except:
-            logger.exception(f'Unable to complete SQL command {sqlCommand}')
+            if affected_rows > 0:
+                connection.commit()
+                return composeJsonResponse('200')
+            else:
+                errorMsg = f"HTTP {putMethod}: no data to update"
+                print(errorMsg)
+                return composeJsonResponse('404', {'error': errorMsg})
 
+        except pymysql.Error as e:
+            errorMsg = f"HTTP {putMethod} SQL FAILED: {e.args[0]} {e.args[1]}"
+            print(errorMsg)
+            return composeJsonResponse('500', {'error': errorMsg})
 
     elif httpMethod == deleteMethod:
 
-        bodydict = json.loads(event['body'])
+        # DELETE - Delete one Row by Id
+        Id = body.get('Id', '')
+        body.pop('Id')
 
         try:
-
-            Id = bodydict.get('Id', '')
-            bodydict.pop('Id')
-
             sqlStatement = f"""
-                DELETE FROM Math_User 
+                DELETE FROM {table} 
                 WHERE
                     Id = {Id};
             """
-
             cursor = connection.cursor()
             affected_rows = cursor.execute(sqlStatement)
             connection.commit()
-            return composeJsonResponse('200')
+
+            if affected_rows == 0:
+                errorMsg = f"Affected_rows = 0, no delete bro"
+                print(errorMsg)
+                return composeJsonResponse('404', {'error': errorMsg})
+            else:
+                return composeJsonResponse('200')
+
         except:
-            logger.exception(f'Unable to complete SQL command {sqlCommand}')
-
-
-
-###########################################################################################
-#
-# Test httpMethod's
-#
-###########################################################################################
-
-#
-# Generic Lambda Rest API test execututor. Uses a dictionary to pass parameters. 
-#
-def LambaTestExecute(config):
-    
-    testHttpMethod = config['testHttpMethod']
-
-    print(f"\n**** Execute Lambda Test: { config['testPath'] } { testHttpMethod } ****")
-
-    testEvent = {
-            'httpMethod': testHttpMethod,
-            'path': config['testPath'],
-            'queryStringParameters': config['queryStringParameters'],}
-
-    testEvent['body'] = json.dumps(config['testBody'])
-
-    context = config['context']
-
-    responseJson = lambda_handler(testEvent, context)
-    print(f"{config['testPath']}.{testHttpMethod} Test Response: {json.dumps(responseJson,indent=4)}")
-
-    if 'body' in responseJson:
-        bodyDict = json.loads(responseJson['body'])
-        print(f'{testHttpMethod}: body, Dict: {bodyDict}')
-
-    print("")
-
-# POST TEST
-mathUserPostConfig = {
-    'testHttpMethod': 'POST',
-    'testPath': mathUserPath,
-    'queryStringParameters': {},
-    'testBody': {'name': 'Fred Fox',
-                 'favorite_color': 'Sky Blue'},
-    'context': {},
-    'expected_result': {},
-}
-
-# GET TEST
-mathUserGetConfig = {
-    'testHttpMethod': 'GET',
-    'testPath': mathUserPath,
-    'queryStringParameters': {},
-    'testBody': {'name': 'Fred Fox',
-                 'favorite_color': 'Sky Blue'},
-    'context': {},
-    'expected_result': {},
-}
-
-# PUT TEST
-mathUserPutConfig = {
-    'testHttpMethod': 'PUT',
-    'testPath': mathUserPath,
-    'queryStringParameters': {'Id': 16,},
-    'testBody': {'Id': 14,
-                 'name': 'asdf King',
-                 'favorite_color': 'Bluey it your way'},
-    'context': {},
-    'expected_result': {},
-}
-
-# DELETE TEST
-mathUserDeleteConfig = {
-    'testHttpMethod': 'DELETE',
-    'testPath': mathUserPath,
-    'queryStringParameters': {'Id': 16,},
-    'testBody': {'Id': 15},
-    'context': {},
-    'expected_result': {},
-}
-
-LambaTestExecute(mathUserPutConfig)
-LambaTestExecute(mathUserGetConfig)
-LambaTestExecute(mathUserPostConfig)
-LambaTestExecute(mathUserDeleteConfig)
+            errorMsg = f"HTTP {putMethod} SQL FAILED: {e.args[0]} {e.args[1]}"
+            print(errorMsg)
+            return composeJsonResponse('500', {'error': errorMsg})
