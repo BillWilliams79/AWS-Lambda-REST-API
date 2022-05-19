@@ -46,8 +46,8 @@ connection = pymysql.connect(host = endpoint,
 """
 FAAS ENTRY POINT: the AWS Lambda function is configured to call this function by name.
 """
-def lambda_handler(event, context): 
-
+def lambda_handler(event, context):
+    
     # Filter events based on API endpoint
     path = event['path']
 
@@ -85,9 +85,9 @@ def restApiFromTable(event, table):
     """
 
     httpMethod = event['httpMethod']
+
     if event['body'] != None:
         body = json.loads(event['body'])
-
 
     #
     # FILTER BY HTTP METHOD
