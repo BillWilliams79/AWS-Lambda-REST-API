@@ -26,8 +26,8 @@ optionsMethod = 'OPTIONS'
 mathUserPath = '/math_user'
 mathUserTable = 'Math_User'
 
-resultPath = '/result'
-resultTable = 'Result'
+resultPath = '/results'
+resultTable = 'Results'
 
 # initialize logging
 logger = logging.getLogger()
@@ -64,12 +64,12 @@ def lambda_handler(event, context):
     if path == mathUserPath:
         response = restApiFromTable(event, mathUserTable)
     elif path == resultPath:
-        pass #response = rest_Api_Result()
+        response = restApiFromTable(event, resultTable)
     else:
         response = composeJsonResponse(404, 'Not Found')
 
     # return http response
-    return response
+    return response 
 
  
 def restApiFromTable(event, table):

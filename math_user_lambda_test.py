@@ -29,7 +29,7 @@ mathUserGetConfig = {
 mathUserPostConfig = {
     'testHttpMethod': 'POST',
     'testPath': mathUserPath,
-    'queryStringParameters': {'Id': 16,},
+    'queryStringParameters': {},
     'testBody': {'Id': 81,
                  'name': 'Billy E Williams',
                  'favorite_color': 'Offensive Tackle'},
