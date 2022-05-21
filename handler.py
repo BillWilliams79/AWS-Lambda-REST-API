@@ -48,6 +48,17 @@ FAAS ENTRY POINT: the AWS Lambda function is configured to call this function by
 """
 def lambda_handler(event, context):
     
+    """ MAJOR TODOs
+        Open API headers, Hatteos links and pathing for FK, 
+        PATCH method (POST already does partil updates), OPTIONs method (see DRF)
+        QueryParameters such as ?Favorite_color=Orange, sorting paramters
+        Nested path and the implications: 
+            GET /math_user/79/Results - returns user 79 results
+            PUT /math_user/79/Results - creates results linked to user 79
+        HTTP view of data (human browsing)
+        consistent error prints, configurable for inbound and outboud debugging.
+    """
+
     # Filter events based on API endpoint
     path = event['path']
 
