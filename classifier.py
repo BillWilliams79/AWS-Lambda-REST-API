@@ -5,8 +5,8 @@ def varDump(some_value, name=''):
     sv_type = type(some_value)
     print(f'Name:\t\t{name}\t*************')
     print(f'type:\t\t{sv_type}')
-    print(f"print:\t\t{some_value}")
-    #print(f'json.dumps/indent\n {json.dumps(some_value,indent=4)}')
+    #print(f"print:\t\t{some_value}")
+    print(f'json.dumps/indent\n {json.dumps(some_value,indent=4)}')
     print('')
 
 

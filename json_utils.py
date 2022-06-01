@@ -16,7 +16,8 @@ def composeJsonResponse(statusCode, body=None):
         'headers' : {
             'Content-Type': 'application/json',
             'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Headers': 'Content-Type, Access-Control-Allow-Headers, Access-Control-Allow-Origin',
+            'Access-Control-Allow-Headers': 'body, Content-Type, Access-Control-Allow-Headers, Access-Control-Allow-Origin, Access-Control-Allow-Methods',
+            'Access-Control-Allow-Methods': 'PUT, GET, POST, DELETE, OPTIONS',
         }
     }
     #print(f'jsonResponseDict no body: {jsonResponseDict}')

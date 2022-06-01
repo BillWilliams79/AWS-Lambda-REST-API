@@ -28,7 +28,7 @@ mathUserTable = 'Math_User'
 
 resultPath = '/results'
 resultTable = 'Results'
-
+ 
 # initialize logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -48,19 +48,11 @@ FAAS ENTRY POINT: the AWS Lambda function is configured to call this function by
 """
 def lambda_handler(event, context):
     
-    """ MAJOR TODOs
-        Open API headers, Hatteos links and pathing for FK, 
-        PATCH method (POST already does partil updates), OPTIONs method (see DRF)
-        QueryParameters such as ?Favorite_color=Orange, sorting paramters
-        Nested path and the implications: 
-            GET /math_user/79/Results - returns user 79 results
-            PUT /math_user/79/Results - creates results linked to user 79
-        HTTP view of data (human browsing)
-        consistent error prints, configurable for inbound and outboud debugging.
-    """
+    #print("First MathAppTestLambda Start")
 
     # Filter events based on API endpoint
     path = event['path']
+    #varDump(event, "event @ lambda_handler start")
 
     if path == mathUserPath:
         response = restApiFromTable(event, mathUserTable)
@@ -74,22 +66,27 @@ def lambda_handler(event, context):
 
  
 def restApiFromTable(event, table):
-
+ 
     httpMethod = event['httpMethod']
+    print(f'Lambda start with method: {httpMethod}')
 
-    # TODO better handling for json load errors and return as an input error code.
     if event['body'] != None:
         body = json.loads(event['body'])
+        print(f"event has body of {body}")
+    else:
+        print('there is no body?')
+        #varDump(event, 'event so we can inspect body')
 
     #
     # FILTER BY HTTP METHOD
     #
     if httpMethod == putMethod:
-
+    
+        #varDump(event, 'event at start of PUT')
+        varDump(body, 'body at start of PUT')
         # PUT -> Create one Row
         sql_key_list = ', '.join(f'{key}' for key in body.keys())
         sql_value_list = ', '.join(f"'{value}'" for value in body.values())
-        # TODO: what are possible failure cases? No key/values would be a fail we could return
 
         try:
             # insert row into table
@@ -126,6 +123,7 @@ def restApiFromTable(event, table):
             cursor = connection.cursor()
             cursor.execute(f""" DESC {table}; """)
             rows = cursor.fetchall()
+            
             desc_string = ', '.join(f"'{row[0]}', {row[0]}" for row in rows)
         except pymysql.Error as e:
             errorMsg = f"HTTP {putMethod} SQL FAILED: {e.args[0]} {e.args[1]}"
@@ -137,6 +135,7 @@ def restApiFromTable(event, table):
             sqlStatement = f"""
                 SELECT 
                     JSON_ARRAYAGG(JSON_OBJECT({desc_string}))
+
                 FROM
                     {table}
                 WHERE
@@ -144,7 +143,9 @@ def restApiFromTable(event, table):
             """
             cursor.execute(sqlStatement)
             row = cursor.fetchone()
+            varDump(row, "row data from fetch")
             if row[0] != None:
+                varDump(row[0], 'row[0] info')
                 return composeJsonResponse('200', row[0])
             else:
                 errorMsg = f"row[0], no data to read bro"
@@ -176,7 +177,7 @@ def restApiFromTable(event, table):
             affected_rows = cursor.execute(sqlStatement)
             if affected_rows > 0:
                 connection.commit()
-                return composeJsonResponse('200')
+                return composeJsonResponse('200', '')
             else:
                 errorMsg = f"HTTP {putMethod}: no data to update"
                 print(errorMsg)
@@ -208,9 +209,13 @@ def restApiFromTable(event, table):
                 print(errorMsg)
                 return composeJsonResponse('404', {'error': errorMsg})
             else:
-                return composeJsonResponse('200')
+                return composeJsonResponse('200', '')
 
         except:
             errorMsg = f"HTTP {putMethod} SQL FAILED: {e.args[0]} {e.args[1]}"
             print(errorMsg)
             return composeJsonResponse('500', {'error': errorMsg})
+            
+    elif httpMethod == optionsMethod:
+        #varDump(event, 'OPTIONS event dumps')
+        return composeJsonResponse('200','')
