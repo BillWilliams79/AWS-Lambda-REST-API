@@ -25,6 +25,16 @@ mathUserGetConfig = {
     'expected_result': {},
 }
 
+# GET TEST
+mathUserGetAllConfig = {
+    'testHttpMethod': 'GET',
+    'testPath': mathUserPath,
+    'queryStringParameters': {},
+    'testBody': {},
+    'context': {},
+    'expected_result': {},
+}
+
 # POST TEST
 mathUserPostConfig = {
     'testHttpMethod': 'POST',
@@ -48,17 +58,18 @@ mathUserDeleteConfig = {
 }
 
 #LambaTestExecute(mathUserPutConfig)
-#LambaTestExecute(mathUserGetConfig)
+LambaTestExecute(mathUserGetConfig)
 #LambaTestExecute(mathUserPostConfig)
 #LambaTestExecute(mathUserDeleteConfig)
+#LambaTestExecute(mathUserGetAllConfig)
 
 import json
 
-dummy = json.dumps({
+""" dummy = json.dumps({
     'httpMethod': 'PUT',
     'path': mathUserPath,
     'body': {'name': 'Will Clark',
                  'favorite_color': 'The Thrill'}
 })
 
-print(dummy)
+print(dummy) """

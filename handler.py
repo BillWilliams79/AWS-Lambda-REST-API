@@ -73,9 +73,10 @@ def restApiFromTable(event, table):
     if event['body'] != None:
         body = json.loads(event['body'])
         print(f"event has body of {body}")
-    else:
-        print('there is no body?')
+    #else:
+        #print('there is no body?')
         #varDump(event, 'event so we can inspect body')
+        
 
     #
     # FILTER BY HTTP METHOD
@@ -83,7 +84,7 @@ def restApiFromTable(event, table):
     if httpMethod == putMethod:
     
         #varDump(event, 'event at start of PUT')
-        varDump(body, 'body at start of PUT')
+        #varDump(body, 'body at start of PUT')
         # PUT -> Create one Row
         sql_key_list = ', '.join(f'{key}' for key in body.keys())
         sql_value_list = ', '.join(f"'{value}'" for value in body.values())
@@ -116,7 +117,7 @@ def restApiFromTable(event, table):
     elif httpMethod == getMethod:
 
         # GET -> Read one Row by Id
-        Id = event['queryStringParameters']['Id']
+        Id = event.get('queryStringParameters').get('Id')
 
         try:
             # read table definition
@@ -131,6 +132,12 @@ def restApiFromTable(event, table):
             return composeJsonResponse('500', {'error': errorMsg})
 
         try:
+            # if an Id is passed, we select just the Id, otherwise we return all data
+            if (Id):
+                idQualifier = f"WHERE Id={Id}"
+            else:
+                idQualifier = ""
+
             # read row and format as JSON
             sqlStatement = f"""
                 SELECT 
@@ -138,16 +145,19 @@ def restApiFromTable(event, table):
 
                 FROM
                     {table}
-                WHERE
-                    Id={Id}
+                {idQualifier}
             """
+
             cursor.execute(sqlStatement)
-            row = cursor.fetchone()
-            varDump(row, "row data from fetch")
-            if row[0] != None:
-                varDump(row[0], 'row[0] info')
+            row = cursor.fetchall()
+
+            varDump(row[0], 'GET: row[0] dump')
+
+            if not row[0]:
+                print('get: 200')
                 return composeJsonResponse('200', row[0])
             else:
+                print('get: 404')
                 errorMsg = f"row[0], no data to read bro"
                 print(errorMsg)
                 return composeJsonResponse('404', {'error': errorMsg})
