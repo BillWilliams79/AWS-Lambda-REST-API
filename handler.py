@@ -151,9 +151,8 @@ def restApiFromTable(event, table):
             cursor.execute(sqlStatement)
             row = cursor.fetchall()
 
-            varDump(row[0], 'GET: row[0] dump')
-
-            if not row[0]:
+            # the return data is wrapped in every available type it would seem
+            if row[0][0]:
                 print('get: 200')
                 return composeJsonResponse('200', row[0])
             else:
