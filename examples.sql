@@ -1,15 +1,14 @@
 CREATE DATABASE IF NOT EXISTS Math_App;
 
-USE Math_App;
+
 
 /* Create table in Math_App database using alternate primary key specification method */
 CREATE TABLE IF NOT EXISTS Math_User (
     Id INT AUTO_INCREMENT,
     Name VARCHAR(16) NOT NULL,
     PRIMARY KEY (Id)
-);
+); 	 	
 
-SHOW tables;
 
 /* Modify existing table to add a column */
 ALTER TABLE Math_User 
@@ -51,18 +50,45 @@ FROM
     Math_User
 WHERE
     name = 'Ava';
+    
+/* sort by name ascending */
+SELECT 
+    *
+FROM
+    Math_User
+ORDER BY
+	name ASC;
+   
+/* return data in descending order */
+SELECT 
+    *
+FROM
+    Math_User
+ORDER BY
+	Favorite_Color DESC;
+    
+/* sorting multiple columns, each asc/desc separately */
+    SELECT 
+    *
+FROM
+    Math_User
+ORDER BY
+	name ASC, Favorite_Color ASC;
+
 
 /* Change existing row data */
 UPDATE Math_User 
 SET 
-    Favorite_Color = 'Light Purple'
+    Favorite_Color = 'Left Tackle'
 WHERE
-    Id = 2;
+    Id = 79;
+    
+COMMIT;
 
 /* Delete a row */
 DELETE FROM Math_User 
 WHERE
-    Id = 4;
+    Id = 178;
 
 /* Results child table with foreign key to parent table (Math_User) */
 /* the FK will auto update on changes and delete associated child tables if the parent is delete */
@@ -94,8 +120,9 @@ INSERT INTO Results (Score, Tries, User_Id)
 VALUES (3, 26000, @TempId);
 
 /* display table definitions */
-DESC Math_User;
-DESC Results;
+SHOW tables;
+DESC user;
+DESC result;
 
 SELECT 
     *

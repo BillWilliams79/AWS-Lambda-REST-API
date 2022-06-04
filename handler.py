@@ -116,40 +116,72 @@ def restApiFromTable(event, table):
 
     elif httpMethod == getMethod:
 
-        # GET -> Read one Row by Id
-        Id = event.get('queryStringParameters').get('Id')
+        # GET -> read one row by ID or read all rows. Supports sort queryStringParameters
 
+        # Process Id query string params and build sql qualifier
+        Id = event.get('queryStringParameters').get('Id')
+        if (Id):
+            sqlIdQualifier = f"WHERE Id={Id}"
+        else:
+            sqlIdQualifier = ""
+        
+        # Process SORT query string params and build SQL qualifier
+        sortParams = event.get('queryStringParameters').get('sort')
+        
+        if (sortParams):
+            sortDict = dict(x.split(":") for x in sortParams.split(","))
+    
+            sortQualifier = ""
+            sortSeparator = ""
+            
+            while sortDict:
+                key, value = sortDict.popitem()
+                sortQualifier = f"{key} {value}{sortSeparator}{sortQualifier}"
+                sortSeparator = ", "
+                
+            sortQualifier = f" ORDER BY {sortQualifier}"
+
+
+        # read SQL table definition
         try:
-            # read table definition
             cursor = connection.cursor()
+            cursor.execute("SET SESSION group_concat_max_len = 65536")
             cursor.execute(f""" DESC {table}; """)
             rows = cursor.fetchall()
             
             desc_string = ', '.join(f"'{row[0]}', {row[0]}" for row in rows)
+            #desc_string = ', '.join(f"{row[0]}" for row in rows)
+            
         except pymysql.Error as e:
             errorMsg = f"HTTP {putMethod} SQL FAILED: {e.args[0]} {e.args[1]}"
             print(errorMsg)
             return composeJsonResponse('500', {'error': errorMsg})
 
+        # execute API requested read and process all return values
         try:
-            # if an Id is passed, we select just the Id, otherwise we return all data
-            if (Id):
-                idQualifier = f"WHERE Id={Id}"
-            else:
-                idQualifier = ""
 
             # read row and format as JSON
             sqlStatement = f"""
-                SELECT 
-                    JSON_ARRAYAGG(JSON_OBJECT({desc_string}))
-
-                FROM
-                    {table}
-                {idQualifier}
+                select 
+            concat('[',
+                GROUP_CONCAT(
+                    JSON_OBJECT(    
+                        'Id', Id
+                        ,'Name', Name
+                        ,'Favorite_Color', Favorite_Color
+                        )
+                    {sortQualifier}    
+                    SEPARATOR ', ')
+            ,']')
+            from Math_User ;
             """
+            varDump(sqlStatement, "sql statement")
 
             cursor.execute(sqlStatement)
             row = cursor.fetchall()
+
+            varDump(row, 'Get SQL row Data')
+            varDump(row[0], 'Get SQL row[0] Data')
 
             # the return data is wrapped in every available type it would seem
             if row[0][0]:
