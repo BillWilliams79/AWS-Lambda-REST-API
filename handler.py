@@ -30,6 +30,7 @@ resultPath = '/results'
 resultTable = 'Results'
  
 # initialize logging
+# TODO: remove logging altogether or..?
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
@@ -118,20 +119,21 @@ def restApiFromTable(event, table):
 
         # GET -> read one row by ID or read all rows. Supports sort queryStringParameters
 
-        # Process Id query string params and build sql qualifier
+        # Process Id query string param and build related sql qualifier
         Id = event.get('queryStringParameters').get('Id')
         if (Id):
             sqlIdQualifier = f"WHERE Id={Id}"
         else:
             sqlIdQualifier = ""
         
-        # Process SORT query string params and build SQL qualifier
+        # Process SORT query string params and build related SQL qualifier
         sortParams = event.get('queryStringParameters').get('sort')
         
+        sortQualifier = ""
         if (sortParams):
             sortDict = dict(x.split(":") for x in sortParams.split(","))
     
-            sortQualifier = ""
+
             sortSeparator = ""
             
             while sortDict:
@@ -150,46 +152,39 @@ def restApiFromTable(event, table):
             rows = cursor.fetchall()
             
             desc_string = ', '.join(f"'{row[0]}', {row[0]}" for row in rows)
-            #desc_string = ', '.join(f"{row[0]}" for row in rows)
             
         except pymysql.Error as e:
             errorMsg = f"HTTP {putMethod} SQL FAILED: {e.args[0]} {e.args[1]}"
             print(errorMsg)
             return composeJsonResponse('500', {'error': errorMsg})
 
-        # execute API requested read and process all return values
+        # execute API read and process all return values
         try:
 
             # read row and format as JSON
             sqlStatement = f"""
-                select 
-            concat('[',
-                GROUP_CONCAT(
-                    JSON_OBJECT(    
-                        'Id', Id
-                        ,'Name', Name
-                        ,'Favorite_Color', Favorite_Color
-                        )
-                    {sortQualifier}    
-                    SEPARATOR ', ')
-            ,']')
-            from Math_User ;
-            """
+                                SELECT 
+                                    CONCAT('[',
+                                        GROUP_CONCAT(
+                                            JSON_OBJECT({desc_string})
+                                            {sortQualifier}    
+                                            SEPARATOR ', ')
+                                    ,']')
+                                FROM 
+                                    Math_User
+                                {sqlIdQualifier}
+                            """
             varDump(sqlStatement, "sql statement")
 
             cursor.execute(sqlStatement)
             row = cursor.fetchall()
 
-            varDump(row, 'Get SQL row Data')
-            varDump(row[0], 'Get SQL row[0] Data')
-
-            # the return data is wrapped in every available type it would seem
             if row[0][0]:
                 print('get: 200')
                 return composeJsonResponse('200', row[0])
             else:
                 print('get: 404')
-                errorMsg = f"row[0], no data to read bro"
+                errorMsg = f"No data"
                 print(errorMsg)
                 return composeJsonResponse('404', {'error': errorMsg})
 
