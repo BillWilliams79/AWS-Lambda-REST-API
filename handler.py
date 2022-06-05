@@ -4,7 +4,7 @@ import logging
 import boto3
 
 from decimal_encoder import DecimalEncoder
-from classifier import classifier, varDump
+from classifier import varDump
 from json_utils import composeJsonResponse
 from mathapp_rds import *
 
@@ -131,15 +131,14 @@ def restApiFromTable(event, table):
         
         sortQualifier = ""
         if (sortParams):
-            sortDict = dict(x.split(":") for x in sortParams.split(","))
-    
 
-            sortSeparator = ""
+            separator = ""
+            sortDict = dict(x.split(":") for x in sortParams.split(","))
             
             while sortDict:
                 key, value = sortDict.popitem()
-                sortQualifier = f"{key} {value}{sortSeparator}{sortQualifier}"
-                sortSeparator = ", "
+                sortQualifier = f"{key} {value}{separator}{sortQualifier}"
+                separator = ", "
                 
             sortQualifier = f" ORDER BY {sortQualifier}"
 
@@ -154,14 +153,14 @@ def restApiFromTable(event, table):
             desc_string = ', '.join(f"'{row[0]}', {row[0]}" for row in rows)
             
         except pymysql.Error as e:
-            errorMsg = f"HTTP {putMethod} SQL FAILED: {e.args[0]} {e.args[1]}"
+            errorMsg = f"HTTP {putMethod} helper SQL commands failed: {e.args[0]} {e.args[1]}"
             print(errorMsg)
-            return composeJsonResponse('500', {'error': errorMsg})
+            return composeJsonResponse('500', '', errorMsg)
 
         # execute API read and process all return values
         try:
 
-            # read row and format as JSON
+            # read row(s) and format as JSON
             sqlStatement = f"""
                                 SELECT 
                                     CONCAT('[',
@@ -173,25 +172,28 @@ def restApiFromTable(event, table):
                                 FROM 
                                     Math_User
                                 {sqlIdQualifier}
-                            """
-            varDump(sqlStatement, "sql statement")
+            """
+            
+            prettySql = ' '.join(sqlStatement.split())
+            print(f"{getMethod} SQL statement is:")
+            print(prettySql)
 
             cursor.execute(sqlStatement)
             row = cursor.fetchall()
 
             if row[0][0]:
                 print('get: 200')
-                return composeJsonResponse('200', row[0])
+                return composeJsonResponse('200', row[0], 'OK')
             else:
                 print('get: 404')
                 errorMsg = f"No data"
                 print(errorMsg)
-                return composeJsonResponse('404', {'error': errorMsg})
+                return composeJsonResponse('404',  '', 'NOT FOUND')
 
         except pymysql.Error as e:
-            errorMsg = f"HTTP {putMethod} SQL FAILED: {e.args[0]} {e.args[1]}"
+            errorMsg = f"HTTP {putMethod} acutal SQL select statement failed: {e.args[0]} {e.args[1]}"
             print(errorMsg)
-            return composeJsonResponse('500', {'error': errorMsg})
+            return composeJsonResponse('500', '', errorMsg)
         
     elif httpMethod == postMethod:
 
