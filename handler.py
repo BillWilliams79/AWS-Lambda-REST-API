@@ -84,8 +84,6 @@ def restApiFromTable(event, table):
     #
     if httpMethod == putMethod:
     
-        #varDump(event, 'event at start of PUT')
-        #varDump(body, 'body at start of PUT')
         # PUT -> Create one Row
         sql_key_list = ', '.join(f'{key}' for key in body.keys())
         sql_value_list = ', '.join(f"'{value}'" for value in body.values())
@@ -101,8 +99,9 @@ def restApiFromTable(event, table):
             cursor.execute(sqlStatement)
             connection.commit()
         except pymysql.Error as e:
-            print(f"HTTP {putMethod} FAILED: {e.args[0]} {e.args[1]}")
-            return composeJsonResponse('500', f"{e.args[0]} {e.args[1]}")
+            errorMsg = f"HTTP {putMethod} failed: {e.args[0]} {e.args[1]}"
+            print(errorMsg)
+            return composeJsonResponse('500', '', errorMsg)
 
         try:
             # retrieve ID of newly created row
@@ -111,9 +110,9 @@ def restApiFromTable(event, table):
             newId = cursor.fetchone()
         except pymysql.Error as e:
             print(f"HTTP {putMethod} FAILED: {e.args[0]} {e.args[1]}")
-            return composeJsonResponse('201', {'Id': 'Not available'})
+            return composeJsonResponse('201', {'Id': 'Not available'}, 'CREATED')
 
-        return composeJsonResponse('201', {'Id': newId[0]})
+        return composeJsonResponse('201', {'Id': newId[0]}, 'CREATED')
 
     elif httpMethod == getMethod:
 
@@ -153,7 +152,7 @@ def restApiFromTable(event, table):
             desc_string = ', '.join(f"'{row[0]}', {row[0]}" for row in rows)
             
         except pymysql.Error as e:
-            errorMsg = f"HTTP {putMethod} helper SQL commands failed: {e.args[0]} {e.args[1]}"
+            errorMsg = f"HTTP {getMethod} helper SQL commands failed: {e.args[0]} {e.args[1]}"
             print(errorMsg)
             return composeJsonResponse('500', '', errorMsg)
 
@@ -191,7 +190,7 @@ def restApiFromTable(event, table):
                 return composeJsonResponse('404',  '', 'NOT FOUND')
 
         except pymysql.Error as e:
-            errorMsg = f"HTTP {putMethod} acutal SQL select statement failed: {e.args[0]} {e.args[1]}"
+            errorMsg = f"HTTP {getMethod} acutal SQL select statement failed: {e.args[0]} {e.args[1]}"
             print(errorMsg)
             return composeJsonResponse('500', '', errorMsg)
         
@@ -215,14 +214,14 @@ def restApiFromTable(event, table):
             affected_rows = cursor.execute(sqlStatement)
             if affected_rows > 0:
                 connection.commit()
-                return composeJsonResponse('200', '')
+                return composeJsonResponse('200', '', 'OK')
             else:
-                errorMsg = f"HTTP {putMethod}: no data to update"
+                errorMsg = f"HTTP {postMethod}: no data changed"
                 print(errorMsg)
-                return composeJsonResponse('404', {'error': errorMsg})
+                return composeJsonResponse('204', '', errorMsg)
 
         except pymysql.Error as e:
-            errorMsg = f"HTTP {putMethod} SQL FAILED: {e.args[0]} {e.args[1]}"
+            errorMsg = f"HTTP {postMethod} SQL FAILED: {e.args[0]} {e.args[1]}"
             print(errorMsg)
             return composeJsonResponse('500', {'error': errorMsg})
 
@@ -243,16 +242,16 @@ def restApiFromTable(event, table):
             connection.commit()
 
             if affected_rows == 0:
-                errorMsg = f"Affected_rows = 0, no delete bro"
+                errorMsg = f"Affected_rows = 0, 404 time"
                 print(errorMsg)
-                return composeJsonResponse('404', {'error': errorMsg})
+                return composeJsonResponse('404', '', 'NOT FOUND')
             else:
-                return composeJsonResponse('200', '')
+                return composeJsonResponse('200', '', 'OK')
 
         except:
-            errorMsg = f"HTTP {putMethod} SQL FAILED: {e.args[0]} {e.args[1]}"
+            errorMsg = f"HTTP {deleteMethod} SQL FAILED: {e.args[0]} {e.args[1]}"
             print(errorMsg)
-            return composeJsonResponse('500', {'error': errorMsg})
+            return composeJsonResponse('500', '', errorMsg)
             
     elif httpMethod == optionsMethod:
         #varDump(event, 'OPTIONS event dumps')
