@@ -1,6 +1,6 @@
 import json
 import pymysql
-import logging
+#import logging
 import boto3
 
 from decimal_encoder import DecimalEncoder
@@ -8,6 +8,7 @@ from classifier import varDump
 from json_utils import composeJsonResponse
 from mathapp_rds import *
 
+print('lambda init code executing...')
 #
 # HTTP Method const values
 #
@@ -31,25 +32,30 @@ resultTable = 'Results'
  
 # initialize logging
 # TODO: remove logging altogether or..?
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+#logger = logging.getLogger()
+#logger.setLevel(logging.INFO)
 
 """
 connect to the RDS database using pymsql. 
 Connection establishment outside the lambda_handler is seen as efficient
 TODO: there is no error handling if connect doesn't work
 """
+print('attempting connection...')
 connection = pymysql.connect(host = endpoint,
                              user = username,
                              password = password,
                              database = db_name,)
+                             
+                             
+varDump(connection, 'Lambda Init: connection details')
+
 
 """
 FAAS ENTRY POINT: the AWS Lambda function is configured to call this function by name.
 """
 def lambda_handler(event, context):
     
-    #print("First MathAppTestLambda Start")
+    print("First MathAppTestLambda Start")
 
     # Filter events based on API endpoint
     path = event['path']
