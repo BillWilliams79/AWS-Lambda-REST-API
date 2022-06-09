@@ -1,4 +1,3 @@
-#import enum
 from enum import Enum, unique, auto
 
 # Docs: https://docs.python.org/3.11/howto/enum.html

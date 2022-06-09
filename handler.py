@@ -1,6 +1,5 @@
 import json
 import pymysql
-#import logging
 import boto3
 
 from decimal_encoder import DecimalEncoder
@@ -22,68 +21,108 @@ optionsMethod = 'OPTIONS'
 # TODO: HTTP Response Code definitions
 #
 
-
 # USER: REST API endpoints. Correspond directly to database tables.
 mathUserPath = '/math_user'
 mathUserTable = 'Math_User'
 
 resultPath = '/results'
 resultTable = 'Results'
- 
-# initialize logging
-# TODO: remove logging altogether or..?
-#logger = logging.getLogger()
-#logger.setLevel(logging.INFO)
 
+restApiPath = '/rest_crud_app/user'
+restApiTable = 'user'
+
+ 
 """
 connect to the RDS database using pymsql. 
 Connection establishment outside the lambda_handler is seen as efficient
 TODO: there is no error handling if connect doesn't work
 """
-print('attempting connection...')
-connection = pymysql.connect(host = endpoint,
-                             user = username,
-                             password = password,
-                             database = db_name,)
-                             
-                             
+
+connection = dict()
+
+for db in db_dict:
+    
+    print('attempting connection...')
+    connection[db] = pymysql.connect(host = endpoint,
+                                 user = username,
+                                 password = password,
+                                 database = db,)
+
 varDump(connection, 'Lambda Init: connection details')
 
+def parse_path(path):
+    splitPath = path[1:].split('/')
+    database = splitPath[0]
+    table = splitPath[1] if len(splitPath) > 1 else ''
+    #hack: remove after api gateway re-organize for mathapp
+    if database == 'math_user':
+        table = 'Math_User'
+        database = 'Math_App'
+    
+    print(f"datatbase: {database}")
+	    
+    if database in connection:
+        conn = connection[database]
+    else:
+        conn = ''
+        
+    return {'path': path, 'database': database, 'table': table, 'conn': conn}
 
 """
 FAAS ENTRY POINT: the AWS Lambda function is configured to call this function by name.
 """
 def lambda_handler(event, context):
     
-    print("First MathAppTestLambda Start")
+    print(f"Lambda Handler Invoked {event['httpMethod']}")
+    #varDump(event, "event @ lambda handler start")
 
     # Filter events based on API endpoint
-    path = event['path']
-    #varDump(event, "event @ lambda_handler start")
+    path = event.get('path')
 
-    if path == mathUserPath:
-        response = restApiFromTable(event, mathUserTable)
-    elif path == resultPath:
-        response = restApiFromTable(event, resultTable)
+    #remove leading / and split up path
+    db_info = parse_path(path)
+    varDump(db_info, 'parsed DB info')
+
+    if db_info['database'] in db_dict:
+        print('database supported')
+        response = restApiFromTable(event, db_info)
     else:
-        response = composeJsonResponse(404, 'Not Found')
+        response = composeJsonResponse(404, '', f"URL/path not found: {path}")
 
-    # return http response
+    # if path == mathUserPath:
+    #     response = restApiFromTable(event, mathUserTable, connection['Math_App'])
+    # elif path == resultPath:
+    #     response = restApiFromTable(event, resultTable, connection['Math_App'])
+    # elif path == restApiPath:
+    #     response = restApiFromTable(event, restApiTable, connection['rest_crud_app'])
+    # else:
+    #     response = composeJsonResponse(404, '', f"URL/path not found: {path}")
+
     return response 
 
  
-def restApiFromTable(event, table):
+def restApiFromTable(event, db_info):
+
+    #varDump(event,'event object @ start of restApiFromTable')
+    
+    path = db_info['path']
+    database = db_info['database']
+    table = db_info['table']
+    conn = db_info['conn']
+    
+    #from operator import itemgetter
+    #params = {'a': 1, 'b': 2}
+    #a, b = itemgetter('a', 'b')(params)
+
+    if not event:
+        print('no event')
+        return composeJsonResponse('500', '', 'REST API call received with no event')
  
     httpMethod = event['httpMethod']
-    print(f'Lambda start with method: {httpMethod}')
+    print(f'restApiFromTable start with method: {httpMethod}')
 
     if event['body'] != None:
         body = json.loads(event['body'])
-        print(f"event has body of {body}")
-    #else:
-        #print('there is no body?')
-        #varDump(event, 'event so we can inspect body')
-        
 
     #
     # FILTER BY HTTP METHOD
@@ -101,7 +140,7 @@ def restApiFromTable(event, table):
                 INSERT INTO {table} ({sql_key_list}) 
                 VALUES ({sql_value_list});
             """
-            cursor = connection.cursor()
+            cursor = connection['Math_App'].cursor()
             cursor.execute(sqlStatement)
             connection.commit()
         except pymysql.Error as e:
@@ -121,8 +160,6 @@ def restApiFromTable(event, table):
         return composeJsonResponse('201', {'Id': newId[0]}, 'CREATED')
 
     elif httpMethod == getMethod:
-
-        # GET -> read one row by ID or read all rows. Supports sort queryStringParameters
 
         # Process Id query string param and build related sql qualifier
         Id = event.get('queryStringParameters').get('Id')
@@ -147,10 +184,9 @@ def restApiFromTable(event, table):
                 
             sortQualifier = f" ORDER BY {sortQualifier}"
 
-
         # read SQL table definition
         try:
-            cursor = connection.cursor()
+            cursor = conn.cursor()
             cursor.execute("SET SESSION group_concat_max_len = 65536")
             cursor.execute(f""" DESC {table}; """)
             rows = cursor.fetchall()
@@ -175,7 +211,7 @@ def restApiFromTable(event, table):
                                             SEPARATOR ', ')
                                     ,']')
                                 FROM 
-                                    Math_User
+                                    {table}
                                 {sqlIdQualifier}
             """
             
@@ -187,7 +223,6 @@ def restApiFromTable(event, table):
             row = cursor.fetchall()
 
             if row[0][0]:
-                print('get: 200')
                 return composeJsonResponse('200', row[0], 'OK')
             else:
                 print('get: 404')
