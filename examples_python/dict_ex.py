@@ -77,4 +77,6 @@ print(f'key_join_list:\t {key_join_list}')
 value_join_list = ', '.join(f"'{value}'" for value in dict.values())
 print(f'value_join_list:\t {value_join_list}')
 
-
+    #from operator import itemgetter
+    #params = {'a': 1, 'b': 2}
+    #a, b = itemgetter('a', 'b')(params)

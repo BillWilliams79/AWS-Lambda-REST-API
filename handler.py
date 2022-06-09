@@ -110,6 +110,7 @@ def restApiFromTable(event, db_info):
         print('No HTTP method')
         return composeJsonResponse('500', '', 'REST API call received with no HTTP method')
 
+
     if event['body'] != None:
         body = json.loads(event['body'])
 
