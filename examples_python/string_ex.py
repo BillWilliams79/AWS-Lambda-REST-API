@@ -18,3 +18,7 @@ def parsePath(path):
 for url_key in test_urls:
     print(parsePath(test_urls[url_key]))
 
+
+
+
+

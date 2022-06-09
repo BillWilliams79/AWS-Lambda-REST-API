@@ -51,22 +51,25 @@ for db in db_dict:
 varDump(connection, 'Lambda Init: connection details')
 
 def parse_path(path):
+
+    #
+    # Split first level of path into database. 
+    # Second level of path into table.
+    # Save aside the database/table connection as applicable.
+    #
     splitPath = path[1:].split('/')
     database = splitPath[0]
     table = splitPath[1] if len(splitPath) > 1 else ''
+    
     #hack: remove after api gateway re-organize for mathapp
     if database == 'math_user':
         table = 'Math_User'
         database = 'Math_App'
     
-    print(f"datatbase: {database}")
-	    
-    if database in connection:
-        conn = connection[database]
-    else:
-        conn = ''
+    conn = connection[database] if database in connection else ''
         
     return {'path': path, 'database': database, 'table': table, 'conn': conn}
+
 
 """
 FAAS ENTRY POINT: the AWS Lambda function is configured to call this function by name.
@@ -74,52 +77,38 @@ FAAS ENTRY POINT: the AWS Lambda function is configured to call this function by
 def lambda_handler(event, context):
     
     print(f"Lambda Handler Invoked {event['httpMethod']}")
-    #varDump(event, "event @ lambda handler start")
 
-    # Filter events based on API endpoint
     path = event.get('path')
 
-    #remove leading / and split up path
-    db_info = parse_path(path)
-    varDump(db_info, 'parsed DB info')
+    if path:
+        db_info = parse_path(path)
+    else:
+        return composeJsonResponse(404, '', f"No path provided")
 
     if db_info['database'] in db_dict:
-        print('database supported')
         response = restApiFromTable(event, db_info)
     else:
         response = composeJsonResponse(404, '', f"URL/path not found: {path}")
-
-    # if path == mathUserPath:
-    #     response = restApiFromTable(event, mathUserTable, connection['Math_App'])
-    # elif path == resultPath:
-    #     response = restApiFromTable(event, resultTable, connection['Math_App'])
-    # elif path == restApiPath:
-    #     response = restApiFromTable(event, restApiTable, connection['rest_crud_app'])
-    # else:
-    #     response = composeJsonResponse(404, '', f"URL/path not found: {path}")
 
     return response 
 
  
 def restApiFromTable(event, db_info):
 
-    #varDump(event,'event object @ start of restApiFromTable')
-    
     path = db_info['path']
     database = db_info['database']
     table = db_info['table']
     conn = db_info['conn']
     
-    #from operator import itemgetter
-    #params = {'a': 1, 'b': 2}
-    #a, b = itemgetter('a', 'b')(params)
-
     if not event:
         print('no event')
         return composeJsonResponse('500', '', 'REST API call received with no event')
  
-    httpMethod = event['httpMethod']
+    httpMethod = event.get('httpMethod')
     print(f'restApiFromTable start with method: {httpMethod}')
+    if not httpMethod:
+        print('No HTTP method')
+        return composeJsonResponse('500', '', 'REST API call received with no HTTP method')
 
     if event['body'] != None:
         body = json.loads(event['body'])
