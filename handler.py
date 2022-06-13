@@ -77,7 +77,8 @@ FAAS ENTRY POINT: the AWS Lambda function is configured to call this function by
 def lambda_handler(event, context):
     
     print(f"Lambda Handler Invoked {event['httpMethod']}")
-
+    varDump(event, "event at lambda invocation")
+    
     path = event.get('path')
 
     if path:
@@ -151,12 +152,29 @@ def restApiFromTable(event, db_info):
 
     elif httpMethod == getMethod:
 
+        # TODO - iterate over event.qsp.* and build sql qualifier
+        # qsp is a dictionary of params
+        # sort would have to be handled in generic code
+        # below due to its complexity
+        # should execute desc command and filter out columns that don't match
+        # desc list so as to avoid sql injection
+        varDump(event.get('queryStringParameters'), 'Get method qsp')
+
         # Process Id query string param and build related sql qualifier
         Id = event.get('queryStringParameters').get('Id')
         if (Id):
-            sqlIdQualifier = f"WHERE Id={Id}"
+            sqlIdQualifier = f"WHERE Id='{Id}'"
         else:
             sqlIdQualifier = ""
+            
+        name = event.get('queryStringParameters').get('user_name')
+        if (name):
+            sqlIdQualifier = f"{sqlIdQualifier} WHERE user_name='{name}'"
+
+        creator_fk = event.get('queryStringParameters').get('creator_fk')
+        if (creator_fk):
+            sqlIdQualifier = f"{sqlIdQualifier} WHERE creator_fk='{creator_fk}'"
+
         
         # Process SORT query string params and build related SQL qualifier
         sortParams = event.get('queryStringParameters').get('sort')
@@ -221,7 +239,7 @@ def restApiFromTable(event, db_info):
                 return composeJsonResponse('404',  '', 'NOT FOUND')
 
         except pymysql.Error as e:
-            errorMsg = f"HTTP {getMethod} acutal SQL select statement failed: {e.args[0]} {e.args[1]}"
+            errorMsg = f"HTTP {getMethod} actual SQL select statement failed: {e.args[0]} {e.args[1]}"
             print(errorMsg)
             return composeJsonResponse('500', '', errorMsg)
         

@@ -3,10 +3,10 @@ import json
 def varDump(some_value, name=''):
     # in honor of PHP lmao
     sv_type = type(some_value)
-    print(f'Name:\t\t{name}')
-    print(f'type:\t\t{sv_type}')
-    print(f"print:\t\t{some_value}")
-    #print(f'json.dumps/indent\n {json.dumps(some_value,indent=4)}')
+    print(f'Name:\t{name}\t\ttype:\t\t{sv_type}')
+    #print(f'type:\t\t{sv_type}')
+    print(f"{some_value}")
+    #print(f'{json.dumps(some_value,indent=4)}')
     print('')
 
 
