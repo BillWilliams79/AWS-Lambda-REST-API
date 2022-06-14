@@ -1,6 +1,5 @@
 import json
 import pymysql
-import boto3
 
 from decimal_encoder import DecimalEncoder
 from classifier import varDump
@@ -42,7 +41,7 @@ connection = dict()
 
 for db in db_dict:
     
-    print('attempting connection...')
+    print('attempting database connection...')
     connection[db] = pymysql.connect(host = endpoint,
                                  user = username,
                                  password = password,
@@ -76,8 +75,8 @@ FAAS ENTRY POINT: the AWS Lambda function is configured to call this function by
 """
 def lambda_handler(event, context):
     
-    print(f"Lambda Handler Invoked {event['httpMethod']}")
-    varDump(event, "event at lambda invocation")
+    print(f"Lambda Handler Invoked for HTTP Method {event['httpMethod']}")
+    #varDump(event, "event at lambda invocation")
     
     path = event.get('path')
 
@@ -100,20 +99,22 @@ def restApiFromTable(event, db_info):
     database = db_info['database']
     table = db_info['table']
     conn = db_info['conn']
-    
-    if not event:
-        print('no event')
-        return composeJsonResponse('500', '', 'REST API call received with no event')
- 
     httpMethod = event.get('httpMethod')
-    print(f'restApiFromTable start with method: {httpMethod}')
-    if not httpMethod:
-        print('No HTTP method')
-        return composeJsonResponse('500', '', 'REST API call received with no HTTP method')
-
 
     if event['body'] != None:
         body = json.loads(event['body'])
+
+    if not event:
+        print('no event')
+        return composeJsonResponse('500', '', 'REST API call received with no event')
+
+    if not conn:
+        print('no conn')
+        return composeJsonResponse('500', '', 'REST API call, no database connection')
+
+    if not httpMethod:
+        print('No HTTP method')
+        return composeJsonResponse('500', '', 'REST API call received with no HTTP method')
 
     #
     # FILTER BY HTTP METHOD
@@ -152,82 +153,69 @@ def restApiFromTable(event, db_info):
 
     elif httpMethod == getMethod:
 
-        # TODO - iterate over event.qsp.* and build sql qualifier
-        # qsp is a dictionary of params
-        # sort would have to be handled in generic code
-        # below due to its complexity
-        # should execute desc command and filter out columns that don't match
-        # desc list so as to avoid sql injection
-        varDump(event.get('queryStringParameters'), 'Get method qsp')
-
-        # Process Id query string param and build related sql qualifier
-        Id = event.get('queryStringParameters').get('Id')
-        if (Id):
-            sqlIdQualifier = f"WHERE Id='{Id}'"
-        else:
-            sqlIdQualifier = ""
-            
-        name = event.get('queryStringParameters').get('user_name')
-        if (name):
-            sqlIdQualifier = f"{sqlIdQualifier} WHERE user_name='{name}'"
-
-        creator_fk = event.get('queryStringParameters').get('creator_fk')
-        if (creator_fk):
-            sqlIdQualifier = f"{sqlIdQualifier} WHERE creator_fk='{creator_fk}'"
-
-        
-        # Process SORT query string params and build related SQL qualifier
-        sortParams = event.get('queryStringParameters').get('sort')
-        
-        sortQualifier = ""
-        if (sortParams):
-
-            separator = ""
-            sortDict = dict(x.split(":") for x in sortParams.split(","))
-            
-            while sortDict:
-                key, value = sortDict.popitem()
-                sortQualifier = f"{key} {value}{separator}{sortQualifier}"
-                separator = ", "
-                
-            sortQualifier = f" ORDER BY {sortQualifier}"
-
-        # read SQL table definition
+        # STEP 1: Execute helper SQL commands: build list of columns for the SQL
+        #         command and allow for larger group concat. Build a list of columns
+        #         to verify correct QSP
         try:
             cursor = conn.cursor()
             cursor.execute("SET SESSION group_concat_max_len = 65536")
             cursor.execute(f""" DESC {table}; """)
             rows = cursor.fetchall()
             
-            desc_string = ', '.join(f"'{row[0]}', {row[0]}" for row in rows)
+            json_object_columns = ', '.join(f"'{row[0]}', {row[0]}" for row in rows)
+
+            sql_columns = []
+            for row in rows:
+                sql_columns.append(row[0])
             
         except pymysql.Error as e:
-            errorMsg = f"HTTP {getMethod} helper SQL commands failed: {e.args[0]} {e.args[1]}"
+            errorMsg = f"HTTP {getMethod} helper SQL command failed: {e.args[0]} {e.args[1]}"
             print(errorMsg)
             return composeJsonResponse('500', '', errorMsg)
+
+        # STEP 2: iterate over QSP (if present) 
+        where_clause = ""
+        order_by = ""
+
+        qsp = event.get('queryStringParameters')
+        for key, value in qsp.items():
+
+            if key in sql_columns:
+                where_clause = f"{where_clause} WHERE {key}='{value}'"
+
+            elif key == 'sort':
+                sort_dict = dict(x.split(":") for x in value.split(","))
+                order_by = ', '.join(f"{sort_key} {sort_value}" for sort_key, sort_value in sort_dict.items())
+                order_by = f" ORDER BY {order_by}"                
+
+            else:
+                # JSON API document allows api implementation to ignore an impro
+                errorMsg = f"HTTP {getMethod} invalid query string parameter {key} {value}"
+                print(errorMsg)
+                return composeJsonResponse('400', '', "BAD REQUEST")            
 
         # execute API read and process all return values
         try:
 
             # read row(s) and format as JSON
-            sqlStatement = f"""
+            sql_statement = f"""
                                 SELECT 
                                     CONCAT('[',
                                         GROUP_CONCAT(
-                                            JSON_OBJECT({desc_string})
-                                            {sortQualifier}    
+                                            JSON_OBJECT({json_object_columns})
+                                            {order_by}    
                                             SEPARATOR ', ')
                                     ,']')
                                 FROM 
                                     {table}
-                                {sqlIdQualifier}
+                                {where_clause}
             """
             
-            prettySql = ' '.join(sqlStatement.split())
+            prettySql = ' '.join(sql_statement.split())
             print(f"{getMethod} SQL statement is:")
             print(prettySql)
 
-            cursor.execute(sqlStatement)
+            cursor.execute(sql_statement)
             row = cursor.fetchall()
 
             if row[0][0]:
@@ -241,7 +229,7 @@ def restApiFromTable(event, db_info):
         except pymysql.Error as e:
             errorMsg = f"HTTP {getMethod} actual SQL select statement failed: {e.args[0]} {e.args[1]}"
             print(errorMsg)
-            return composeJsonResponse('500', '', errorMsg)
+            return composeJsonResponse('500', '', "errorMsg")
         
     elif httpMethod == postMethod:
 

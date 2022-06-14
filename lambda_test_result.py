@@ -1,4 +1,4 @@
-from lambda_test import LambaTestExecute
+from lambda_test import LambdaTestExecute
 #
 # TODO: the path info is in the wrong spot
 #
@@ -51,7 +51,7 @@ resultDeleteConfig = {
     'expected_result': {},
 }
 
-LambaTestExecute(resultPutConfig)
-LambaTestExecute(resultGetConfig)
-LambaTestExecute(resultPostConfig)
-LambaTestExecute(resultDeleteConfig)
+LambdaTestExecute(resultPutConfig)
+LambdaTestExecute(resultGetConfig)
+LambdaTestExecute(resultPostConfig)
+LambdaTestExecute(resultDeleteConfig)
