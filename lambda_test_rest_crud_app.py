@@ -3,8 +3,25 @@ from lambda_test import LambdaTestExecute
 # TODO: the path info is in the wrong spot
 #
 
+database_path = '/rest_crud_app'
 user_path = '/rest_crud_app/user'
 rest_api_path = '/rest_crud_app/rest_api'
+
+
+################################################
+#
+# database get request (returns dict of tables in db)
+# 
+get_database_rest_api = {
+    'testHttpMethod': 'GET',
+    'testPath': database_path,
+    'queryStringParameters': {},
+    'testBody': {},
+    'context': {},
+    'expected_result': {},
+}
+
+
 
 ################################################
 #
@@ -92,7 +109,9 @@ get_rest_api_return_400 = {
 #LambdaTestExecute(get_user_return_400)
 #LambdaTestExecute(get_user_return_404)
 
-LambdaTestExecute(get_one_rest_api)
-LambdaTestExecute(get_all_rest_api)
-LambdaTestExecute(get_rest_api_return_400)
-LambdaTestExecute(get_rest_api_return_404)
+#LambdaTestExecute(get_one_rest_api)
+#LambdaTestExecute(get_all_rest_api)
+#LambdaTestExecute(get_rest_api_return_400)
+#LambdaTestExecute(get_rest_api_return_404)
+
+LambdaTestExecute(get_database_rest_api)

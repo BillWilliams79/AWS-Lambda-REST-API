@@ -23,8 +23,8 @@ def LambdaTestExecute(config):
     responseJson = lambda_handler(testEvent, context)
     print(f"{config['testPath']}.{testHttpMethod} Test Response:\n{json.dumps(responseJson,indent=4)}")
 
-    #if responseJson != None and 'body' in responseJson:
-    #    body = json.loads(responseJson['body'])
-    #    print(f'{testHttpMethod} body:\t{body}')
+    if responseJson != None and 'body' in responseJson:
+        body = json.loads(responseJson['body'])
+        print(f'{testHttpMethod} body:\t{body}')
 
     print("")
