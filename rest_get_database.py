@@ -1,3 +1,4 @@
+import json
 import pymysql
 from json_utils import composeJsonResponse
 from classifier import varDump
@@ -21,7 +22,7 @@ def rest_get_database(event, database, conn, getMethod):
             columns_array.append(row[0])
 
         if columns_array:
-            return composeJsonResponse('200', columns_array, 'OK')
+            return composeJsonResponse('200', json.dumps(columns_array), 'OK')
         else:
             print('get: 404')
             errorMsg = f"No data"

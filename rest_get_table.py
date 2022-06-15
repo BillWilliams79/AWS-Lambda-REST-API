@@ -45,7 +45,7 @@ def rest_get_table(event, table, conn, getMethod):
             print(errorMsg)
             return composeJsonResponse('400', '', "BAD REQUEST")            
 
-    # execute API read and process all return values
+    # STEP 3: execute API read and process all return values
     try:
 
         # read row(s) and format as JSON
