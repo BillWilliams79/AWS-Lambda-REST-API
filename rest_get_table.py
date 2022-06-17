@@ -29,21 +29,22 @@ def rest_get_table(event, table, conn, getMethod):
     order_by = ""
     qsp = event.get('queryStringParameters')
 
-    for key, value in qsp.items():
-
-        if key in sql_columns:
-            where_clause = f"{where_clause} WHERE {key}='{value}'"
-
-        elif key == 'sort':
-            sort_dict = dict(x.split(":") for x in value.split(","))
-            order_by = ', '.join(f"{sort_key} {sort_value}" for sort_key, sort_value in sort_dict.items())
-            order_by = f" ORDER BY {order_by}"                
-
-        else:
-            # JSON API document allows api implementation to ignore an impro
-            errorMsg = f"HTTP {getMethod} invalid query string parameter {key} {value}"
-            print(errorMsg)
-            return composeJsonResponse('400', '', "BAD REQUEST")            
+    if qsp:
+        for key, value in qsp.items():
+    
+            if key in sql_columns:
+                where_clause = f"{where_clause} WHERE {key}='{value}'"
+    
+            elif key == 'sort':
+                sort_dict = dict(x.split(":") for x in value.split(","))
+                order_by = ', '.join(f"{sort_key} {sort_value}" for sort_key, sort_value in sort_dict.items())
+                order_by = f" ORDER BY {order_by}"                
+    
+            else:
+                # JSON API document allows api implementation to ignore an impro
+                errorMsg = f"HTTP {getMethod} invalid query string parameter {key} {value}"
+                print(errorMsg)
+                return composeJsonResponse('400', '', "BAD REQUEST")            
 
     # STEP 3: execute API read and process all return values
     try:
