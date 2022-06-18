@@ -9,6 +9,7 @@ from rest_get_table import rest_get_table
 
 
 print('lambda init code executing...')
+
 #
 # HTTP Method const values
 #
@@ -18,21 +19,6 @@ putMethod = 'PUT'
 deleteMethod = 'DELETE'
 optionsMethod = 'OPTIONS'
 
-#
-# TODO: HTTP Response Code definitions
-#
-
-# USER: REST API endpoints. Correspond directly to database tables.
-mathUserPath = '/math_user'
-mathUserTable = 'Math_User'
-
-resultPath = '/results'
-resultTable = 'Results'
-
-restApiPath = '/rest_crud_app/user'
-restApiTable = 'user'
-
- 
 """
 connect to the RDS database using pymsql. 
 Connection establishment outside the lambda_handler is seen as efficient
@@ -92,6 +78,7 @@ def lambda_handler(event, context):
  
 def restApiFromTable(event, db_info):
 
+    #varDump(db_info, "db_info at start of restApiFromTable call")
     path = db_info['path']
     database = db_info['database']
     table = db_info['table']
@@ -129,9 +116,9 @@ def restApiFromTable(event, db_info):
                 INSERT INTO {table} ({sql_key_list}) 
                 VALUES ({sql_value_list});
             """
-            cursor = connection['Math_App'].cursor()
+            cursor = conn['Math_App'].cursor()
             cursor.execute(sqlStatement)
-            connection.commit()
+            conn.commit()
         except pymysql.Error as e:
             errorMsg = f"HTTP {putMethod} failed: {e.args[0]} {e.args[1]}"
             print(errorMsg)
@@ -171,10 +158,10 @@ def restApiFromTable(event, db_info):
                 WHERE
                     Id = {Id};
             """
-            cursor = connection.cursor()
+            cursor = conn.cursor()
             affected_rows = cursor.execute(sqlStatement)
             if affected_rows > 0:
-                connection.commit()
+                conn.commit()
                 return composeJsonResponse('200', '', 'OK')
             else:
                 errorMsg = f"HTTP {postMethod}: no data changed"
@@ -188,28 +175,35 @@ def restApiFromTable(event, db_info):
 
     elif httpMethod == deleteMethod:
 
-        # DELETE - Delete one Row by Id
-        Id = body.get('Id', '')
-        body.pop('Id')
+        if not body:
+            return composeJsonResponse(400, '', 'BAD REQUEST')
 
+        # if multple key/value are provided in body default is to AND them together
+        where_clause = ' AND '.join(f"{key}={value}" for key, value in body.items())
+        
         try:
-            sqlStatement = f"""
+            sql_statement = f"""
                 DELETE FROM {table} 
                 WHERE
-                    Id = {Id};
+                    {where_clause};
             """
-            cursor = connection.cursor()
-            affected_rows = cursor.execute(sqlStatement)
-            connection.commit()
+            
+            pretty_sql = ' '.join(sql_statement.split())
+            print(f"{deleteMethod} SQL statement is:")
+            print(pretty_sql)
+            
+            cursor = conn.cursor()
+            affected_rows = cursor.execute(sql_statement)
 
             if affected_rows == 0:
                 errorMsg = f"Affected_rows = 0, 404 time"
                 print(errorMsg)
                 return composeJsonResponse('404', '', 'NOT FOUND')
             else:
+                conn.commit()
                 return composeJsonResponse('200', '', 'OK')
 
-        except:
+        except pymysql.Error as e:
             errorMsg = f"HTTP {deleteMethod} SQL FAILED: {e.args[0]} {e.args[1]}"
             print(errorMsg)
             return composeJsonResponse('500', '', errorMsg)
