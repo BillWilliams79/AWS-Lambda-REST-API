@@ -62,11 +62,6 @@ def parse_path(path):
     database = splitPath[0]
     table = splitPath[1] if len(splitPath) > 1 else ''
     
-    #hack: remove after api gateway re-organize for mathapp
-    if database == 'math_user':
-        table = 'Math_User'
-        database = 'Math_App'
-    
     conn = connection[database] if database in connection else ''
         
     return {'path': path, 'database': database, 'table': table, 'conn': conn}
@@ -77,10 +72,10 @@ FAAS ENTRY POINT: the AWS Lambda function is configured to call this function by
 """
 def lambda_handler(event, context):
     
-    print(f"Lambda Handler Invoked for HTTP Method {event['httpMethod']}")
     #varDump(event, "event at lambda invocation")
-    
+
     path = event.get('path')
+    print(f"Lambda Handler Invoked for {path}.{event['httpMethod']}")
 
     if path:
         db_info = parse_path(path)
@@ -160,7 +155,6 @@ def restApiFromTable(event, db_info):
         else:
             return rest_get_database(event, database, conn, getMethod)
 
-        
     elif httpMethod == postMethod:
 
         # POST - Update one Row
