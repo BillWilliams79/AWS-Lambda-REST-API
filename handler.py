@@ -19,11 +19,6 @@ putMethod = 'PUT'
 deleteMethod = 'DELETE'
 optionsMethod = 'OPTIONS'
 
-"""
-connect to the RDS database using pymsql. 
-Connection establishment outside the lambda_handler is seen as efficient
-TODO: there is no error handling if connect doesn't work
-"""
 
 connection = dict()
 
@@ -34,6 +29,20 @@ for db in db_dict:
                                  user = username,
                                  password = password,
                                  database = db,)
+    
+    try:
+        # default session value "read repeatable" breaks ability to see
+        # updates from back end...
+        sql_statement = "SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED"
+        
+        cursor = connection[db].cursor()
+        no_data = cursor.execute(sql_statement)
+
+        print('SESSION ISOLATION = READ COMMITTED')
+
+    except pymysql.Error as e:
+        errorMsg = f"Set session isolation read committed failed: {e.args[0]} {e.args[1]}"
+        print(errorMsg)
 
 varDump(connection, 'Lambda Init: connection details')
 
@@ -53,9 +62,7 @@ def parse_path(path):
     return {'path': path, 'database': database, 'table': table, 'conn': conn}
 
 
-"""
-FAAS ENTRY POINT: the AWS Lambda function is configured to call this function by name.
-"""
+#FAAS ENTRY POINT: the AWS Lambda function is configured to call this function by name.
 def lambda_handler(event, context):
     
     #varDump(event, "event at lambda invocation")
@@ -75,7 +82,6 @@ def lambda_handler(event, context):
 
     return response 
 
- 
 def restApiFromTable(event, db_info):
 
     #varDump(db_info, "db_info at start of restApiFromTable call")
@@ -145,26 +151,31 @@ def restApiFromTable(event, db_info):
     elif httpMethod == postMethod:
 
         # POST - Update one Row
-        Id = body.get('Id', '')
-        body.pop('Id')
+        id = body.get('id', '')
+        body.pop('id')
         
         sql_kv_string = ', '.join(f"{key} = '{value}'" for key, value in body.items())
 
         try:
-            sqlStatement = f"""
+            sql_statement = f"""
                 UPDATE {table}
                 SET 
                     {sql_kv_string}
                 WHERE
-                    Id = {Id};
+                    id = {id};
             """
+            
+            pretty_sql = ' '.join(sql_statement.split())
+            print(f"{deleteMethod} SQL statement is:")
+            print(pretty_sql)
+            
             cursor = conn.cursor()
-            affected_rows = cursor.execute(sqlStatement)
+            affected_rows = cursor.execute(sql_statement)
             if affected_rows > 0:
                 conn.commit()
                 return composeJsonResponse('200', '', 'OK')
             else:
-                errorMsg = f"HTTP {postMethod}: no data changed"
+                errorMsg = f"HTTP {postMethod}: NO DATA CHANGED"
                 print(errorMsg)
                 return composeJsonResponse('204', '', errorMsg)
 
@@ -194,6 +205,7 @@ def restApiFromTable(event, db_info):
             
             cursor = conn.cursor()
             affected_rows = cursor.execute(sql_statement)
+
 
             if affected_rows == 0:
                 errorMsg = f"Affected_rows = 0, 404 time"

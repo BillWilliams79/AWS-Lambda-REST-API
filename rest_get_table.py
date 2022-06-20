@@ -70,6 +70,8 @@ def rest_get_table(event, table, conn, getMethod):
         cursor.execute(sql_statement)
         row = cursor.fetchall()
 
+        varDump(row, 'row data from read table')
+
         if row[0][0]:
             return composeJsonResponse('200', row[0], 'OK')
         else:
