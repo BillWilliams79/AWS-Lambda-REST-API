@@ -29,10 +29,9 @@ def composeJsonResponse(statusCode, body='', httpMessage=''):
     # json encode body and insert into response dict
     #
     if body is not None:
-        jsonResponseDict['body'] = json.dumps(body,
-                                      #cls=DecimalEncoder,
-                                      indent=4,)
-    
-    #varDump(jsonResponseDict, "JSON response dict with headers etc.")
+        jsonResponseDict['body'] = json.dumps(body)
+    else:
+        print('body is empty')
+
     return jsonResponseDict
 

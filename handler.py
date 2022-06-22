@@ -117,14 +117,20 @@ def restApiFromTable(event, db_info):
 
         try:
             # insert row into table
-
-            sqlStatement = f"""
-                INSERT INTO {table} ({sql_key_list}) 
-                VALUES ({sql_value_list});
+            sql_statement = f"""
+                        INSERT INTO {table} ({sql_key_list}) 
+                        VALUES ({sql_value_list});
             """
-            cursor = conn['Math_App'].cursor()
-            cursor.execute(sqlStatement)
-            conn.commit()
+            cursor = conn.cursor()
+            affected_put_rows = cursor.execute(sql_statement)
+
+            if affected_put_rows > 0:
+                conn.commit()
+            else:
+                errorMsg = f"HTTP {putMethod} failed no rows affected"
+                print(errorMsg)
+                return composeJsonResponse('500', '', "NO DATA SAVED")
+
         except pymysql.Error as e:
             errorMsg = f"HTTP {putMethod} failed: {e.args[0]} {e.args[1]}"
             print(errorMsg)
@@ -132,14 +138,16 @@ def restApiFromTable(event, db_info):
 
         try:
             # retrieve ID of newly created row
-
-            cursor.execute('SELECT LAST_INSERT_ID();')
+            sql_statement= f"""SELECT LAST_INSERT_ID()"""
+            affected_rows = cursor.execute(sql_statement)
             newId = cursor.fetchone()
+
         except pymysql.Error as e:
             print(f"HTTP {putMethod} FAILED: {e.args[0]} {e.args[1]}")
-            return composeJsonResponse('201', {'Id': 'Not available'}, 'CREATED')
+            return composeJsonResponse('201', json.dumps({'id': 'not available'}), 'CREATED')
 
-        return composeJsonResponse('201', {'Id': newId[0]}, 'CREATED')
+        varDump(newId[0], 'newId[0]')
+        return composeJsonResponse('200', json.dumps({'id': newId[0]}), 'CREATED')
 
     elif httpMethod == getMethod:
         
@@ -205,7 +213,6 @@ def restApiFromTable(event, db_info):
             
             cursor = conn.cursor()
             affected_rows = cursor.execute(sql_statement)
-
 
             if affected_rows == 0:
                 errorMsg = f"Affected_rows = 0, 404 time"
