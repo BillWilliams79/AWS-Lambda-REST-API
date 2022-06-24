@@ -1,6 +1,6 @@
 import pymysql
 from json_utils import composeJsonResponse
-from classifier import varDump
+from classifier import varDump, pretty_print_sql
         
 def rest_get_table(event, table, conn, getMethod):
 
@@ -9,7 +9,6 @@ def rest_get_table(event, table, conn, getMethod):
     #         to verify correct QSP
     try:
         cursor = conn.cursor()
-        cursor.execute("SET SESSION group_concat_max_len = 65536")
         cursor.execute(f""" DESC {table}; """)
         rows = cursor.fetchall()
         
@@ -48,7 +47,6 @@ def rest_get_table(event, table, conn, getMethod):
 
     # STEP 3: execute API read and process all return values
     try:
-
         # read row(s) and format as JSON
         sql_statement = f"""
                             SELECT 
@@ -62,11 +60,8 @@ def rest_get_table(event, table, conn, getMethod):
                                 {table}
                             {where_clause}
         """
+        pretty_print_sql(sql_statement, getMethod)
         
-        prettySql = ' '.join(sql_statement.split())
-        print(f"{getMethod} SQL statement is:")
-        print(prettySql)
-
         cursor.execute(sql_statement)
         row = cursor.fetchall()
 

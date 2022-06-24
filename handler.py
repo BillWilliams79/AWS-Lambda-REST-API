@@ -1,7 +1,7 @@
 import json
 import pymysql
 
-from classifier import varDump
+from classifier import varDump, pretty_print_sql
 from json_utils import composeJsonResponse
 from mathapp_rds import *
 from rest_get_database import rest_get_database
@@ -19,30 +19,35 @@ putMethod = 'PUT'
 deleteMethod = 'DELETE'
 optionsMethod = 'OPTIONS'
 
-
 connection = dict()
 
 for db in db_dict:
-    
+
     print('attempting database connection...')
     connection[db] = pymysql.connect(host = endpoint,
                                  user = username,
                                  password = password,
                                  database = db,)
-    
+
+    cursor = connection[db].cursor()
+
     try:
         # default session value "read repeatable" breaks ability to see
         # updates from back end...
         sql_statement = "SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED"
-        
-        cursor = connection[db].cursor()
         no_data = cursor.execute(sql_statement)
-
-        print('SESSION ISOLATION = READ COMMITTED')
 
     except pymysql.Error as e:
         errorMsg = f"Set session isolation read committed failed: {e.args[0]} {e.args[1]}"
         print(errorMsg)
+
+    try:
+        # Required to allow large data returns for reads using group_concat_max_len
+        cursor.execute("SET SESSION group_concat_max_len = 65536")
+    except pymysql.Error as e:
+        errorMsg = f"Set session group_concat_max_len 64k failed: {e.args[0]} {e.args[1]}"
+        print(errorMsg)
+
 
 varDump(connection, 'Lambda Init: connection details')
 
@@ -64,8 +69,6 @@ def parse_path(path):
 
 #FAAS ENTRY POINT: the AWS Lambda function is configured to call this function by name.
 def lambda_handler(event, context):
-    
-    #varDump(event, "event at lambda invocation")
 
     path = event.get('path')
     print(f"Lambda Handler Invoked for {path}.{event['httpMethod']}")
@@ -111,16 +114,18 @@ def restApiFromTable(event, db_info):
     #
     if httpMethod == putMethod:
     
-        # PUT -> Create one Row
+        # Assemble list of keys and values for use in SQL
         sql_key_list = ', '.join(f'{key}' for key in body.keys())
         sql_value_list = ', '.join(f"'{value}'" for value in body.values())
 
         try:
             # insert row into table
             sql_statement = f"""
-                        INSERT INTO {table} ({sql_key_list}) 
+                        INSERT INTO {table} ({sql_key_list})
                         VALUES ({sql_value_list});
             """
+            pretty_print_sql(sql_statement, putMethod)
+
             cursor = conn.cursor()
             affected_put_rows = cursor.execute(sql_statement)
 
@@ -140,14 +145,65 @@ def restApiFromTable(event, db_info):
             # retrieve ID of newly created row
             sql_statement= f"""SELECT LAST_INSERT_ID()"""
             affected_rows = cursor.execute(sql_statement)
-            newId = cursor.fetchone()
+
+            if affected_rows > 0:
+                newId = cursor.fetchone()
+                varDump(newId, 'newId after fetchone')
+            else:
+                print(f"HTTP {putMethod} FAILED to read last_insert_id.")
+                return composeJsonResponse('201', '', 'CREATED')
 
         except pymysql.Error as e:
-            print(f"HTTP {putMethod} FAILED: {e.args[0]} {e.args[1]}")
-            return composeJsonResponse('201', json.dumps({'id': 'not available'}), 'CREATED')
+            print(f"HTTP {putMethod} FAILED to read last_insert_id: {e.args[0]} {e.args[1]}")
+            return composeJsonResponse('201', '', 'CREATED')
 
-        varDump(newId[0], 'newId[0]')
-        return composeJsonResponse('200', json.dumps({'id': newId[0]}), 'CREATED')
+        try:
+            # retrieve table description and create json object and sql columns
+            cursor.execute(f""" DESC {table}; """)
+            rows = cursor.fetchall()
+
+            json_object_columns = ', '.join(f"'{row[0]}', {row[0]}" for row in rows)
+
+            sql_columns = []
+            for row in rows:
+                sql_columns.append(row[0])
+            
+        except pymysql.Error as e:
+            errorMsg = f"HTTP {getMethod} helper DESC SQL command failed: {e.args[0]} {e.args[1]}"
+            print(errorMsg)
+            return composeJsonResponse('201', '', 'CREATED')
+
+        try:
+            # read row(s) and format as JSON
+            sql_statement = f"""SELECT
+                                    CONCAT('[',
+                                        GROUP_CONCAT(
+                                            JSON_OBJECT({json_object_columns})
+                                            SEPARATOR ', ')
+                                    ,']')
+                                FROM
+                                    {table}
+                                WHERE id={newId[0]}
+            """
+            pretty_print_sql(sql_statement, getMethod)
+
+            cursor.execute(sql_statement)
+            row = cursor.fetchall()
+    
+            varDump(row, 'row data from read table AFTER put')
+
+            if row[0][0]:
+                return composeJsonResponse('200', row[0], 'CREATED')
+            else:
+                print(f"HTTP {putMethod} helper SELECT after WRITE SQL command failed")
+                return composeJsonResponse('201', '', 'CREATED')
+
+        except pymysql.Error as e:
+            errorMsg = f"HTTP {putMethod} helper SELECT after WRITE SQL command failed: {e.args[0]} {e.args[1]}"
+            print(errorMsg)
+            return composeJsonResponse('500', '', "errorMsg")
+
+        return composeJsonResponse('500', '', 'INVALID PATH')
 
     elif httpMethod == getMethod:
         
@@ -172,11 +228,8 @@ def restApiFromTable(event, db_info):
                 WHERE
                     id = {id};
             """
-            
-            pretty_sql = ' '.join(sql_statement.split())
-            print(f"{deleteMethod} SQL statement is:")
-            print(pretty_sql)
-            
+            pretty_print_sql(sql_statement, putMethod)
+
             cursor = conn.cursor()
             affected_rows = cursor.execute(sql_statement)
             if affected_rows > 0:
@@ -206,11 +259,8 @@ def restApiFromTable(event, db_info):
                 WHERE
                     {where_clause};
             """
-            
-            pretty_sql = ' '.join(sql_statement.split())
-            print(f"{deleteMethod} SQL statement is:")
-            print(pretty_sql)
-            
+            pretty_print_sql(sql_statement, deleteMethod)
+
             cursor = conn.cursor()
             affected_rows = cursor.execute(sql_statement)
 
