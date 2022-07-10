@@ -157,3 +157,14 @@ DROP TABLE Results;
 /* TRUNCATE deletes all data from table, but retains its defintion */
 /*TRUNCATE Math_User;
 */
+
+SELECT @@GLOBAL.transaction_isolation, @@GLOBAL.transaction_read_only;
+SELECT @@SESSION.transaction_isolation, @@SESSION.transaction_read_only;
+
+SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+SHOW STATUS WHERE `variable_name` = 'Threads_connected';
+
+show session status;
+
+show global status;

@@ -25,15 +25,16 @@ for db in db_dict:
 
     print('attempting database connection...')
     connection[db] = pymysql.connect(host = endpoint,
-                                 user = username,
-                                 password = password,
-                                 database = db,)
+                                     user = username,
+                                     password = password,
+                                     database = db,)
 
     cursor = connection[db].cursor()
 
     try:
         # default session value "read repeatable" breaks ability to see
-        # updates from back end...
+        # updates from back end...READ COMITTED enable select to return all 
+        # committed data from all sources
         sql_statement = "SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED"
         no_data = cursor.execute(sql_statement)
 
