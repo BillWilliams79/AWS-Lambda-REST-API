@@ -71,6 +71,8 @@ def parse_path(path):
 #FAAS ENTRY POINT: the AWS Lambda function is configured to call this function by name.
 def lambda_handler(event, context):
 
+    varDump(event, 'lambda_handler dump event')
+    varDump(context, 'lambda_handler context')
     path = event.get('path')
     print(f"Lambda Handler Invoked for {path}.{event['httpMethod']}")
 
@@ -220,6 +222,9 @@ def restApiFromTable(event, db_info):
         body.pop('id')
         
         sql_kv_string = ', '.join(f"{key} = '{value}'" for key, value in body.items())
+
+        # NULL handling: mySQL requires no quotes around NULL values
+        sql_kv_string = sql_kv_string.replace("'NULL'", "NULL")
 
         try:
             sql_statement = f"""

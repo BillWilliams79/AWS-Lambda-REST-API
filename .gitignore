@@ -1,3 +1,6 @@
+# Mac OS .ds_store files @ any level
+.DS_Store
+
 /boto*
 /dateutil
 /jme*
@@ -11,3 +14,4 @@
 /python_date*
 /*.zip
 /mathapp_rds.py
+
