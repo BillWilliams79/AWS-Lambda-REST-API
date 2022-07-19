@@ -24,7 +24,9 @@ def rest_get_table(event, table, conn, getMethod):
         return composeJsonResponse('500', '', errorMsg)
 
     # STEP 2: iterate over query string parameters 
-    where_clause = ""
+    where_clause = "WHERE"
+    where_connector = ""
+    where_count = 0
     order_by = ""
     qsp = event.get('queryStringParameters')
 
@@ -32,7 +34,9 @@ def rest_get_table(event, table, conn, getMethod):
         for key, value in qsp.items():
     
             if key in sql_columns:
-                where_clause = f"{where_clause} WHERE {key}='{value}'"
+                where_count = where_count + 1
+                where_clause = f"{where_clause}{where_connector} {key}='{value}'"
+                where_connector = " AND"
     
             elif key == 'sort':
                 sort_dict = dict(x.split(":") for x in value.split(","))
@@ -40,10 +44,14 @@ def rest_get_table(event, table, conn, getMethod):
                 order_by = f" ORDER BY {order_by}"                
     
             else:
-                # JSON API document allows api implementation to ignore an impro
+                # JSON API document allows api implementation to ignore an improperly formed request
                 errorMsg = f"HTTP {getMethod} invalid query string parameter {key} {value}"
                 print(errorMsg)
-                return composeJsonResponse('400', '', "BAD REQUEST")            
+                return composeJsonResponse('400', '', "BAD REQUEST")
+    
+    # zero out where clause if there were no QSPs
+    if where_count == 0:
+        where_clause = ""
 
     # STEP 3: execute API read and process all return values
     try:
