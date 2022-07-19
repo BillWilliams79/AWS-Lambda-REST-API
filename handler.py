@@ -44,9 +44,9 @@ for db in db_dict:
 
     try:
         # Required to allow large data returns for reads using group_concat_max_len
-        cursor.execute("SET SESSION group_concat_max_len = 65536")
+        cursor.execute("SET SESSION group_concat_max_len = 67108864")
     except pymysql.Error as e:
-        errorMsg = f"Set session group_concat_max_len 64k failed: {e.args[0]} {e.args[1]}"
+        errorMsg = f"Set session group_concat_max_len 64MB failed: {e.args[0]} {e.args[1]}"
         print(errorMsg)
 
 
