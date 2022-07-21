@@ -32,6 +32,17 @@ for db in db_dict:
     cursor = connection[db].cursor()
 
     try:
+        # default session value "read repeatable" breaks ability to see
+        # updates from back end...READ COMITTED enable select to return all 
+        # committed data from all sources
+        sql_statement = "SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED"
+        no_data = cursor.execute(sql_statement)
+
+    except pymysql.Error as e:
+        errorMsg = f"Set session isolation read committed failed: {e.args[0]} {e.args[1]}"
+        print(errorMsg)
+
+    try:
         # Required to allow large data returns for reads using group_concat_max_len
         cursor.execute("SET SESSION group_concat_max_len = 67108864")
     except pymysql.Error as e:
@@ -79,7 +90,7 @@ def lambda_handler(event, context):
 def restApiFromTable(event, db_info):
 
     #varDump(db_info, "db_info at start of restApiFromTable call")
-    path = db_info['path']
+    #path = db_info['path']
     database = db_info['database']
     table = db_info['table']
     conn = db_info['conn']
