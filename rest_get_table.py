@@ -35,9 +35,12 @@ def rest_get_table(event, table, conn, getMethod):
         for key, value in qsp.items():
 
             if key in sql_columns:
-                # parse data filtering options
+                # if key is valid SQL column, it is a filter or part of the where clause
+                if (value.startswith('(') and value.endswith(')')):
+                    where_clause = f"{where_clause}{where_connector} {key} in {value}"
+                else:
+                    where_clause = f"{where_clause}{where_connector} {key}='{value}'"
                 where_count = where_count + 1
-                where_clause = f"{where_clause}{where_connector} {key}='{value}'"
                 where_connector = " AND"
 
             elif key == 'sort':
