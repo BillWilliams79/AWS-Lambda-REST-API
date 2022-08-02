@@ -70,8 +70,8 @@ def parse_path(path):
 #FAAS ENTRY POINT: the AWS Lambda function is configured to call this function by name.
 def lambda_handler(event, context):
 
-    varDump(event, 'lambda_handler dump event')
-    varDump(context, 'lambda_handler context')
+    #varDump(event, 'lambda_handler dump event')
+    #varDump(context, 'lambda_handler context')
     path = event.get('path')
     print(f"Lambda Handler Invoked for {path}.{event['httpMethod']}")
 
@@ -150,7 +150,7 @@ def restApiFromTable(event, db_info):
 
             if affected_rows > 0:
                 newId = cursor.fetchone()
-                varDump(newId, 'newId after fetchone')
+                #varDump(newId, 'newId after fetchone')
             else:
                 print(f"HTTP {putMethod} FAILED to read last_insert_id.")
                 return composeJsonResponse('201', '', 'CREATED')
@@ -192,7 +192,7 @@ def restApiFromTable(event, db_info):
             cursor.execute(sql_statement)
             row = cursor.fetchall()
     
-            varDump(row, 'row data from read table AFTER put')
+            #varDump(row, 'row data from read table AFTER put')
 
             if row[0][0]:
                 return composeJsonResponse('200', row[0], 'CREATED')
@@ -243,7 +243,7 @@ def restApiFromTable(event, db_info):
             else:
                 errorMsg = f"HTTP {postMethod}: NO DATA CHANGED"
                 print(errorMsg)
-                return composeJsonResponse('204', '', errorMsg)
+                return composeJsonResponse('204', 'NO DATA CHANGED', 'NO DATA CHANGED')
 
         except pymysql.Error as e:
             errorMsg = f"HTTP {postMethod} SQL FAILED: {e.args[0]} {e.args[1]}"

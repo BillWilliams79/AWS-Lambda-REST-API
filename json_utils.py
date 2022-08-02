@@ -1,5 +1,5 @@
 import json
-from classifier import  varDump
+from classifier import varDump
 
 #
 # json response utility function
@@ -28,10 +28,13 @@ def composeJsonResponse(statusCode, body='', httpMessage=''):
     #
     # json encode body and insert into response dict
     #
+    #print('about to process body')
     if body is not None:
         jsonResponseDict['body'] = json.dumps(body)
     else:
         print('body is empty')
+
+    #varDump(jsonResponseDict, 'jsonResponseDict')
 
     return jsonResponseDict
 
