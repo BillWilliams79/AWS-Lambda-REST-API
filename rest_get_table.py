@@ -1,5 +1,6 @@
 import pymysql
 import json
+from ast import liter_eval
 from json_utils import composeJsonResponse
 from classifier import varDump, pretty_print_sql
         
@@ -45,6 +46,17 @@ def rest_get_table(event, table, conn, getMethod):
                     where_clause = f"{where_clause}{where_connector} {key} in {value}"
                 else:
                     where_clause = f"{where_clause}{where_connector} {key}='{value}'"
+                where_count = where_count + 1
+                where_connector = " AND"
+
+            elif key == 'ts_filter':
+                # ts_filter=(done_ts, 2022-08-06 07:00:00, 2022-08-07 07:00:00)
+                # SQL => where done_ts between '2022-08-06 07:00:00' and '2022-08-07 07:00:00'
+                varDump(value, "value with ts_filter is")
+                tuple_val = liter_eval(value)
+                varDump(tuple_val, "tuple_val")
+                where_clause = f"{where_clause}{where_connector} {tuple_val[0]} BETWEEN {tuple_val[1]} AND {tuple_val[2]}"
+                varDump(where_clause, "where clause after ts_filter insertion")
                 where_count = where_count + 1
                 where_connector = " AND"
 

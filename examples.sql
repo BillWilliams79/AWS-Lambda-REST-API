@@ -143,6 +143,30 @@ SELECT
 	json_arrayagg(JSON_OBJECT('Id', Id, 'Name', Name, 'Favorite_Color', Favorite_Color))
 FROM
 	Math_User;
+    
+/* produce a table of count of tasks per domain/area_name - not practical for rest API with big changes at present */
+SELECT
+	areas.domain_fk,
+	area_name,
+    count(*)
+FROM
+    tasks
+		INNER JOIN areas
+			ON tasks.area_fk = areas.id
+GROUP BY areas.domain_fk, area_name;
+
+    
+    
+show status like '%onn%';
+show processlist;
+
+show session variables;
+SELECT * FROM performance_schema.session_connect_attrs;
+
+SHOW VARIABLES LIKE 'performance_schema';
+
+DESC tasks;    
+    
 /* ORDER BY Name desc, Favorite_Color asc, Id desc; */
     
 /* DROP TABLE deletes tables and its data definition */
