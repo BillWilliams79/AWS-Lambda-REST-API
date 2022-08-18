@@ -1,10 +1,9 @@
 import pymysql
 import json
-from ast import literal_eval
-from json_utils import composeJsonResponse
+from rest_api_utils import compose_rest_response
 from classifier import varDump, pretty_print_sql
         
-def rest_get_table(event, table, conn, getMethod):
+def rest_get_table(get_method, conn, table, event):
 
     # STEP 1: Execute helper SQL commands: build list of columns for the SQL
     #         command and allow for larger group concat. Build a list of columns
@@ -23,9 +22,9 @@ def rest_get_table(event, table, conn, getMethod):
             sql_columns.append(row[0])
 
     except pymysql.Error as e:
-        errorMsg = f"HTTP {getMethod} helper SQL command failed: {e.args[0]} {e.args[1]}"
+        errorMsg = f"HTTP {get_method} helper SQL command failed: {e.args[0]} {e.args[1]}"
         print(errorMsg)
-        return composeJsonResponse('500', '', errorMsg)
+        return compose_rest_response('500', '', errorMsg)
 
     # STEP 2: iterate over query string parameters 
     where_clause = "WHERE"
@@ -83,9 +82,9 @@ def rest_get_table(event, table, conn, getMethod):
 
                     if field not in sql_columns:
                         # if field is not an SQL column, this is an improperly formed request, fail 400
-                        errorMsg = f"HTTP {getMethod} invalid query string parameter FIELDS: {key} {value}"
+                        errorMsg = f"HTTP {get_method} invalid query string parameter FIELDS: {key} {value}"
                         print(errorMsg)
-                        return composeJsonResponse('400', '', "BAD REQUEST")
+                        return compose_rest_response('400', '', "BAD REQUEST")
 
                     else:
                         # a count(*) syntax limits to a single extra field which becomes the group by field
@@ -96,15 +95,15 @@ def rest_get_table(event, table, conn, getMethod):
                         elif count_syntax > 1:
                             # error condition count(*) requires only two fields params: count(*) and colu
                             print(errorMsg)
-                            return composeJsonResponse('400', '', "BAD REQUEST")
+                            return compose_rest_response('400', '', "BAD REQUEST")
 
                 columns_select = ', '.join(f"'{field}', {field}" for field in value.split(","))
 
             else:
                 # JSON API document allows api implementation to ignore an improperly formed request
-                errorMsg = f"HTTP {getMethod} invalid query string parameter {key} {value}"
+                errorMsg = f"HTTP {get_method} invalid query string parameter {key} {value}"
                 print(errorMsg)
-                return composeJsonResponse('400', '', "BAD REQUEST")
+                return compose_rest_response('400', '', "BAD REQUEST")
 
     # zero out where clause if there were no QSPs
     if where_count == 0:
@@ -137,14 +136,14 @@ def rest_get_table(event, table, conn, getMethod):
                                 {group_by}
             """
 
-        pretty_print_sql(sql_statement, getMethod)
+        pretty_print_sql(sql_statement, get_method)
         
         cursor.execute(sql_statement)
         row = cursor.fetchall()
 
         if row[0][0]:
             if count_syntax == 0:
-                return composeJsonResponse('200', row[0], 'OK')
+                return compose_rest_response('200', row[0], 'OK')
             else:
                 # count(*) data has to be massaged into an array of dict
                 # it comes back as a tuple of tuples, each having a dict in json format
@@ -152,15 +151,15 @@ def rest_get_table(event, table, conn, getMethod):
                 for tuple_dict in row:
                     return_value.append(json.loads(tuple_dict[0]))
                 varDump(json.dumps(return_value), 'json dump tuple_dict')
-                return composeJsonResponse('200', json.dumps(return_value), 'OK')
+                return compose_rest_response('200', json.dumps(return_value), 'OK')
 
         else:
             print('get: 404')
             errorMsg = f"No data"
             print(errorMsg)
-            return composeJsonResponse('404',  '', 'NOT FOUND')
+            return compose_rest_response('404',  '', 'NOT FOUND')
 
     except pymysql.Error as e:
-        errorMsg = f"HTTP {getMethod} actual SQL select statement failed: {e.args[0]} {e.args[1]}"
+        errorMsg = f"HTTP {get_method} actual SQL select statement failed: {e.args[0]} {e.args[1]}"
         print(errorMsg)
-        return composeJsonResponse('500', '', "errorMsg")
+        return compose_rest_response('500', '', "errorMsg")
