@@ -4,15 +4,15 @@ from classifier import varDump
 #
 # json response utility function
 #
-def rest_api_response(status_code, body='', http_message=''):
+def composeJsonResponse(statusCode, body='', httpMessage=''):
 
     #
     # HTTP status code, json content type and CORS access control '*'
     #
-    print(f"HTTP Status Code: {status_code}")
-    rest_api_response = {
+    print(f"HTTP Status Code: {statusCode}")
+    jsonResponseDict = {
         'isBase64Encoded': 'true',
-        'statusCode': status_code,
+        'statusCode': statusCode,
         'headers' : {
             'Content-Type': 'application/json',
             'Access-Control-Allow-Origin': '*',
@@ -21,20 +21,20 @@ def rest_api_response(status_code, body='', http_message=''):
         }
     }
 
-    if status_code != '200' and status_code != '201' and status_code != '204':
-        print(f"Error message inserted into body.  {body} : {http_message}")
-        body = json.dumps(http_message)
+    if statusCode != '200' and statusCode != '201' and statusCode != '204':
+        print(f"Error message inserted into body.  {body} : {httpMessage}")
+        body = json.dumps(httpMessage)
         
     #
     # json encode body and insert into response dict
     #
     #print('about to process body')
     if body is not None:
-        rest_api_response['body'] = json.dumps(body)
+        jsonResponseDict['body'] = json.dumps(body)
     else:
         print('body is empty')
 
-    varDump(rest_api_response, 'rest_api_response')
+    varDump(jsonResponseDict, 'jsonResponseDict')
 
-    return rest_api_response
+    return jsonResponseDict
 
