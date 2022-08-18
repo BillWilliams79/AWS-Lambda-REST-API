@@ -29,25 +29,26 @@ for db in db_dict:
                                      password = password,
                                      database = db,)
 
-    cursor = connection[db].cursor()
+    # Session variables are handled in the RDS Proxy
+    # cursor = connection[db].cursor()
 
-    try:
-        # default session value "read repeatable" breaks ability to see
-        # updates from back end...READ COMITTED enable select to return all 
-        # committed data from all sources
-        sql_statement = "SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED"
-        no_data = cursor.execute(sql_statement)
+    # try:
+    #     # default session value "read repeatable" breaks ability to see
+    #     # updates from back end...READ COMITTED enable select to return all 
+    #     # committed data from all sources
+    #     sql_statement = "SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED"
+    #     no_data = cursor.execute(sql_statement)
 
-    except pymysql.Error as e:
-        errorMsg = f"Set session isolation read committed failed: {e.args[0]} {e.args[1]}"
-        print(errorMsg)
+    # except pymysql.Error as e:
+    #     errorMsg = f"Set session isolation read committed failed: {e.args[0]} {e.args[1]}"
+    #     print(errorMsg)
 
-    try:
-        # Required to allow large data returns for reads using group_concat_max_len
-        cursor.execute("SET SESSION group_concat_max_len = 67108864")
-    except pymysql.Error as e:
-        errorMsg = f"Set session group_concat_max_len 64MB failed: {e.args[0]} {e.args[1]}"
-        print(errorMsg)
+    # try:
+    #     # Required to allow large data returns for reads using group_concat_max_len
+    #     cursor.execute("SET SESSION group_concat_max_len = 67108864")
+    # except pymysql.Error as e:
+    #     errorMsg = f"Set session group_concat_max_len 64MB failed: {e.args[0]} {e.args[1]}"
+    #     print(errorMsg)
 
 varDump(connection, 'Lambda Init: connection details')
 
@@ -119,6 +120,9 @@ def restApiFromTable(event, db_info):
         # Assemble list of keys and values for use in SQL
         sql_key_list = ', '.join(f'{key}' for key in body.keys())
         sql_value_list = ', '.join(f"'{value}'" for value in body.values())
+
+        # NULL handling: mySQL requires no quotes around NULL values
+        sql_value_list = sql_value_list.replace("'NULL'", "NULL")
 
         try:
             # insert row into table
@@ -233,7 +237,7 @@ def restApiFromTable(event, db_info):
                 WHERE
                     id = {id};
             """
-            pretty_print_sql(sql_statement, putMethod)
+            pretty_print_sql(sql_statement, postMethod)
 
             cursor = conn.cursor()
             affected_rows = cursor.execute(sql_statement)
