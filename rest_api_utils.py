@@ -34,6 +34,6 @@ def compose_rest_response(status_code, body='', http_message=''):
     else:
         print('body is empty')
 
-    varDump(lambda_rest_api_response, 'Lambda proxy response')
+    #varDump(lambda_rest_api_response, 'Lambda proxy response')
 
     return lambda_rest_api_response

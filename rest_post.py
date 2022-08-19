@@ -3,21 +3,35 @@ import json
 from rest_api_utils import compose_rest_response
 from classifier import varDump, pretty_print_sql
         
-def rest_post(post_method, conn, table, body):
+def rest_post(post_method, conn, table, body_list):
 
-    # POST - Update one Row
-    if not body:
+    if not body_list:
+        print('HTTP POST with error 400: body not included')
         return compose_rest_response(400, '', 'BAD REQUEST')
 
-    id = body.get('id', '')
-    body.pop('id')
-    
-    sql_kv_string = ', '.join(f"{key} = '{value}'" for key, value in body.items())
+    # use the simple, more typical 'update' SQL syntax when updating a single record
+    if len(body_list) == 1:
 
-    # NULL handling: mySQL requires no quotes around NULL values
-    sql_kv_string = sql_kv_string.replace("'NULL'", "NULL")
+        body = body_list[0]
 
-    try:
+        # id used to identify the record, is not part of the columns updated
+        id = body.get('id')
+
+        if id == None:
+            print('HTTP POST with error 400: id not included in request')
+            return compose_rest_response(400, '', 'BAD REQUEST')
+
+        body.pop('id')
+
+        if len(body) == 0:
+            print('HTTP POST with error 400: only id included in request')
+            return compose_rest_response(400, '', 'BAD REQUEST')
+
+        sql_kv_string = ', '.join(f"{key} = '{value}'" for key, value in body.items())
+
+        # NULL handling: mySQL requires no quotes around NULL values
+        sql_kv_string = sql_kv_string.replace("'NULL'", "NULL")
+
         sql_statement = f"""
             UPDATE {table}
             SET 
@@ -25,6 +39,62 @@ def rest_post(post_method, conn, table, body):
             WHERE
                 id = {id};
         """
+    else:
+        # when POST receives multiple records, use case syntax. Here's an example:
+        # UPDATE areas SET
+        #    sort_order = CASE id
+        #       WHEN 1 THEN 0
+        #       WHEN 2 THEN 1
+        #       ELSE sort_order
+        #       END,
+        #    area_name = CASE id
+        #      WHEN 9 THEN 'React'
+        #      WHEN 10 THEN 'Lambda'
+        #      ELSE area_name
+        #      END
+        #   WHERE id in (1,2,9,10);
+
+        id_list = list()
+        column_dict = dict()
+
+        for body in body_list:
+            # id used to identify the record, is not part of the columns updated
+            id = body.get('id')
+
+            if id == None:
+                print('HTTP POST with error 400: id not included in request')
+                return compose_rest_response(400, '', 'BAD REQUEST')
+
+            body.pop('id')
+
+            if len(body) == 0:
+                print('HTTP POST with error 400: only id included in request')
+                return compose_rest_response(400, '', 'BAD REQUEST')
+
+            # creating list of id's, later convert to id string for the IN clause
+            id_list.append(id)
+
+            # iterate over key value pairs creating dict of WHEN/THEN statements
+            # stored by column name
+            for key, value in body.items():
+                 case_string = column_dict.get(key, '')
+                 case_string = f"{case_string} WHEN {id} THEN '{value}'"
+                 column_dict[key] = case_string
+
+        case_string = ', '.join(f"{key} = CASE id {value} ELSE {key} END" for key, value in column_dict.items())
+
+        # NULL handling: mySQL requires no quotes around NULL values
+        case_string = case_string.replace("'NULL'", "NULL")
+
+        id_string = ', '.join(f"{id}" for id in id_list)
+
+        sql_statement = f"""
+            UPDATE {table} SET
+                {case_string}
+            WHERE id in ({id_string});
+        """
+
+    try:
         pretty_print_sql(sql_statement, post_method)
 
         cursor = conn.cursor()

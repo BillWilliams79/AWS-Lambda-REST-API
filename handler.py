@@ -46,7 +46,8 @@ def parse_path(path):
     table = split_path[1] if len(split_path) > 1 else ''
     
     conn = connection[database] if database in connection else ''
-        
+
+    #varDump({'path': path, 'database': database, 'table': table}, 'parse_path results', 'json')
     return {'path': path, 'database': database, 'table': table, 'conn': conn}
 
 
