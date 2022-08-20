@@ -24,7 +24,7 @@ options_method = 'OPTIONS'
 
 connection = dict()
 
-for db in db_dict:
+""" for db in db_dict:
 
     print('attempting database connection...')
     connection[db] = pymysql.connect(host = endpoint,
@@ -33,7 +33,7 @@ for db in db_dict:
                                      database = db,)
 
 varDump(connection, 'Lambda Init: connection details')
-
+ """
 def parse_path(path):
 
     #

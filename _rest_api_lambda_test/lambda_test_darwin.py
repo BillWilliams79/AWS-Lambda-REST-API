@@ -1,13 +1,10 @@
 import sys
+# update sys path  to include parent folder so lambda_test can import handler.py
 sys.path.append('./..')
 from lambda_test import lambda_test_execute
 
 database_path = '/darwin2'
 areas_path = f'{database_path}/areas2'
-
-# these do not apply, are just here to not cause errors (for now)
-user_path = '/rest_crud_app/rest_api'
-rest_api_path = '/rest_crud_app/rest_api'
 
 
 ################################################
@@ -69,6 +66,19 @@ post_one_area = {
     'query_string_params': {},
     'body': [
                 {
+                 'id': '3',
+                 'area_name': 'Justin Smith',
+                 'sort_order': '97'
+                },
+            ],
+    'context': {},
+}
+post_multi_area = {
+    'http_method': 'POST',
+    'path': areas_path,
+    'query_string_params': {},
+    'body': [
+                {
                  'id': '1',
                  'area_name': 'Jimmy Ward!',
                 },
@@ -106,8 +116,9 @@ delete_one_area = {
 
 
 #lambda_test_execute(get_database_darwin)
-#lambda_test_execute(get_one_area)
+lambda_test_execute(get_one_area)
 #lambda_test_execute(get_all_area)
 #lambda_test_execute(put_one_area)
-lambda_test_execute(post_one_area)
+#lambda_test_execute(post_one_area)
+#lambda_test_execute(post_multi_area)
 #lambda_test_execute(delete_one_area)

@@ -2,7 +2,7 @@ import pymysql
 import json
 from rest_api_utils import compose_rest_response
 from classifier import varDump, pretty_print_sql
-        
+
 def rest_post(post_method, conn, table, body_list):
 
     if not body_list:
