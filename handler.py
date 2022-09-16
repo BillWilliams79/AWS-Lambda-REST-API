@@ -1,17 +1,15 @@
+import os
 import json
 import pymysql
 
 from classifier import varDump, pretty_print_sql
 from rest_api_utils import compose_rest_response
-from mathapp_rds import *
 from rest_get_database import rest_get_database
 from rest_get_table import rest_get_table
 from rest_put import rest_put
 from rest_post import rest_post
 from rest_delete import rest_delete
 
-
-print('lambda init code executing...')
 
 #
 # HTTP Method const values
@@ -22,18 +20,24 @@ put_method = 'PUT'
 delete_method = 'DELETE'
 options_method = 'OPTIONS'
 
+# retrieve db credential environment variables
+endpoint = os.environ['endpoint']
+username = os.environ['username']
+password = os.environ['db_password']
+db_dict = os.environ['db_name']
+
+
+print('RestApi-MySql-Lambda init code executing. Attempting database connection...')
+
 connection = dict()
 
-""" for db in db_dict:
+connection[db_dict] = pymysql.connect(host = endpoint,
+                                 user = username,
+                                 password = password,
+                                 database = db_dict,)
 
-    print('attempting database connection...')
-    connection[db] = pymysql.connect(host = endpoint,
-                                     user = username,
-                                     password = password,
-                                     database = db,)
+varDump(connection, 'Lambda Initialization: connection details')
 
-varDump(connection, 'Lambda Init: connection details')
- """
 def parse_path(path):
 
     #
