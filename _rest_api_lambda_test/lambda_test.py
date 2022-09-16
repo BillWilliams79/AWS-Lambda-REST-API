@@ -1,22 +1,14 @@
 import json
 from handler import lambda_handler
-from classifier import varDump, get_var_name
+from classifier import varDump
 
 #
 # Generic Lambda Rest API test execututor. Uses a dictionary to pass parameters. 
 #
 def lambda_test_execute(config):
     
-
-
-
     http_method = config.get('http_method')
     path = config.get('path')
-
-    #varDump(locals(), 'lambda_test_execute loals')
-    #print(get_variable_name(http_method))
-    get_var_name(http_method)
-    return
 
     print(f"\n**** Execute Lambda Test: {http_method} @ {path} ****\n")
 
@@ -29,6 +21,7 @@ def lambda_test_execute(config):
 
     context = config['context']
 
+    varDump(event, 'event from inside lambda_test')
     # Call lambda Handler
     response_json = lambda_handler(event, context)
 

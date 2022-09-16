@@ -21,7 +21,7 @@ get_database_darwin = {
 
 ################################################
 #
-# areas GET requests
+# areas GET (READ) REST API calls
 # 
 get_one_area = {
     'http_method': 'GET',
@@ -41,16 +41,16 @@ get_all_area = {
 
 ################################################
 #
-# areas PUT requests
+# areas POST (CREATE) REST API calls
 # 
-put_one_area = {
-    'http_method': 'PUT',
+post_one_area = {
+    'http_method': 'POST',
     'path': areas_path,
     'query_string_params': {},
-    'body': {'area_name': 'Area created by test runner',
+    'body': {'area_name': 'George Kittle',
              'creator_fk': '3af9d78e-db31-4892-ab42-d1a731b724dd',
              'closed': '0',
-             'sort_order': '79',
+             'sort_order': '85',
              'domain_fk': '2',
             },
     'context': {},
@@ -58,44 +58,44 @@ put_one_area = {
 
 ################################################
 #
-# areas POST requests
+# areas PUT (UPDATE) REST API calls
 # 
-post_one_area = {
-    'http_method': 'POST',
+put_one_area = {
+    'http_method': 'PUT',
     'path': areas_path,
     'query_string_params': {},
     'body': [
                 {
-                 'id': '3',
-                 'area_name': 'Justin Smith',
-                 'sort_order': '97'
+                 'id': '8',
+                 'area_name': 'Steve Young, HOF',
+                 'sort_order': '8'
                 },
             ],
     'context': {},
 }
-post_multi_area = {
-    'http_method': 'POST',
+put_multi_area = {
+    'http_method': 'PUT',
     'path': areas_path,
     'query_string_params': {},
     'body': [
                 {
-                 'id': '1',
-                 'area_name': 'Jimmy Ward!',
+                 'id': '2',
+                 'area_name': 'David Akers',
                 },
                 {
-                 'id': '5',
-                 'area_name': 'Trey Lance!',
-                 'sort_order': 1,
+                 'id': '4',
+                 'area_name': 'Andy Lee!',
+                 'sort_order': 44,
                 },
                 {
                  'id': '8',
                  'area_name': 'Steve Young!',
-                 'closed': '1',
+                 'closed': '0',
                  'sort_order': "NULL",
                 },
                 {
-                 'id': '3',
-                 'domain_fk': '2',
+                 'id': '9',
+                 'domain_fk': '1',
                 },
             ],
     'context': {},
@@ -103,7 +103,7 @@ post_multi_area = {
 
 ################################################
 #
-# areas DELETE requests
+# areas DELETE (delete) REST API calls
 # 
 delete_one_area = {
     'http_method': 'DELETE',
@@ -115,10 +115,10 @@ delete_one_area = {
 }
 
 
-#lambda_test_execute(get_database_darwin)
-lambda_test_execute(get_one_area)
-#lambda_test_execute(get_all_area)
-#lambda_test_execute(put_one_area)
-#lambda_test_execute(post_one_area)
-#lambda_test_execute(post_multi_area)
-#lambda_test_execute(delete_one_area)
+#lambda_test_execute(get_database_darwin) # read database tables
+#lambda_test_execute(get_one_area) # read one Area
+#lambda_test_execute(get_all_area) # read all Areas
+#lambda_test_execute(put_one_area) # update one area
+lambda_test_execute(put_multi_area) # update multiple areas
+#lambda_test_execute(post_one_area) # create one area
+#lambda_test_execute(delete_one_area) # delete one area

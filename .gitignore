@@ -14,3 +14,4 @@
 /python_date*
 /*.zip
 __pycache__*
+/mathapp_rds.py

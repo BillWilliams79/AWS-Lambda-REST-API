@@ -3,111 +3,101 @@ import json
 from rest_api_utils import compose_rest_response
 from classifier import varDump, pretty_print_sql
 
-def rest_post(post_method, conn, table, body_list):
+def rest_post(post_method, conn, table, body):
 
-    if not body_list:
-        print('HTTP POST with error 400: body not included')
+    if not body:
         return compose_rest_response(400, '', 'BAD REQUEST')
+    varDump(body, 'body inside rest_post')
+    # Assemble list of keys and values for use in SQL
+    sql_key_list = ', '.join(f'{key}' for key in body.keys())
+    sql_value_list = ', '.join(f"'{value}'" for value in body.values())
 
-    # use the simple, more typical 'update' SQL syntax when updating a single record
-    if len(body_list) == 1:
-
-        body = body_list[0]
-
-        # id used to identify the record, is not part of the columns updated
-        id = body.get('id')
-
-        if id == None:
-            print('HTTP POST with error 400: id not included in request')
-            return compose_rest_response(400, '', 'BAD REQUEST')
-
-        body.pop('id')
-
-        if len(body) == 0:
-            print('HTTP POST with error 400: only id included in request')
-            return compose_rest_response(400, '', 'BAD REQUEST')
-
-        sql_kv_string = ', '.join(f"{key} = '{value}'" for key, value in body.items())
-
-        # NULL handling: mySQL requires no quotes around NULL values
-        sql_kv_string = sql_kv_string.replace("'NULL'", "NULL")
-
-        sql_statement = f"""
-            UPDATE {table}
-            SET 
-                {sql_kv_string}
-            WHERE
-                id = {id};
-        """
-    else:
-        # when POST receives multiple records, use case syntax. Here's an example:
-        # UPDATE areas SET
-        #    sort_order = CASE id
-        #       WHEN 1 THEN 0
-        #       WHEN 2 THEN 1
-        #       ELSE sort_order
-        #       END,
-        #    area_name = CASE id
-        #      WHEN 9 THEN 'React'
-        #      WHEN 10 THEN 'Lambda'
-        #      ELSE area_name
-        #      END
-        #   WHERE id in (1,2,9,10);
-
-        id_list = list()
-        column_dict = dict()
-
-        for body in body_list:
-            # id used to identify the record, is not part of the columns updated
-            id = body.get('id')
-
-            if id == None:
-                print('HTTP POST with error 400: id not included in request')
-                return compose_rest_response(400, '', 'BAD REQUEST')
-
-            body.pop('id')
-
-            if len(body) == 0:
-                print('HTTP POST with error 400: only id included in request')
-                return compose_rest_response(400, '', 'BAD REQUEST')
-
-            # creating list of id's, later convert to id string for the IN clause
-            id_list.append(id)
-
-            # iterate over key value pairs creating dict of WHEN/THEN statements
-            # stored by column name
-            for key, value in body.items():
-                 case_string = column_dict.get(key, '')
-                 case_string = f"{case_string} WHEN {id} THEN '{value}'"
-                 column_dict[key] = case_string
-
-        case_string = ', '.join(f"{key} = CASE id {value} ELSE {key} END" for key, value in column_dict.items())
-
-        # NULL handling: mySQL requires no quotes around NULL values
-        case_string = case_string.replace("'NULL'", "NULL")
-
-        id_string = ', '.join(f"{id}" for id in id_list)
-
-        sql_statement = f"""
-            UPDATE {table} SET
-                {case_string}
-            WHERE id in ({id_string});
-        """
+    # NULL handling: mySQL requires no quotes around NULL values
+    sql_value_list = sql_value_list.replace("'NULL'", "NULL")
 
     try:
+        # insert row into table
+        sql_statement = f"""
+                    INSERT INTO {table} ({sql_key_list})
+                    VALUES ({sql_value_list});
+        """
         pretty_print_sql(sql_statement, post_method)
 
         cursor = conn.cursor()
-        affected_rows = cursor.execute(sql_statement)
-        if affected_rows > 0:
+        affected_post_rows = cursor.execute(sql_statement)
+
+        if affected_post_rows > 0:
             conn.commit()
-            return compose_rest_response('200', '', 'OK')
         else:
-            errorMsg = f"HTTP {post_method}: NO DATA CHANGED"
+            errorMsg = f"HTTP {post_method} failed no rows affected"
             print(errorMsg)
-            return compose_rest_response('204', 'NO DATA CHANGED', 'NO DATA CHANGED')
+            return compose_rest_response('500', '', "NO DATA SAVED")
 
     except pymysql.Error as e:
-        errorMsg = f"HTTP {post_method} SQL FAILED: {e.args[0]} {e.args[1]}"
+        errorMsg = f"HTTP {post_method} failed: {e.args[0]} {e.args[1]}"
         print(errorMsg)
-        return compose_rest_response('500', {'error': errorMsg})
+        return compose_rest_response('500', '', errorMsg)
+
+    try:
+        # retrieve ID of newly created row
+        sql_statement= f"""SELECT LAST_INSERT_ID()"""
+        affected_rows = cursor.execute(sql_statement)
+
+        if affected_rows > 0:
+            newId = cursor.fetchone()
+            #varDump(newId, 'newId after fetchone')
+        else:
+            print(f"HTTP {post_method} FAILED to read last_insert_id.")
+            return compose_rest_response('201', '', 'CREATED')
+
+    except pymysql.Error as e:
+        print(f"HTTP {post_method} FAILED to read last_insert_id: {e.args[0]} {e.args[1]}")
+        return compose_rest_response('201', '', 'CREATED')
+
+    try:
+        # retrieve table description and create json object and sql columns
+        cursor.execute(f""" DESC {table}; """)
+        rows = cursor.fetchall()
+
+        json_object_columns = ', '.join(f"'{row[0]}', {row[0]}" for row in rows)
+
+        sql_columns = []
+        for row in rows:
+            sql_columns.append(row[0])
+        
+    except pymysql.Error as e:
+        errorMsg = f"HTTP {post_method} helper DESC SQL command failed: {e.args[0]} {e.args[1]}"
+        print(errorMsg)
+        return compose_rest_response('201', '', 'CREATED')
+
+    try:
+        # read row(s) and format as JSON
+        sql_statement = f"""SELECT
+                                CONCAT('[',
+                                    GROUP_CONCAT(
+                                        JSON_OBJECT({json_object_columns})
+                                        SEPARATOR ', ')
+                                ,']')
+                            FROM
+                                {table}
+                            WHERE id={newId[0]}
+        """
+        pretty_print_sql(sql_statement, post_method)
+
+        cursor.execute(sql_statement)
+        row = cursor.fetchall()
+
+        #varDump(row, 'row data from read table AFTER post')
+
+        if row[0][0]:
+            return compose_rest_response('200', row[0], 'CREATED')
+        else:
+            print(f"HTTP {post_method} helper SELECT after WRITE SQL command failed")
+            return compose_rest_response('201', '', 'CREATED')
+
+    except pymysql.Error as e:
+        errorMsg = f"HTTP {post_method} helper SELECT after WRITE SQL command failed: {e.args[0]} {e.args[1]}"
+        print(errorMsg)
+        return compose_rest_response('500', '', "errorMsg")
+
+    return compose_rest_response('500', '', 'INVALID PATH')

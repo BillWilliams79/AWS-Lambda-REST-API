@@ -26,7 +26,6 @@ username = os.environ['username']
 password = os.environ['db_password']
 db_dict = os.environ['db_name']
 
-
 print('RestApi-MySql-Lambda init code executing. Attempting database connection...')
 
 connection = dict()
