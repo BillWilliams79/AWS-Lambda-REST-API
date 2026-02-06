@@ -1,0 +1,174 @@
+JavaScript REST API Integration Guide
+======================================
+
+Base URL
+--------
+All requests go through API Gateway to the Lambda function.
+Replace BASE_URL with your API Gateway endpoint, e.g.:
+  https://xxxxxxxxxx.execute-api.us-west-1.amazonaws.com/prod
+
+The URL path structure is: /{database}/{table}
+  - Database only:  /darwin2          → returns list of tables
+  - With table:     /darwin2/areas2   → operates on the areas2 table
+
+
+GET — Read Records
+------------------
+Fetch records from a table using query string parameters as filters.
+
+  // Get list of tables in the database
+  const res = await fetch(`${BASE_URL}/darwin2`);
+  const tables = await res.json();
+  // tables: ["areas2", "domains2", "profiles2", "tasks2"]
+
+  // Get one record by id
+  const res = await fetch(`${BASE_URL}/darwin2/areas2?id=1`);
+  const rows = await res.json();
+  // rows: [{"id": 1, "area_name": "...", ...}]
+
+  // Get records by a foreign key
+  const res = await fetch(`${BASE_URL}/darwin2/areas2?creator_fk=3af9d78e-db31-4892-ab42-d1a731b724dd`);
+  const rows = await res.json();
+
+  // Multiple filters (AND logic)
+  const res = await fetch(`${BASE_URL}/darwin2/areas2?creator_fk=some-uuid&closed=0`);
+
+  // IN clause — use parentheses around comma-separated values
+  const res = await fetch(`${BASE_URL}/darwin2/areas2?id=(1,2,4)`);
+
+  // Sorting — ?sort=field1:asc,field2:desc
+  const res = await fetch(`${BASE_URL}/darwin2/areas2?creator_fk=some-uuid&sort=sort_order:asc`);
+
+  // Sparse fields — return only specific columns
+  const res = await fetch(`${BASE_URL}/darwin2/areas2?creator_fk=some-uuid&fields=id,area_name`);
+
+  // Count with group by
+  const res = await fetch(`${BASE_URL}/darwin2/areas2?fields=count(*),domain_fk`);
+
+  // Timestamp range filter
+  // filter_ts=(column_name,start_timestamp,end_timestamp)
+  const res = await fetch(`${BASE_URL}/darwin2/tasks2?filter_ts=(done_ts,2022-08-06T07:00:00,2022-08-07T07:00:00)`);
+
+
+POST — Create a Record
+-----------------------
+Send a JSON object with column names as keys. Returns the newly created row.
+
+  const res = await fetch(`${BASE_URL}/darwin2/areas2`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      area_name: 'New Area',
+      creator_fk: '3af9d78e-db31-4892-ab42-d1a731b724dd',
+      closed: '0',
+      sort_order: '10',
+      domain_fk: '2'
+    })
+  });
+  const created = await res.json();
+  // created: [{"id": 42, "area_name": "New Area", ...}]
+  const newId = created[0].id;
+
+Note: The response body may be double-JSON-encoded. If res.json() returns
+a string instead of an array, parse it again:
+
+  let created = await res.json();
+  if (typeof created === 'string') {
+    created = JSON.parse(created);
+  }
+
+
+PUT — Update Records
+--------------------
+Send an array of objects. Each object must include an "id" field plus the
+columns to update.
+
+  // Update a single record
+  const res = await fetch(`${BASE_URL}/darwin2/areas2`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify([
+      { id: '8', area_name: 'Updated Name', sort_order: '5' }
+    ])
+  });
+  // Status 200 = success, 204 = no data changed
+
+  // Update multiple records at once
+  const res = await fetch(`${BASE_URL}/darwin2/areas2`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify([
+      { id: '2', area_name: 'Name A' },
+      { id: '4', area_name: 'Name B', sort_order: 44 },
+      { id: '8', area_name: 'Name C', closed: '0', sort_order: 'NULL' }
+    ])
+  });
+
+To set a column to NULL, pass the string "NULL" as the value.
+
+PUT does not return the updated rows in the response body.
+
+
+DELETE — Delete a Record
+------------------------
+Send a JSON object with the column(s) identifying the row to delete.
+Multiple key/value pairs are AND-ed together in the WHERE clause.
+
+  const res = await fetch(`${BASE_URL}/darwin2/areas2`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: '6' })
+  });
+  // Status 200 = deleted, 404 = no matching record
+
+DELETE does not return a body on success.
+
+
+Response Format
+---------------
+All responses include CORS headers:
+  Access-Control-Allow-Origin: *
+  Access-Control-Allow-Methods: PUT, GET, POST, DELETE, OPTIONS
+
+Status codes:
+  200 — Success
+  204 — No data changed (PUT when values are identical)
+  400 — Bad request (missing body, invalid query params)
+  404 — Not found (bad path, no matching records)
+  500 — Server error
+
+
+Reusable Fetch Helper
+---------------------
+  async function apiCall(method, path, body = null) {
+    const options = {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+    };
+    if (body !== null) {
+      options.body = JSON.stringify(body);
+    }
+
+    const res = await fetch(`${BASE_URL}${path}`, options);
+
+    if (!res.ok) {
+      throw new Error(`API ${method} ${path} failed: ${res.status}`);
+    }
+
+    const text = await res.text();
+    if (!text) return null;
+
+    let data = JSON.parse(text);
+    // Handle double-encoded JSON strings from the API
+    if (typeof data === 'string') {
+      data = JSON.parse(data);
+    }
+    return data;
+  }
+
+  // Usage examples:
+  const tables = await apiCall('GET', '/darwin2');
+  const areas  = await apiCall('GET', '/darwin2/areas2?creator_fk=some-uuid');
+  const created = await apiCall('POST', '/darwin2/areas2', { area_name: 'Test', ... });
+  await apiCall('PUT', '/darwin2/areas2', [{ id: '1', area_name: 'Updated' }]);
+  await apiCall('DELETE', '/darwin2/areas2', { id: '42' });

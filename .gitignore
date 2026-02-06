@@ -17,3 +17,4 @@ __pycache__*
 /mathapp_rds.py
 /_data_samples
 /_python_examples
+exports.sh
