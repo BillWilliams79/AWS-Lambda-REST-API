@@ -19,8 +19,8 @@ def rest_delete(delete_method, conn, table, body):
         """
         pretty_print_sql(sql_statement, delete_method)
 
-        cursor = conn.cursor()
-        affected_rows = cursor.execute(sql_statement)
+        with conn.cursor() as cursor:
+            affected_rows = cursor.execute(sql_statement)
 
         if affected_rows == 0:
             errorMsg = f"Affected_rows = 0, 404 time"

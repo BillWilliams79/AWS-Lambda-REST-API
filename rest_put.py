@@ -97,8 +97,9 @@ def rest_put(put_method, conn, table, body_list):
     try:
         pretty_print_sql(sql_statement, put_method)
 
-        cursor = conn.cursor()
-        affected_rows = cursor.execute(sql_statement)
+        with conn.cursor() as cursor:
+            affected_rows = cursor.execute(sql_statement)
+
         if affected_rows > 0:
             conn.commit()
             return compose_rest_response('200', '', 'OK')

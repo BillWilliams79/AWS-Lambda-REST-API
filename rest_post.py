@@ -23,8 +23,8 @@ def rest_post(post_method, conn, table, body):
         """
         pretty_print_sql(sql_statement, post_method)
 
-        cursor = conn.cursor()
-        affected_post_rows = cursor.execute(sql_statement)
+        with conn.cursor() as cursor:
+            affected_post_rows = cursor.execute(sql_statement)
 
         if affected_post_rows > 0:
             conn.commit()
@@ -41,14 +41,14 @@ def rest_post(post_method, conn, table, body):
     try:
         # retrieve ID of newly created row
         sql_statement= f"""SELECT LAST_INSERT_ID()"""
-        affected_rows = cursor.execute(sql_statement)
+        with conn.cursor() as cursor:
+            affected_rows = cursor.execute(sql_statement)
 
-        if affected_rows > 0:
-            newId = cursor.fetchone()
-            #varDump(newId, 'newId after fetchone')
-        else:
-            print(f"HTTP {post_method} FAILED to read last_insert_id.")
-            return compose_rest_response('201', '', 'CREATED')
+            if affected_rows > 0:
+                newId = cursor.fetchone()
+            else:
+                print(f"HTTP {post_method} FAILED to read last_insert_id.")
+                return compose_rest_response('201', '', 'CREATED')
 
     except pymysql.Error as e:
         print(f"HTTP {post_method} FAILED to read last_insert_id: {e.args[0]} {e.args[1]}")
@@ -56,8 +56,9 @@ def rest_post(post_method, conn, table, body):
 
     try:
         # retrieve table description and create json object and sql columns
-        cursor.execute(f""" DESC {table}; """)
-        rows = cursor.fetchall()
+        with conn.cursor() as cursor:
+            cursor.execute(f""" DESC {table}; """)
+            rows = cursor.fetchall()
 
         json_object_columns = ', '.join(f"'{row[0]}', {row[0]}" for row in rows)
 
@@ -84,8 +85,9 @@ def rest_post(post_method, conn, table, body):
         """
         pretty_print_sql(sql_statement, post_method)
 
-        cursor.execute(sql_statement)
-        row = cursor.fetchall()
+        with conn.cursor() as cursor:
+            cursor.execute(sql_statement)
+            row = cursor.fetchall()
 
         #varDump(row, 'row data from read table AFTER post')
 

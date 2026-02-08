@@ -10,9 +10,9 @@ def rest_get_database(get_method, conn, database):
 
         sql_statement = f"""SHOW tables"""
 
-        cursor = conn.cursor()
-        cursor.execute(sql_statement)
-        rows = cursor.fetchall()
+        with conn.cursor() as cursor:
+            cursor.execute(sql_statement)
+            rows = cursor.fetchall()
 
         columns_array = []
         for row in rows:
