@@ -18,3 +18,4 @@ __pycache__*
 /_data_samples
 /_python_examples
 exports.sh
+/_deploy_backups

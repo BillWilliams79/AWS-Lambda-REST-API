@@ -26,29 +26,38 @@ username = os.environ['username']
 password = os.environ['db_password']
 db_dict = os.environ['db_name']
 
-print('RestApi-MySql-Lambda init code executing. Attempting database connection...')
+print('RestApi-MySql-Lambda init code executing.')
 
 connection = dict()
 
-connection[db_dict] = pymysql.connect(host = endpoint,
-                                 user = username,
-                                 password = password,
-                                 database = db_dict,)
-
-varDump(connection, 'Lambda Initialization: connection details')
+def get_connection(database):
+    global connection
+    if database in connection:
+        try:
+            connection[database].ping(reconnect=True)
+            return connection[database]
+        except pymysql.MySQLError:
+            try:
+                connection[database].close()
+            except Exception:
+                pass
+            del connection[database]
+    connection[database] = pymysql.connect(
+        host=endpoint, user=username, password=password, database=database)
+    return connection[database]
 
 def parse_path(path):
 
     #
-    # Split first level of path into database. 
+    # Split first level of path into database.
     # Second level of path into table.
     # Save aside the database/table connection as applicable.
     #
     split_path = path[1:].split('/')
     database = split_path[0]
     table = split_path[1] if len(split_path) > 1 else ''
-    
-    conn = connection[database] if database in connection else ''
+
+    conn = get_connection(database) if database in db_dict else ''
 
     #varDump({'path': path, 'database': database, 'table': table}, 'parse_path results', 'json')
     return {'path': path, 'database': database, 'table': table, 'conn': conn}

@@ -9,9 +9,9 @@ def rest_get_table(get_method, conn, table, event):
     #         command and allow for larger group concat. Build a list of columns
     #         to verify correct QSP
     try:
-        cursor = conn.cursor()
-        cursor.execute(f""" DESC {table}; """)
-        rows = cursor.fetchall()
+        with conn.cursor() as cursor:
+            cursor.execute(f""" DESC {table}; """)
+            rows = cursor.fetchall()
 
         # default value used in queries to retrieve all fields, overwritten below with
         # more specific values as needed.
@@ -137,9 +137,10 @@ def rest_get_table(get_method, conn, table, event):
             """
 
         pretty_print_sql(sql_statement, get_method)
-        
-        cursor.execute(sql_statement)
-        row = cursor.fetchall()
+
+        with conn.cursor() as cursor:
+            cursor.execute(sql_statement)
+            row = cursor.fetchall()
 
         if row[0][0]:
             if count_syntax == 0:
