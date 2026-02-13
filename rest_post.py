@@ -31,12 +31,12 @@ def rest_post(post_method, conn, table, body):
         else:
             errorMsg = f"HTTP {post_method} failed no rows affected"
             print(errorMsg)
-            return compose_rest_response('500', '', "NO DATA SAVED")
+            return compose_rest_response(500, '', "NO DATA SAVED")
 
     except pymysql.Error as e:
         errorMsg = f"HTTP {post_method} failed: {e.args[0]} {e.args[1]}"
         print(errorMsg)
-        return compose_rest_response('500', '', errorMsg)
+        return compose_rest_response(500, '', errorMsg)
 
     try:
         # retrieve ID of newly created row
@@ -48,11 +48,11 @@ def rest_post(post_method, conn, table, body):
                 newId = cursor.fetchone()
             else:
                 print(f"HTTP {post_method} FAILED to read last_insert_id.")
-                return compose_rest_response('201', '', 'CREATED')
+                return compose_rest_response(201, '', 'CREATED')
 
     except pymysql.Error as e:
         print(f"HTTP {post_method} FAILED to read last_insert_id: {e.args[0]} {e.args[1]}")
-        return compose_rest_response('201', '', 'CREATED')
+        return compose_rest_response(201, '', 'CREATED')
 
     try:
         # retrieve table description and create json object and sql columns
@@ -69,7 +69,7 @@ def rest_post(post_method, conn, table, body):
     except pymysql.Error as e:
         errorMsg = f"HTTP {post_method} helper DESC SQL command failed: {e.args[0]} {e.args[1]}"
         print(errorMsg)
-        return compose_rest_response('201', '', 'CREATED')
+        return compose_rest_response(201, '', 'CREATED')
 
     try:
         # read row(s) and format as JSON
@@ -92,14 +92,14 @@ def rest_post(post_method, conn, table, body):
         #varDump(row, 'row data from read table AFTER post')
 
         if row[0][0]:
-            return compose_rest_response('200', json.loads(row[0][0]), 'CREATED')
+            return compose_rest_response(200, json.loads(row[0][0]), 'CREATED')
         else:
             print(f"HTTP {post_method} helper SELECT after WRITE SQL command failed")
-            return compose_rest_response('201', '', 'CREATED')
+            return compose_rest_response(201, '', 'CREATED')
 
     except pymysql.Error as e:
         errorMsg = f"HTTP {post_method} helper SELECT after WRITE SQL command failed: {e.args[0]} {e.args[1]}"
         print(errorMsg)
-        return compose_rest_response('500', '', errorMsg)
+        return compose_rest_response(500, '', errorMsg)
 
-    return compose_rest_response('500', '', 'INVALID PATH')
+    return compose_rest_response(500, '', 'INVALID PATH')

@@ -25,7 +25,7 @@ options_method = 'OPTIONS'
 endpoint = os.environ['endpoint']
 username = os.environ['username']
 password = os.environ['db_password']
-db_dict = os.environ['db_name']
+db_names = set(os.environ['db_name'].split(','))
 
 print('RestApi-MySql-Lambda init code executing.')
 
@@ -63,7 +63,7 @@ def parse_path(path):
     if table and not SAFE_NAME_RE.match(table):
         return {'path': path, 'database': database, 'table': '', 'conn': '', 'error': f"Invalid table name: {table}"}
 
-    conn = get_connection(database) if database in db_dict else ''
+    conn = get_connection(database) if database in db_names else ''
 
     #varDump({'path': path, 'database': database, 'table': table}, 'parse_path results', 'json')
     return {'path': path, 'database': database, 'table': table, 'conn': conn}
@@ -85,7 +85,7 @@ def lambda_handler(event, context):
     if 'error' in db_info:
         return compose_rest_response(400, '', db_info['error'])
 
-    if db_info['database'] in db_dict:
+    if db_info['database'] in db_names:
         response = rest_api_from_table(event, db_info)
     else:
         response = compose_rest_response(404, '', f"URL/path not found: {path}")
@@ -102,17 +102,18 @@ def rest_api_from_table(event, db_info):
 
     if not event:
         print('no event')
-        return compose_rest_response('500', '', 'REST API call received with no event')
+        return compose_rest_response(500, '', 'REST API call received with no event')
 
     if not conn:
         print('no conn')
-        return compose_rest_response('500', '', 'REST API call, no database connection')
+        return compose_rest_response(500, '', 'REST API call, no database connection')
 
     if not http_method:
         print('No HTTP method')
-        return compose_rest_response('500', '', 'REST API call received with no HTTP method')
+        return compose_rest_response(500, '', 'REST API call received with no HTTP method')
 
-    if event['body'] != None:
+    body = None
+    if event['body'] is not None:
         body = json.loads(event['body'])
 
     #
@@ -124,7 +125,7 @@ def rest_api_from_table(event, db_info):
         return rest_put(put_method, conn, table, body)
 
     elif http_method == get_method:
-        
+
         # GET Method
         if table:
             return rest_get_table(get_method, conn, table, event)
@@ -143,4 +144,4 @@ def rest_api_from_table(event, db_info):
 
     elif http_method == options_method:
         #varDump(event, 'OPTIONS event dumps')
-        return compose_rest_response('200','', '')
+        return compose_rest_response(200, '', '')
