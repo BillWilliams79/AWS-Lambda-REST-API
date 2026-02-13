@@ -580,26 +580,18 @@ lambda_test_execute({
     'expected_status': 404,
 })
 
-# GET-15: BUG — error path returns literal string "errorMsg" instead of variable.
-# rest_get_table.py:166: compose_rest_response('500', '', "errorMsg")
-# Trigger the SELECT error path (not DESC) by using a valid table with an
-# invalid sort column — DESC succeeds but the generated SQL fails.
-get15_response = safe_execute({
-    'test_name': 'GET-15: invalid sort column triggers SQL error returns 500',
+# GET-15: Invalid sort column is now validated before reaching SQL.
+# Previously this caused a SQL error (500) with a literal "errorMsg" string bug.
+# Now sort columns are validated against DESC results and rejected with 400.
+lambda_test_execute({
+    'test_name': 'GET-15: invalid sort column returns 400',
     'http_method': 'GET',
     'path': AREAS_PATH,
     'query_string_params': {'sort': 'BOGUS_COLUMN:asc'},
     'body': {},
     'context': {},
-    'expected_status': 500,
+    'expected_status': 400,
 })
-if get15_response and 'body' in get15_response:
-    has_literal = 'errorMsg' in get15_response['body']
-    record_check(
-        'GET-15b: BUG body contains literal "errorMsg" instead of actual error',
-        has_literal,
-        f'body: {get15_response["body"][:200]}'
-    )
 
 # GET-16: Double-encoding verification for GET table
 get16_response = lambda_test_execute({

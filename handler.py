@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import pymysql
 
 from classifier import varDump, pretty_print_sql
@@ -46,6 +47,8 @@ def get_connection(database):
         host=endpoint, user=username, password=password, database=database)
     return connection[database]
 
+SAFE_NAME_RE = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
+
 def parse_path(path):
 
     #
@@ -56,6 +59,9 @@ def parse_path(path):
     split_path = path[1:].split('/')
     database = split_path[0]
     table = split_path[1] if len(split_path) > 1 else ''
+
+    if table and not SAFE_NAME_RE.match(table):
+        return {'path': path, 'database': database, 'table': '', 'conn': '', 'error': f"Invalid table name: {table}"}
 
     conn = get_connection(database) if database in db_dict else ''
 
@@ -75,6 +81,9 @@ def lambda_handler(event, context):
         db_info = parse_path(path)
     else:
         return compose_rest_response(400, '', f"No path provided")
+
+    if 'error' in db_info:
+        return compose_rest_response(400, '', db_info['error'])
 
     if db_info['database'] in db_dict:
         response = rest_api_from_table(event, db_info)

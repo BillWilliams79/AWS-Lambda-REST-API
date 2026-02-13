@@ -131,10 +131,90 @@ def run_cud_lifecycle_test():
 
 ################################################
 #
+# CUD lifecycle test with special characters (apostrophes, backslashes, quotes)
+# Verifies parameterized queries handle SQL-breaking characters correctly.
+#
+def run_special_char_lifecycle_test():
+    special_name = "O'Brien's \"Test\" Area\\Path"
+
+    # POST: create area with special characters
+    post_config = {
+        'test_name': 'special_char: POST create area with apostrophes',
+        'http_method': 'POST',
+        'path': areas_path,
+        'query_string_params': {},
+        'body': {'area_name': special_name,
+                 'creator_fk': '3af9d78e-db31-4892-ab42-d1a731b724dd',
+                 'closed': '0',
+                 'sort_order': '99',
+                 'domain_fk': '2',
+                },
+        'context': {},
+        'expected_status': 200,
+        'expected_body_contains': ["O'Brien"],
+    }
+    post_response = lambda_test_execute(post_config)
+
+    # Extract new record id
+    new_id = None
+    if post_response and 'body' in post_response:
+        body = json.loads(post_response['body'])
+        if isinstance(body, list) and len(body) > 0 and isinstance(body[0], str):
+            body = json.loads(body[0])
+        if isinstance(body, dict) and 'id' in body:
+            new_id = str(body['id'])
+        elif isinstance(body, list) and len(body) > 0 and 'id' in body[0]:
+            new_id = str(body[0]['id'])
+
+    if not new_id:
+        print('FAIL: special_char — could not extract id from POST response')
+        return
+
+    # PUT: update with different special characters
+    put_config = {
+        'test_name': 'special_char: PUT update with apostrophes',
+        'http_method': 'PUT',
+        'path': areas_path,
+        'query_string_params': {},
+        'body': [{'id': new_id, 'area_name': "It's a test; DROP areas2;--"}],
+        'context': {},
+        'expected_status': 200,
+    }
+    lambda_test_execute(put_config)
+
+    # GET: verify the special characters round-tripped correctly
+    get_config = {
+        'test_name': 'special_char: GET verify special chars preserved',
+        'http_method': 'GET',
+        'path': areas_path,
+        'query_string_params': {'id': new_id},
+        'body': {},
+        'context': {},
+        'expected_status': 200,
+        'expected_body_contains': ["It's a test; DROP areas2;--"],
+    }
+    lambda_test_execute(get_config)
+
+    # DELETE: clean up
+    delete_config = {
+        'test_name': 'special_char: DELETE area',
+        'http_method': 'DELETE',
+        'path': areas_path,
+        'query_string_params': {},
+        'body': {'id': new_id},
+        'context': {},
+        'expected_status': 200,
+    }
+    lambda_test_execute(delete_config)
+
+
+################################################
+#
 # Run all tests
 #
 lambda_test_execute(get_database_darwin)
 lambda_test_execute(get_one_area)
 lambda_test_execute(get_all_area)
 run_cud_lifecycle_test()
+run_special_char_lifecycle_test()
 lambda_test_summary()
