@@ -26,10 +26,11 @@ def rest_get_table(get_method, conn, table, event):
         print(errorMsg)
         return compose_rest_response('500', '', errorMsg)
 
-    # STEP 2: iterate over query string parameters 
+    # STEP 2: iterate over query string parameters
     where_clause = "WHERE"
     where_connector = ""
     where_count = 0
+    where_params = []
     order_by = ""
     count_syntax = 0
     group_by = ""
@@ -40,11 +41,15 @@ def rest_get_table(get_method, conn, table, event):
 
             if key in sql_columns:
                 # if key is valid SQL column, it is a filter or part of the where clause
-                # ?area_fk=(1,2,4) translates to "area_fk IN 1,2,4"
+                # ?area_fk=(1,2,4) translates to "area_fk IN (1,2,4)"
                 if (value.startswith('(') and value.endswith(')')):
-                    where_clause = f"{where_clause}{where_connector} {key} in {value}"
+                    in_values = [v.strip() for v in value[1:-1].split(',')]
+                    in_placeholders = ', '.join(['%s'] * len(in_values))
+                    where_clause = f"{where_clause}{where_connector} {key} in ({in_placeholders})"
+                    where_params.extend(in_values)
                 else:
-                    where_clause = f"{where_clause}{where_connector} {key}='{value}'"
+                    where_clause = f"{where_clause}{where_connector} {key} = %s"
+                    where_params.append(value)
                 where_count = where_count + 1
                 where_connector = " AND"
 
@@ -55,7 +60,13 @@ def rest_get_table(get_method, conn, table, event):
                 for rem_txt in remove_txt:
                     value = value.replace(rem_txt, '')
                 sql_vals = value.split(',')
-                where_clause = f"{where_clause}{where_connector} {sql_vals[0]} BETWEEN '{sql_vals[1]}' AND '{sql_vals[2]}'"
+                # Validate the timestamp column name against known columns
+                if sql_vals[0] not in sql_columns:
+                    errorMsg = f"HTTP {get_method} invalid filter_ts column: {sql_vals[0]}"
+                    print(errorMsg)
+                    return compose_rest_response('400', '', "BAD REQUEST")
+                where_clause = f"{where_clause}{where_connector} {sql_vals[0]} BETWEEN %s AND %s"
+                where_params.extend([sql_vals[1], sql_vals[2]])
                 varDump(where_clause, "where clause after ts_filter insertion")
                 where_count = where_count + 1
                 where_connector = " AND"
@@ -64,6 +75,13 @@ def rest_get_table(get_method, conn, table, event):
                 # parse data sorting options
                 # format is ?sort=field1:asc,field2:desc,field3:asc
                 sort_dict = dict(x.split(":") for x in value.split(","))
+                # Validate sort columns and directions
+                valid_directions = {'asc', 'desc'}
+                for sort_key, sort_value in sort_dict.items():
+                    if sort_key not in sql_columns or sort_value.lower() not in valid_directions:
+                        errorMsg = f"HTTP {get_method} invalid sort parameter: {sort_key}:{sort_value}"
+                        print(errorMsg)
+                        return compose_rest_response('400', '', "BAD REQUEST")
                 order_by = ', '.join(f"{sort_key} {sort_value}" for sort_key, sort_value in sort_dict.items())
                 order_by = f" ORDER BY {order_by}"
 
@@ -139,7 +157,10 @@ def rest_get_table(get_method, conn, table, event):
         pretty_print_sql(sql_statement, get_method)
 
         with conn.cursor() as cursor:
-            cursor.execute(sql_statement)
+            if where_params:
+                cursor.execute(sql_statement, tuple(where_params))
+            else:
+                cursor.execute(sql_statement)
             row = cursor.fetchall()
 
         if row[0][0]:

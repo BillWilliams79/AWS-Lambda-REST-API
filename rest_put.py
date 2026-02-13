@@ -27,18 +27,19 @@ def rest_put(put_method, conn, table, body_list):
             print('HTTP PUT with error 400: only id included in request')
             return compose_rest_response(400, '', 'BAD REQUEST')
 
-        sql_kv_string = ', '.join(f"{key} = '{value}'" for key, value in body.items())
+        keys = list(body.keys())
+        values = [None if v == "NULL" else v for v in body.values()]
 
-        # NULL handling: mySQL requires no quotes around NULL values
-        sql_kv_string = sql_kv_string.replace("'NULL'", "NULL")
+        set_clause = ', '.join(f"{key} = %s" for key in keys)
 
         sql_statement = f"""
             UPDATE {table}
-            SET 
-                {sql_kv_string}
+            SET
+                {set_clause}
             WHERE
-                id = {id};
+                id = %s;
         """
+        put_params = tuple(values) + (id,)
     else:
         # when PUT receives multiple records, use case syntax. Here's an example:
         # UPDATE areas SET
@@ -74,31 +75,37 @@ def rest_put(put_method, conn, table, body_list):
             # creating list of id's, later convert to id string for the IN clause
             id_list.append(id)
 
-            # iterate over key value pairs creating dict of WHEN/THEN statements
+            # iterate over key value pairs creating list of (id, value) tuples
             # stored by column name
             for key, value in body.items():
-                 case_string = column_dict.get(key, '')
-                 case_string = f"{case_string} WHEN {id} THEN '{value}'"
-                 column_dict[key] = case_string
+                if key not in column_dict:
+                    column_dict[key] = []
+                column_dict[key].append((id, None if value == "NULL" else value))
 
-        case_string = ', '.join(f"{key} = CASE id {value} ELSE {key} END" for key, value in column_dict.items())
+        # Build parameterized CASE expressions
+        put_params = []
+        case_parts = []
+        for col_name, when_list in column_dict.items():
+            when_clause = ' '.join(['WHEN %s THEN %s'] * len(when_list))
+            case_parts.append(f"{col_name} = CASE id {when_clause} ELSE {col_name} END")
+            for id_val, col_val in when_list:
+                put_params.extend([id_val, col_val])
 
-        # NULL handling: mySQL requires no quotes around NULL values
-        case_string = case_string.replace("'NULL'", "NULL")
-
-        id_string = ', '.join(f"{id}" for id in id_list)
+        set_clause = ', '.join(case_parts)
+        id_placeholders = ', '.join(['%s'] * len(id_list))
+        put_params.extend(id_list)
 
         sql_statement = f"""
             UPDATE {table} SET
-                {case_string}
-            WHERE id in ({id_string});
+                {set_clause}
+            WHERE id in ({id_placeholders});
         """
 
     try:
         pretty_print_sql(sql_statement, put_method)
 
         with conn.cursor() as cursor:
-            affected_rows = cursor.execute(sql_statement)
+            affected_rows = cursor.execute(sql_statement, tuple(put_params))
 
         if affected_rows > 0:
             conn.commit()

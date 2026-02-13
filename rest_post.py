@@ -9,22 +9,22 @@ def rest_post(post_method, conn, table, body):
         return compose_rest_response(400, '', 'BAD REQUEST')
     varDump(body, 'body inside rest_post')
     # Assemble list of keys and values for use in SQL
-    sql_key_list = ', '.join(f'{key}' for key in body.keys())
-    sql_value_list = ', '.join(f"'{value}'" for value in body.values())
+    keys = list(body.keys())
+    values = [None if v == "NULL" else v for v in body.values()]
 
-    # NULL handling: mySQL requires no quotes around NULL values
-    sql_value_list = sql_value_list.replace("'NULL'", "NULL")
+    sql_key_list = ', '.join(keys)
+    placeholders = ', '.join(['%s'] * len(values))
 
     try:
         # insert row into table
         sql_statement = f"""
                     INSERT INTO {table} ({sql_key_list})
-                    VALUES ({sql_value_list});
+                    VALUES ({placeholders});
         """
         pretty_print_sql(sql_statement, post_method)
 
         with conn.cursor() as cursor:
-            affected_post_rows = cursor.execute(sql_statement)
+            affected_post_rows = cursor.execute(sql_statement, tuple(values))
 
         if affected_post_rows > 0:
             conn.commit()
