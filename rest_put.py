@@ -109,13 +109,13 @@ def rest_put(put_method, conn, table, body_list):
 
         if affected_rows > 0:
             conn.commit()
-            return compose_rest_response('200', '', 'OK')
+            return compose_rest_response(200, '', 'OK')
         else:
             errorMsg = f"HTTP {put_method}: NO DATA CHANGED"
             print(errorMsg)
-            return compose_rest_response('204', 'NO DATA CHANGED', 'NO DATA CHANGED')
+            return compose_rest_response(204, 'NO DATA CHANGED', 'NO DATA CHANGED')
 
     except pymysql.Error as e:
         errorMsg = f"HTTP {put_method} SQL FAILED: {e.args[0]} {e.args[1]}"
         print(errorMsg)
-        return compose_rest_response('500', '', errorMsg)
+        return compose_rest_response(500, '', errorMsg)

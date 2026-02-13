@@ -27,12 +27,12 @@ def rest_delete(delete_method, conn, table, body):
         if affected_rows == 0:
             errorMsg = f"Affected_rows = 0, 404 time"
             print(errorMsg)
-            return compose_rest_response('404', '', 'NOT FOUND')
+            return compose_rest_response(404, '', 'NOT FOUND')
         else:
             conn.commit()
-            return compose_rest_response('200', '', 'OK')
+            return compose_rest_response(200, '', 'OK')
 
     except pymysql.Error as e:
         errorMsg = f"HTTP {delete_method} SQL FAILED: {e.args[0]} {e.args[1]}"
         print(errorMsg)
-        return compose_rest_response('500', '', errorMsg)
+        return compose_rest_response(500, '', errorMsg)

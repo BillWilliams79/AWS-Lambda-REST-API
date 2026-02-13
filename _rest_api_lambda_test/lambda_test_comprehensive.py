@@ -267,36 +267,33 @@ lambda_test_execute({
     'expected_body_contains': ['URL/path not found'],
 })
 
-# HANDLER-04: BUG — db_dict is a string, not a dict.
-# 'dar' in 'darwin2' evaluates True (substring match), so it tries to connect
-# to non-existent database 'dar' and crashes with pymysql.OperationalError.
+# HANDLER-04: FIXED — db_names is now a set, not a string.
+# 'dar' is not in {'darwin2'}, so it correctly returns 404.
 direct_invoke(
     event={'httpMethod': 'GET', 'path': '/dar/areas2', 'queryStringParameters': {}, 'body': '{}'},
-    test_name='HANDLER-04: BUG substring db match crashes (db_dict is string not dict)',
-    expect_exception=True,
+    test_name='HANDLER-04: FIXED substring db match returns 404 (db_names is set)',
+    expected_status=404,
 )
 
-# HANDLER-05: BUG — None body on POST causes UnboundLocalError.
-# handler.py:106-107 only assigns 'body' if event['body'] != None.
-# handler.py:128 references 'body' unconditionally for POST.
+# HANDLER-05: FIXED — None body on POST returns 400 (body initialized to None).
 direct_invoke(
     event={'httpMethod': 'POST', 'path': AREAS_PATH, 'queryStringParameters': {}, 'body': None},
-    test_name='HANDLER-05: BUG None body on POST causes UnboundLocalError',
-    expect_exception=True,
+    test_name='HANDLER-05: FIXED None body on POST returns 400',
+    expected_status=400,
 )
 
-# HANDLER-06: BUG — None body on PUT causes UnboundLocalError
+# HANDLER-06: FIXED — None body on PUT returns 400
 direct_invoke(
     event={'httpMethod': 'PUT', 'path': AREAS_PATH, 'queryStringParameters': {}, 'body': None},
-    test_name='HANDLER-06: BUG None body on PUT causes UnboundLocalError',
-    expect_exception=True,
+    test_name='HANDLER-06: FIXED None body on PUT returns 400',
+    expected_status=400,
 )
 
-# HANDLER-07: BUG — None body on DELETE causes UnboundLocalError
+# HANDLER-07: FIXED — None body on DELETE returns 400
 direct_invoke(
     event={'httpMethod': 'DELETE', 'path': AREAS_PATH, 'queryStringParameters': {}, 'body': None},
-    test_name='HANDLER-07: BUG None body on DELETE causes UnboundLocalError',
-    expect_exception=True,
+    test_name='HANDLER-07: FIXED None body on DELETE returns 400',
+    expected_status=400,
 )
 
 # HANDLER-08: None body on GET succeeds (GET doesn't use body variable)
@@ -607,19 +604,16 @@ if get16_response and 'body' in get16_response:
         f'first parse type: {type(first_parse).__name__}, element type: {type(first_parse[0]).__name__ if first_parse else "empty"}'
     )
 
-# GET-17: Count with 3+ fields — BUG: crashes with UnboundLocalError.
-# rest_get_table.py:97 references errorMsg but it's never assigned in this code path
-# (the assignment at line 85 is in a different elif branch for invalid field names).
-# Expected: 400 BAD REQUEST. Actual: UnboundLocalError exception.
-safe_execute({
-    'test_name': 'GET-17: BUG count with 3+ valid fields crashes (UnboundLocalError)',
+# GET-17: FIXED — Count with 3+ fields returns 400 (errorMsg now assigned).
+lambda_test_execute({
+    'test_name': 'GET-17: FIXED count with 3+ valid fields returns 400',
     'http_method': 'GET',
     'path': AREAS_PATH,
     'query_string_params': {'fields': 'count(*),domain_fk,creator_fk'},
     'body': {},
     'context': {},
     'expected_status': 400,
-    'expect_exception': True,
+    'expected_body_contains': ['BAD REQUEST'],
 })
 
 

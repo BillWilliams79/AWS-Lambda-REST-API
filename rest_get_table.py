@@ -24,7 +24,7 @@ def rest_get_table(get_method, conn, table, event):
     except pymysql.Error as e:
         errorMsg = f"HTTP {get_method} helper SQL command failed: {e.args[0]} {e.args[1]}"
         print(errorMsg)
-        return compose_rest_response('500', '', errorMsg)
+        return compose_rest_response(500, '', errorMsg)
 
     # STEP 2: iterate over query string parameters
     where_clause = "WHERE"
@@ -64,7 +64,7 @@ def rest_get_table(get_method, conn, table, event):
                 if sql_vals[0] not in sql_columns:
                     errorMsg = f"HTTP {get_method} invalid filter_ts column: {sql_vals[0]}"
                     print(errorMsg)
-                    return compose_rest_response('400', '', "BAD REQUEST")
+                    return compose_rest_response(400, '', "BAD REQUEST")
                 where_clause = f"{where_clause}{where_connector} {sql_vals[0]} BETWEEN %s AND %s"
                 where_params.extend([sql_vals[1], sql_vals[2]])
                 varDump(where_clause, "where clause after ts_filter insertion")
@@ -81,7 +81,7 @@ def rest_get_table(get_method, conn, table, event):
                     if sort_key not in sql_columns or sort_value.lower() not in valid_directions:
                         errorMsg = f"HTTP {get_method} invalid sort parameter: {sort_key}:{sort_value}"
                         print(errorMsg)
-                        return compose_rest_response('400', '', "BAD REQUEST")
+                        return compose_rest_response(400, '', "BAD REQUEST")
                 order_by = ', '.join(f"{sort_key} {sort_value}" for sort_key, sort_value in sort_dict.items())
                 order_by = f" ORDER BY {order_by}"
 
@@ -102,7 +102,7 @@ def rest_get_table(get_method, conn, table, event):
                         # if field is not an SQL column, this is an improperly formed request, fail 400
                         errorMsg = f"HTTP {get_method} invalid query string parameter FIELDS: {key} {value}"
                         print(errorMsg)
-                        return compose_rest_response('400', '', "BAD REQUEST")
+                        return compose_rest_response(400, '', "BAD REQUEST")
 
                     else:
                         # a count(*) syntax limits to a single extra field which becomes the group by field
@@ -111,9 +111,10 @@ def rest_get_table(get_method, conn, table, event):
                             count_syntax = count_syntax + 1
 
                         elif count_syntax > 1:
-                            # error condition count(*) requires only two fields params: count(*) and colu
+                            # error condition count(*) requires only two fields params: count(*) and column
+                            errorMsg = f"HTTP {get_method} invalid fields: count(*) allows only one additional field"
                             print(errorMsg)
-                            return compose_rest_response('400', '', "BAD REQUEST")
+                            return compose_rest_response(400, '', "BAD REQUEST")
 
                 columns_select = ', '.join(f"'{field}', {field}" for field in value.split(","))
 
@@ -121,7 +122,7 @@ def rest_get_table(get_method, conn, table, event):
                 # JSON API document allows api implementation to ignore an improperly formed request
                 errorMsg = f"HTTP {get_method} invalid query string parameter {key} {value}"
                 print(errorMsg)
-                return compose_rest_response('400', '', "BAD REQUEST")
+                return compose_rest_response(400, '', "BAD REQUEST")
 
     # zero out where clause if there were no QSPs
     if where_count == 0:
@@ -165,7 +166,7 @@ def rest_get_table(get_method, conn, table, event):
 
         if row[0][0]:
             if count_syntax == 0:
-                return compose_rest_response('200', json.loads(row[0][0]), 'OK')
+                return compose_rest_response(200, json.loads(row[0][0]), 'OK')
             else:
                 # count(*) data has to be massaged into an array of dict
                 # it comes back as a tuple of tuples, each having a dict in json format
@@ -173,15 +174,15 @@ def rest_get_table(get_method, conn, table, event):
                 for tuple_dict in row:
                     return_value.append(json.loads(tuple_dict[0]))
                 varDump(json.dumps(return_value), 'json dump tuple_dict')
-                return compose_rest_response('200', return_value, 'OK')
+                return compose_rest_response(200, return_value, 'OK')
 
         else:
             print('get: 404')
             errorMsg = f"No data"
             print(errorMsg)
-            return compose_rest_response('404',  '', 'NOT FOUND')
+            return compose_rest_response(404, '', 'NOT FOUND')
 
     except pymysql.Error as e:
         errorMsg = f"HTTP {get_method} actual SQL select statement failed: {e.args[0]} {e.args[1]}"
         print(errorMsg)
-        return compose_rest_response('500', '', errorMsg)
+        return compose_rest_response(500, '', errorMsg)

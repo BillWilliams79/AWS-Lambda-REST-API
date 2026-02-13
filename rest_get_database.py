@@ -19,12 +19,12 @@ def rest_get_database(get_method, conn, database):
             columns_array.append(row[0])
 
         if columns_array:
-            return compose_rest_response('200', columns_array, 'OK')
+            return compose_rest_response(200, columns_array, 'OK')
         else:
             print(f'HTTP {get_method}: show tables command failed')
-            return compose_rest_response('404',  '', 'NOT FOUND')
+            return compose_rest_response(404,  '', 'NOT FOUND')
 
     except pymysql.Error as e:
         errorMsg = f"HTTP {get_method}: show tables command failed: {e.args[0]} {e.args[1]}"
         print(errorMsg)
-        return compose_rest_response('500', '', errorMsg)
+        return compose_rest_response(500, '', errorMsg)
