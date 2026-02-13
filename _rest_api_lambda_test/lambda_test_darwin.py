@@ -74,17 +74,10 @@ def run_cud_lifecycle_test():
     post_response = lambda_test_execute(post_config)
 
     # Extract the new record's id from the response
-    # The response body may be double-JSON-encoded (SQL builds a JSON string,
-    # then compose_rest_response wraps it with json.dumps again).
     new_id = None
     if post_response and 'body' in post_response:
         body = json.loads(post_response['body'])
-        # Unwrap: if body is a list whose first element is a JSON string, parse it
-        if isinstance(body, list) and len(body) > 0 and isinstance(body[0], str):
-            body = json.loads(body[0])
-        if isinstance(body, dict) and 'id' in body:
-            new_id = str(body['id'])
-        elif isinstance(body, list) and len(body) > 0 and 'id' in body[0]:
+        if isinstance(body, list) and len(body) > 0 and 'id' in body[0]:
             new_id = str(body[0]['id'])
 
     if not new_id:

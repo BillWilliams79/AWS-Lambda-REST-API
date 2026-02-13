@@ -111,4 +111,4 @@ def rest_put(put_method, conn, table, body_list):
     except pymysql.Error as e:
         errorMsg = f"HTTP {put_method} SQL FAILED: {e.args[0]} {e.args[1]}"
         print(errorMsg)
-        return compose_rest_response('500', {'error': errorMsg})
+        return compose_rest_response('500', '', errorMsg)
