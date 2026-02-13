@@ -109,14 +109,10 @@ def safe_execute(config):
 
 
 def extract_id_from_post_response(response):
-    """Extract record id from a POST response, handling double-encoding."""
+    """Extract record id from a POST response."""
     if response and 'body' in response:
         body = json.loads(response['body'])
-        if isinstance(body, list) and len(body) > 0 and isinstance(body[0], str):
-            body = json.loads(body[0])
-        if isinstance(body, dict) and 'id' in body:
-            return str(body['id'])
-        elif isinstance(body, list) and len(body) > 0 and 'id' in body[0]:
+        if isinstance(body, list) and len(body) > 0 and 'id' in body[0]:
             return str(body[0]['id'])
     return None
 
@@ -333,32 +329,31 @@ getdb_response = lambda_test_execute({
     'expected_body_contains': ['areas2', 'domains2', 'profiles2', 'tasks2'],
 })
 
-# GETDB-02: BUG — response is double-encoded.
-# rest_get_database.py:22 passes json.dumps(columns_array) as body,
-# then compose_rest_response:33 does json.dumps(body) again.
+# GETDB-02: FIXED — response is properly single-encoded.
+# rest_get_database.py now passes columns_array directly (no pre-encoding).
 if getdb_response and 'body' in getdb_response:
     first_parse = json.loads(getdb_response['body'])
-    is_double_encoded = isinstance(first_parse, str)
+    is_properly_encoded = isinstance(first_parse, list)
     record_check(
-        'GETDB-02: BUG response is double-encoded',
-        is_double_encoded,
-        f'expected string after first parse, got {type(first_parse).__name__}'
+        'GETDB-02: FIXED response is properly single-encoded',
+        is_properly_encoded,
+        f'expected list after first parse, got {type(first_parse).__name__}'
     )
 
-# GETDB-03: BUG — isBase64Encoded is string 'false' not boolean False.
+# GETDB-03: FIXED — isBase64Encoded is now boolean False.
 # Also verify CORS headers present.
 if getdb_response:
     has_cors = getdb_response.get('headers', {}).get('Access-Control-Allow-Origin') == '*'
     is_b64 = getdb_response.get('isBase64Encoded')
-    is_string_false = is_b64 == 'false' and isinstance(is_b64, str)
+    is_bool_false = is_b64 is False
     details = []
     if not has_cors:
         details.append('missing CORS header')
-    if not is_string_false:
-        details.append(f'isBase64Encoded is {type(is_b64).__name__}({is_b64}), expected str("false")')
+    if not is_bool_false:
+        details.append(f'isBase64Encoded is {type(is_b64).__name__}({is_b64}), expected bool(False)')
     record_check(
-        'GETDB-03: BUG isBase64Encoded is string not boolean + CORS headers',
-        has_cors and is_string_false,
+        'GETDB-03: FIXED isBase64Encoded is boolean + CORS headers',
+        has_cors and is_bool_false,
         '; '.join(details)
     )
 
@@ -605,11 +600,11 @@ get16_response = lambda_test_execute({
 })
 if get16_response and 'body' in get16_response:
     first_parse = json.loads(get16_response['body'])
-    is_double = isinstance(first_parse, list) and len(first_parse) > 0 and isinstance(first_parse[0], str)
+    is_properly_encoded = isinstance(first_parse, list) and len(first_parse) > 0 and isinstance(first_parse[0], dict)
     record_check(
-        'GET-16b: BUG GET table response is double-encoded',
-        is_double,
-        f'first parse type: {type(first_parse).__name__}, value preview: {str(first_parse)[:100]}'
+        'GET-16b: FIXED GET table response is properly single-encoded',
+        is_properly_encoded,
+        f'first parse type: {type(first_parse).__name__}, element type: {type(first_parse[0]).__name__ if first_parse else "empty"}'
     )
 
 # GET-17: Count with 3+ fields — BUG: crashes with UnboundLocalError.
@@ -747,10 +742,10 @@ if post06_id:
     created_area_ids.append(post06_id)
 if post06_response and 'body' in post06_response:
     first_parse = json.loads(post06_response['body'])
-    is_double = isinstance(first_parse, list) and len(first_parse) > 0 and isinstance(first_parse[0], str)
+    is_properly_encoded = isinstance(first_parse, list) and len(first_parse) > 0 and isinstance(first_parse[0], dict)
     record_check(
-        'POST-06b: BUG POST response is double-encoded',
-        is_double,
+        'POST-06b: FIXED POST response is properly single-encoded',
+        is_properly_encoded,
         f'first parse type: {type(first_parse).__name__}'
     )
 
@@ -901,12 +896,11 @@ lambda_test_execute({
     'expected_status': 204,
 })
 
-# PUT-08: BUG — SQL error path passes dict body to compose_rest_response.
-# rest_put.py:114: compose_rest_response('500', {'error': errorMsg})
-# compose_rest_response error branch overwrites body with json.dumps(''),
-# discarding the error dict. Client never sees the actual error.
+# PUT-08: FIXED — SQL error path now passes errorMsg via http_message param.
+# rest_put.py:114: compose_rest_response('500', '', errorMsg)
+# Error message is now properly included in the response body.
 put08_response = safe_execute({
-    'test_name': 'PUT-08: BUG SQL error — error dict discarded',
+    'test_name': 'PUT-08: FIXED SQL error — error message in response',
     'http_method': 'PUT',
     'path': AREAS_PATH,
     'query_string_params': {},

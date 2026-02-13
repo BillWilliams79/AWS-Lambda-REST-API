@@ -165,7 +165,7 @@ def rest_get_table(get_method, conn, table, event):
 
         if row[0][0]:
             if count_syntax == 0:
-                return compose_rest_response('200', row[0], 'OK')
+                return compose_rest_response('200', json.loads(row[0][0]), 'OK')
             else:
                 # count(*) data has to be massaged into an array of dict
                 # it comes back as a tuple of tuples, each having a dict in json format
@@ -173,7 +173,7 @@ def rest_get_table(get_method, conn, table, event):
                 for tuple_dict in row:
                     return_value.append(json.loads(tuple_dict[0]))
                 varDump(json.dumps(return_value), 'json dump tuple_dict')
-                return compose_rest_response('200', json.dumps(return_value), 'OK')
+                return compose_rest_response('200', return_value, 'OK')
 
         else:
             print('get: 404')
@@ -184,4 +184,4 @@ def rest_get_table(get_method, conn, table, event):
     except pymysql.Error as e:
         errorMsg = f"HTTP {get_method} actual SQL select statement failed: {e.args[0]} {e.args[1]}"
         print(errorMsg)
-        return compose_rest_response('500', '', "errorMsg")
+        return compose_rest_response('500', '', errorMsg)

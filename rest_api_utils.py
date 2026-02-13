@@ -12,9 +12,11 @@ def compose_rest_response(status_code, body='', http_message=''):
     #
     print(f"HTTP Status Code: {status_code}")
 
+    status_code_int = int(status_code)
+
     lambda_rest_api_response = {
-        'isBase64Encoded': 'false',
-        'statusCode': int(status_code),
+        'isBase64Encoded': False,
+        'statusCode': status_code_int,
         'headers': {'Content-Type': 'application/json',
                     'Access-Control-Allow-Origin': '*',
                     'Access-Control-Allow-Headers': 'body, Content-Type, Access-Control-Allow-Headers, Access-Control-Allow-Origin, Access-Control-Allow-Methods',
@@ -22,9 +24,9 @@ def compose_rest_response(status_code, body='', http_message=''):
         }
     }
 
-    if status_code != '200' and status_code != '201' and status_code != '204':
+    if status_code_int not in (200, 201, 204):
         print(f"Error message inserted into body.  {body} : {http_message}")
-        body = json.dumps(http_message)
+        body = http_message
  
     #
     # json encode body, insert into response
