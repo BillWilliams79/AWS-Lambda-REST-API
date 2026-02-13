@@ -9,18 +9,20 @@ def rest_delete(delete_method, conn, table, body):
         return compose_rest_response(400, '', 'BAD REQUEST')
 
     # if multple key/value are provided in body default is to AND them together
-    where_clause = ' AND '.join(f"{key}={value}" for key, value in body.items())
-    
+    keys = list(body.keys())
+    values = list(body.values())
+    where_clause = ' AND '.join(f"{key} = %s" for key in keys)
+
     try:
         sql_statement = f"""
-            DELETE FROM {table} 
+            DELETE FROM {table}
             WHERE
                 {where_clause};
         """
         pretty_print_sql(sql_statement, delete_method)
 
         with conn.cursor() as cursor:
-            affected_rows = cursor.execute(sql_statement)
+            affected_rows = cursor.execute(sql_statement, tuple(values))
 
         if affected_rows == 0:
             errorMsg = f"Affected_rows = 0, 404 time"
