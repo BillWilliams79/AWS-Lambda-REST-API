@@ -15,16 +15,31 @@ import pytest
 # Add Lambda-Rest root to path so we can import handler, etc.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from handler import lambda_handler
+# handler.py reads env vars at module scope. Guard the import so unit tests
+# (which don't need lambda_handler) can run without exports.sh.
+try:
+    from handler import lambda_handler
+except KeyError:
+    lambda_handler = None
 
 
 # ---------------------------------------------------------------------------
 # Database connection
 # ---------------------------------------------------------------------------
 
+def _has_db_env_vars():
+    """Check if database environment variables are available."""
+    return all(k in os.environ for k in ('endpoint', 'username', 'db_password'))
+
+
 @pytest.fixture(scope="session")
 def db_connection():
-    """Shared pymysql connection to darwin2 test database."""
+    """Shared pymysql connection to darwin2 test database.
+
+    Skips if env vars not set (allows unit tests to run without exports.sh).
+    """
+    if not _has_db_env_vars():
+        pytest.skip("Database env vars not set (run . exports.sh for integration tests)")
     import pymysql
     conn = pymysql.connect(
         host=os.environ['endpoint'],
@@ -64,7 +79,11 @@ def invoke():
     Usage:
         response = invoke('GET', '/darwin2/areas2', query={'id': '1'})
         response = invoke('POST', '/darwin2/areas2', body={...})
+
+    Skips if lambda_handler not available (unit test mode without exports.sh).
     """
+    if lambda_handler is None:
+        pytest.skip("lambda_handler not available (run . exports.sh for integration tests)")
     def _invoke(method, path, query=None, body=None):
         event = {
             'httpMethod': method,
@@ -94,12 +113,19 @@ def extract_id(response):
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="session", autouse=True)
-def test_data(invoke, creator_fk, test_ids, db_connection):
+def test_data(request, creator_fk, test_ids):
     """Create isolated test hierarchy: profile → domain → area → task.
 
     Yields test_ids dict with keys: profile_id, domain_id, area_id, task_id.
     Cleans up ALL test data by creator_fk after session.
+    Skips setup/teardown when DB env vars are not available (unit test mode).
     """
+    if not _has_db_env_vars():
+        yield test_ids
+        return
+
+    invoke = request.getfixturevalue('invoke')
+    db_connection = request.getfixturevalue('db_connection')
     # Create profile
     invoke('POST', '/darwin2/profiles2', body={
         'id': creator_fk,
