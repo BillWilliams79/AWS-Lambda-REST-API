@@ -26,6 +26,7 @@ _MOCK_ENV = {
 }
 
 with patch.dict(os.environ, _MOCK_ENV):
+    import handler
     from handler import SAFE_NAME_RE, parse_path, rest_api_from_table
     from rest_api_utils import compose_rest_response
 
@@ -151,3 +152,33 @@ class TestRestApiFromTable:
         db_info = self._make_db_info()
         response = rest_api_from_table(event, db_info)
         assert response['statusCode'] == 200
+
+
+# ===========================================================================
+# get_connection() timeout parameter tests
+# ===========================================================================
+
+class TestGetConnectionTimeouts:
+    """Verify pymysql.connect is called with timeout parameters."""
+
+    @patch('handler.pymysql.connect')
+    def test_get_connection_passes_timeouts(self, mock_connect):
+        """get_connection() must pass connect_timeout, read_timeout, write_timeout."""
+        mock_connect.return_value = MagicMock()
+        # Clear connection cache so get_connection() calls pymysql.connect
+        saved = handler.connection.copy()
+        handler.connection.clear()
+        try:
+            handler.get_connection('darwin2')
+            mock_connect.assert_called_once()
+            call_kwargs = mock_connect.call_args
+            # Check timeout params are present (positional or keyword)
+            all_args = call_kwargs.kwargs if call_kwargs.kwargs else {}
+            assert 'connect_timeout' in all_args, "connect_timeout missing from pymysql.connect call"
+            assert 'read_timeout' in all_args, "read_timeout missing from pymysql.connect call"
+            assert 'write_timeout' in all_args, "write_timeout missing from pymysql.connect call"
+            assert all_args['connect_timeout'] > 0
+            assert all_args['read_timeout'] > 0
+            assert all_args['write_timeout'] > 0
+        finally:
+            handler.connection = saved

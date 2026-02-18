@@ -44,7 +44,8 @@ def get_connection(database):
                 pass
             del connection[database]
     connection[database] = pymysql.connect(
-        host=endpoint, user=username, password=password, database=database)
+        host=endpoint, user=username, password=password, database=database,
+        connect_timeout=3, read_timeout=5, write_timeout=5)
     return connection[database]
 
 SAFE_NAME_RE = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
