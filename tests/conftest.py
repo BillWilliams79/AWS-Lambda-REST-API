@@ -2,7 +2,7 @@
 Lambda-Rest pytest shared fixtures.
 
 Provides DB connection, API Gateway event builder, test data isolation,
-and automatic cleanup. All tests use darwin2 test database.
+and automatic cleanup. All tests use darwin_dev test database.
 """
 import sys
 import os
@@ -34,7 +34,7 @@ def _has_db_env_vars():
 
 @pytest.fixture(scope="session")
 def db_connection():
-    """Shared pymysql connection to darwin2 test database.
+    """Shared pymysql connection to darwin_dev test database.
 
     Skips if env vars not set (allows unit tests to run without exports.sh).
     """
@@ -45,7 +45,7 @@ def db_connection():
         host=os.environ['endpoint'],
         user=os.environ['username'],
         password=os.environ['db_password'],
-        database='darwin2',
+        database='darwin_dev',
         cursorclass=pymysql.cursors.DictCursor,
     )
     yield conn
@@ -77,8 +77,8 @@ def invoke():
     """Factory that builds an API Gateway event and invokes lambda_handler.
 
     Usage:
-        response = invoke('GET', '/darwin2/areas2', query={'id': '1'})
-        response = invoke('POST', '/darwin2/areas2', body={...})
+        response = invoke('GET', '/darwin_dev/areas', query={'id': '1'})
+        response = invoke('POST', '/darwin_dev/areas', body={...})
 
     Skips if lambda_handler not available (unit test mode without exports.sh).
     """
@@ -127,7 +127,7 @@ def test_data(request, creator_fk, test_ids):
     invoke = request.getfixturevalue('invoke')
     db_connection = request.getfixturevalue('db_connection')
     # Create profile
-    invoke('POST', '/darwin2/profiles2', body={
+    invoke('POST', '/darwin_dev/profiles', body={
         'id': creator_fk,
         'name': 'pytest User',
         'email': 'pytest@test.com',
@@ -139,7 +139,7 @@ def test_data(request, creator_fk, test_ids):
     test_ids['profile_id'] = creator_fk
 
     # Create domain
-    resp = invoke('POST', '/darwin2/domains2', body={
+    resp = invoke('POST', '/darwin_dev/domains', body={
         'domain_name': 'pytest Domain',
         'creator_fk': creator_fk,
         'closed': '0',
@@ -147,7 +147,7 @@ def test_data(request, creator_fk, test_ids):
     test_ids['domain_id'] = extract_id(resp)
 
     # Create area
-    resp = invoke('POST', '/darwin2/areas2', body={
+    resp = invoke('POST', '/darwin_dev/areas', body={
         'area_name': 'pytest Area',
         'creator_fk': creator_fk,
         'domain_fk': test_ids['domain_id'],
@@ -157,7 +157,7 @@ def test_data(request, creator_fk, test_ids):
     test_ids['area_id'] = extract_id(resp)
 
     # Create task
-    resp = invoke('POST', '/darwin2/tasks2', body={
+    resp = invoke('POST', '/darwin_dev/tasks', body={
         'priority': '0',
         'done': '0',
         'description': 'pytest Task',
@@ -172,10 +172,10 @@ def test_data(request, creator_fk, test_ids):
     import pymysql as _pymysql
     try:
         with db_connection.cursor() as cur:
-            cur.execute('DELETE FROM tasks2 WHERE creator_fk = %s', (creator_fk,))
-            cur.execute('DELETE FROM areas2 WHERE creator_fk = %s', (creator_fk,))
-            cur.execute('DELETE FROM domains2 WHERE creator_fk = %s', (creator_fk,))
-            cur.execute('DELETE FROM profiles2 WHERE id = %s', (creator_fk,))
+            cur.execute('DELETE FROM tasks WHERE creator_fk = %s', (creator_fk,))
+            cur.execute('DELETE FROM areas WHERE creator_fk = %s', (creator_fk,))
+            cur.execute('DELETE FROM domains WHERE creator_fk = %s', (creator_fk,))
+            cur.execute('DELETE FROM profiles WHERE id = %s', (creator_fk,))
         db_connection.commit()
     except _pymysql.MySQLError:
         db_connection.rollback()

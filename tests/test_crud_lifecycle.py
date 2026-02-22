@@ -23,7 +23,7 @@ class TestCRUDLifecycle:
     def test_crud_lifecycle_areas(self, invoke, creator_fk, test_ids):
         """CRUD-01: POST create area → PUT update → GET verify → DELETE → GET 404.
 
-        Exercises the complete CRUD cycle on the areas2 table:
+        Exercises the complete CRUD cycle on the areas table:
         - POST new area
         - PUT to update area_name
         - GET to verify the update
@@ -31,7 +31,7 @@ class TestCRUDLifecycle:
         - GET to verify 404 (not found)
         """
         # Step 1: POST create new area
-        create_resp = invoke('POST', '/darwin2/areas2', body={
+        create_resp = invoke('POST', '/darwin_dev/areas', body={
             'area_name': 'CRUD Test Area',
             'creator_fk': creator_fk,
             'domain_fk': test_ids['domain_id'],
@@ -43,13 +43,13 @@ class TestCRUDLifecycle:
         assert area_id is not None
 
         # Step 2: PUT update area_name
-        update_resp = invoke('PUT', '/darwin2/areas2', body=[
+        update_resp = invoke('PUT', '/darwin_dev/areas', body=[
             {'id': area_id, 'area_name': 'Updated Area Name'}
         ])
         assert update_resp['statusCode'] == 200
 
         # Step 3: GET verify update was applied
-        get_resp = invoke('GET', '/darwin2/areas2', query={'id': area_id})
+        get_resp = invoke('GET', '/darwin_dev/areas', query={'id': area_id})
         assert get_resp['statusCode'] == 200
         body = json.loads(get_resp['body'])
         assert isinstance(body, list)
@@ -57,11 +57,11 @@ class TestCRUDLifecycle:
         assert body[0]['area_name'] == 'Updated Area Name'
 
         # Step 4: DELETE the area
-        delete_resp = invoke('DELETE', '/darwin2/areas2', body={'id': area_id})
+        delete_resp = invoke('DELETE', '/darwin_dev/areas', body={'id': area_id})
         assert delete_resp['statusCode'] == 200
 
         # Step 5: GET verify 404 (area no longer exists)
-        get_404_resp = invoke('GET', '/darwin2/areas2', query={'id': area_id})
+        get_404_resp = invoke('GET', '/darwin_dev/areas', query={'id': area_id})
         assert get_404_resp['statusCode'] == 404
 
     # -----------------------------------------------------------------------
@@ -71,7 +71,7 @@ class TestCRUDLifecycle:
     def test_crud_lifecycle_tasks(self, invoke, creator_fk, test_ids):
         """CRUD-02: POST create task → PUT update → GET verify → DELETE → GET 404.
 
-        Exercises the complete CRUD cycle on the tasks2 table:
+        Exercises the complete CRUD cycle on the tasks table:
         - POST new task with description and priority
         - PUT to update both description and priority
         - GET to verify the updates
@@ -79,7 +79,7 @@ class TestCRUDLifecycle:
         - GET to verify 404
         """
         # Step 1: POST create new task
-        create_resp = invoke('POST', '/darwin2/tasks2', body={
+        create_resp = invoke('POST', '/darwin_dev/tasks', body={
             'description': 'CRUD Test Task',
             'area_fk': test_ids['area_id'],
             'creator_fk': creator_fk,
@@ -91,7 +91,7 @@ class TestCRUDLifecycle:
         assert task_id is not None
 
         # Step 2: PUT update description and priority
-        update_resp = invoke('PUT', '/darwin2/tasks2', body=[
+        update_resp = invoke('PUT', '/darwin_dev/tasks', body=[
             {
                 'id': task_id,
                 'description': 'Updated Task Description',
@@ -101,7 +101,7 @@ class TestCRUDLifecycle:
         assert update_resp['statusCode'] == 200
 
         # Step 3: GET verify updates were applied
-        get_resp = invoke('GET', '/darwin2/tasks2', query={'id': task_id})
+        get_resp = invoke('GET', '/darwin_dev/tasks', query={'id': task_id})
         assert get_resp['statusCode'] == 200
         body = json.loads(get_resp['body'])
         assert isinstance(body, list)
@@ -110,11 +110,11 @@ class TestCRUDLifecycle:
         assert body[0]['priority'] == 1
 
         # Step 4: DELETE the task
-        delete_resp = invoke('DELETE', '/darwin2/tasks2', body={'id': task_id})
+        delete_resp = invoke('DELETE', '/darwin_dev/tasks', body={'id': task_id})
         assert delete_resp['statusCode'] == 200
 
         # Step 5: GET verify 404
-        get_404_resp = invoke('GET', '/darwin2/tasks2', query={'id': task_id})
+        get_404_resp = invoke('GET', '/darwin_dev/tasks', query={'id': task_id})
         assert get_404_resp['statusCode'] == 404
 
     # -----------------------------------------------------------------------
@@ -133,7 +133,7 @@ class TestCRUDLifecycle:
         - GET task verify 404 (cascaded delete)
         """
         # Step 1: Create domain
-        domain_resp = invoke('POST', '/darwin2/domains2', body={
+        domain_resp = invoke('POST', '/darwin_dev/domains', body={
             'domain_name': 'FK Test Domain',
             'creator_fk': creator_fk,
             'closed': '0',
@@ -143,7 +143,7 @@ class TestCRUDLifecycle:
         assert domain_id is not None
 
         # Step 2: Create area under that domain
-        area_resp = invoke('POST', '/darwin2/areas2', body={
+        area_resp = invoke('POST', '/darwin_dev/areas', body={
             'area_name': 'FK Test Area',
             'creator_fk': creator_fk,
             'domain_fk': domain_id,
@@ -155,7 +155,7 @@ class TestCRUDLifecycle:
         assert area_id is not None
 
         # Step 3: Create task under that area
-        task_resp = invoke('POST', '/darwin2/tasks2', body={
+        task_resp = invoke('POST', '/darwin_dev/tasks', body={
             'description': 'FK Test Task',
             'area_fk': area_id,
             'creator_fk': creator_fk,
@@ -167,17 +167,17 @@ class TestCRUDLifecycle:
         assert task_id is not None
 
         # Step 4: GET verify task exists
-        get_resp = invoke('GET', '/darwin2/tasks2', query={'id': task_id})
+        get_resp = invoke('GET', '/darwin_dev/tasks', query={'id': task_id})
         assert get_resp['statusCode'] == 200
         body = json.loads(get_resp['body'])
         assert len(body) > 0
 
         # Step 5: DELETE domain (cascades to area and task)
-        delete_resp = invoke('DELETE', '/darwin2/domains2', body={'id': domain_id})
+        delete_resp = invoke('DELETE', '/darwin_dev/domains', body={'id': domain_id})
         assert delete_resp['statusCode'] == 200
 
         # Step 6: GET task verify 404 (cascaded delete)
-        get_404_resp = invoke('GET', '/darwin2/tasks2', query={'id': task_id})
+        get_404_resp = invoke('GET', '/darwin_dev/tasks', query={'id': task_id})
         assert get_404_resp['statusCode'] == 404
 
     # -----------------------------------------------------------------------
@@ -196,7 +196,7 @@ class TestCRUDLifecycle:
         # Step 1: Create 3 tasks
         task_ids = []
         for i in range(3):
-            create_resp = invoke('POST', '/darwin2/tasks2', body={
+            create_resp = invoke('POST', '/darwin_dev/tasks', body={
                 'description': f'Bulk Test Task {i+1}',
                 'area_fk': test_ids['area_id'],
                 'creator_fk': creator_fk,
@@ -214,13 +214,13 @@ class TestCRUDLifecycle:
             {'id': task_ids[1], 'priority': '1'},
             {'id': task_ids[2], 'priority': '1'},
         ]
-        update_resp = invoke('PUT', '/darwin2/tasks2', body=bulk_body)
+        update_resp = invoke('PUT', '/darwin_dev/tasks', body=bulk_body)
         assert update_resp['statusCode'] == 200
 
         # Step 3: GET with IN clause to verify all 3 have priority=1
         # IN clause format: query string "({id1},{id2},{id3})"
         in_clause = f"({','.join(task_ids)})"
-        get_resp = invoke('GET', '/darwin2/tasks2', query={'id': in_clause})
+        get_resp = invoke('GET', '/darwin_dev/tasks', query={'id': in_clause})
         assert get_resp['statusCode'] == 200
         body = json.loads(get_resp['body'])
         assert len(body) == 3
@@ -229,12 +229,12 @@ class TestCRUDLifecycle:
 
         # Step 4: Delete each task
         for task_id in task_ids:
-            delete_resp = invoke('DELETE', '/darwin2/tasks2', body={'id': task_id})
+            delete_resp = invoke('DELETE', '/darwin_dev/tasks', body={'id': task_id})
             assert delete_resp['statusCode'] == 200
 
         # Verify all deleted
         for task_id in task_ids:
-            get_resp = invoke('GET', '/darwin2/tasks2', query={'id': task_id})
+            get_resp = invoke('GET', '/darwin_dev/tasks', query={'id': task_id})
             assert get_resp['statusCode'] == 404
 
     # -----------------------------------------------------------------------
@@ -246,13 +246,13 @@ class TestCRUDLifecycle:
 
         Tests that special characters round-trip correctly:
         - POST area with: O'Brien's "Test" Area\\Path
-        - PUT update to: It's a test; DROP areas2;--
+        - PUT update to: It's a test; DROP areas;--
         - GET verify special chars preserved exactly
         - DELETE cleanup
         """
         # Step 1: POST area with special characters
         special_name_1 = "O'Brien's \"Test\" Area\\Path"
-        create_resp = invoke('POST', '/darwin2/areas2', body={
+        create_resp = invoke('POST', '/darwin_dev/areas', body={
             'area_name': special_name_1,
             'creator_fk': creator_fk,
             'domain_fk': test_ids['domain_id'],
@@ -264,30 +264,30 @@ class TestCRUDLifecycle:
         assert area_id is not None
 
         # Step 2: GET and verify special chars preserved
-        get_resp = invoke('GET', '/darwin2/areas2', query={'id': area_id})
+        get_resp = invoke('GET', '/darwin_dev/areas', query={'id': area_id})
         assert get_resp['statusCode'] == 200
         body = json.loads(get_resp['body'])
         assert body[0]['area_name'] == special_name_1
 
         # Step 3: PUT with SQL injection attempt string
-        special_name_2 = "It's a test; DROP areas2;--"
-        update_resp = invoke('PUT', '/darwin2/areas2', body=[
+        special_name_2 = "It's a test; DROP areas;--"
+        update_resp = invoke('PUT', '/darwin_dev/areas', body=[
             {'id': area_id, 'area_name': special_name_2}
         ])
         assert update_resp['statusCode'] == 200
 
         # Step 4: GET and verify injection attempt was treated as literal string
-        get_resp = invoke('GET', '/darwin2/areas2', query={'id': area_id})
+        get_resp = invoke('GET', '/darwin_dev/areas', query={'id': area_id})
         assert get_resp['statusCode'] == 200
         body = json.loads(get_resp['body'])
         assert body[0]['area_name'] == special_name_2
 
         # Step 5: DELETE cleanup
-        delete_resp = invoke('DELETE', '/darwin2/areas2', body={'id': area_id})
+        delete_resp = invoke('DELETE', '/darwin_dev/areas', body={'id': area_id})
         assert delete_resp['statusCode'] == 200
 
         # Step 6: Verify deleted
-        get_404_resp = invoke('GET', '/darwin2/areas2', query={'id': area_id})
+        get_404_resp = invoke('GET', '/darwin_dev/areas', query={'id': area_id})
         assert get_404_resp['statusCode'] == 404
 
     # -----------------------------------------------------------------------
@@ -306,7 +306,7 @@ class TestCRUDLifecycle:
         - DELETE cleanup
         """
         # Step 1: Create task
-        create_resp = invoke('POST', '/darwin2/tasks2', body={
+        create_resp = invoke('POST', '/darwin_dev/tasks', body={
             'description': 'Flag Test Task',
             'area_fk': test_ids['area_id'],
             'creator_fk': creator_fk,
@@ -318,33 +318,33 @@ class TestCRUDLifecycle:
         assert task_id is not None
 
         # Step 2: PUT priority to 1
-        update_resp = invoke('PUT', '/darwin2/tasks2', body=[
+        update_resp = invoke('PUT', '/darwin_dev/tasks', body=[
             {'id': task_id, 'priority': '1', 'done': '0'}
         ])
         assert update_resp['statusCode'] == 200
 
         # Step 3: GET verify priority
-        get_resp = invoke('GET', '/darwin2/tasks2', query={'id': task_id})
+        get_resp = invoke('GET', '/darwin_dev/tasks', query={'id': task_id})
         assert get_resp['statusCode'] == 200
         body = json.loads(get_resp['body'])
         assert body[0]['priority'] == 1
         assert body[0]['done'] == 0
 
         # Step 4: PUT done to 1
-        update_resp = invoke('PUT', '/darwin2/tasks2', body=[
+        update_resp = invoke('PUT', '/darwin_dev/tasks', body=[
             {'id': task_id, 'priority': '0', 'done': '1'}
         ])
         assert update_resp['statusCode'] == 200
 
         # Step 5: GET verify done
-        get_resp = invoke('GET', '/darwin2/tasks2', query={'id': task_id})
+        get_resp = invoke('GET', '/darwin_dev/tasks', query={'id': task_id})
         assert get_resp['statusCode'] == 200
         body = json.loads(get_resp['body'])
         assert body[0]['priority'] == 0
         assert body[0]['done'] == 1
 
         # Step 6: DELETE cleanup
-        delete_resp = invoke('DELETE', '/darwin2/tasks2', body={'id': task_id})
+        delete_resp = invoke('DELETE', '/darwin_dev/tasks', body={'id': task_id})
         assert delete_resp['statusCode'] == 200
 
     # -----------------------------------------------------------------------
@@ -361,7 +361,7 @@ class TestCRUDLifecycle:
         - DELETE cleanup
         """
         # Step 1: Create area with sort_order
-        create_resp = invoke('POST', '/darwin2/areas2', body={
+        create_resp = invoke('POST', '/darwin_dev/areas', body={
             'area_name': 'Sort Test Area',
             'creator_fk': creator_fk,
             'domain_fk': test_ids['domain_id'],
@@ -373,25 +373,25 @@ class TestCRUDLifecycle:
         assert area_id is not None
 
         # Step 2: GET verify initial sort_order
-        get_resp = invoke('GET', '/darwin2/areas2', query={'id': area_id})
+        get_resp = invoke('GET', '/darwin_dev/areas', query={'id': area_id})
         assert get_resp['statusCode'] == 200
         body = json.loads(get_resp['body'])
         assert body[0]['sort_order'] == 10
 
         # Step 3: PUT update sort_order
-        update_resp = invoke('PUT', '/darwin2/areas2', body=[
+        update_resp = invoke('PUT', '/darwin_dev/areas', body=[
             {'id': area_id, 'sort_order': '25'}
         ])
         assert update_resp['statusCode'] == 200
 
         # Step 4: GET verify updated sort_order
-        get_resp = invoke('GET', '/darwin2/areas2', query={'id': area_id})
+        get_resp = invoke('GET', '/darwin_dev/areas', query={'id': area_id})
         assert get_resp['statusCode'] == 200
         body = json.loads(get_resp['body'])
         assert body[0]['sort_order'] == 25
 
         # Step 5: DELETE cleanup
-        delete_resp = invoke('DELETE', '/darwin2/areas2', body={'id': area_id})
+        delete_resp = invoke('DELETE', '/darwin_dev/areas', body={'id': area_id})
         assert delete_resp['statusCode'] == 200
 
     # -----------------------------------------------------------------------
@@ -408,7 +408,7 @@ class TestCRUDLifecycle:
         - DELETE cleanup
         """
         # Step 1: Create task
-        create_resp = invoke('POST', '/darwin2/tasks2', body={
+        create_resp = invoke('POST', '/darwin_dev/tasks', body={
             'description': 'Task Sort Order Test',
             'area_fk': test_ids['area_id'],
             'creator_fk': creator_fk,
@@ -420,19 +420,19 @@ class TestCRUDLifecycle:
         assert task_id is not None
 
         # Step 2: PUT update sort_order to 42
-        update_resp = invoke('PUT', '/darwin2/tasks2', body=[
+        update_resp = invoke('PUT', '/darwin_dev/tasks', body=[
             {'id': task_id, 'sort_order': '42'}
         ])
         assert update_resp['statusCode'] == 200
 
         # Step 3: GET verify sort_order
-        get_resp = invoke('GET', '/darwin2/tasks2', query={'id': task_id})
+        get_resp = invoke('GET', '/darwin_dev/tasks', query={'id': task_id})
         assert get_resp['statusCode'] == 200
         body = json.loads(get_resp['body'])
         assert body[0]['sort_order'] == 42
 
         # Step 4: DELETE cleanup
-        delete_resp = invoke('DELETE', '/darwin2/tasks2', body={'id': task_id})
+        delete_resp = invoke('DELETE', '/darwin_dev/tasks', body={'id': task_id})
         assert delete_resp['statusCode'] == 200
 
     # -----------------------------------------------------------------------
@@ -450,7 +450,7 @@ class TestCRUDLifecycle:
         - DELETE hard delete
         """
         # Step 1: Create area
-        create_resp = invoke('POST', '/darwin2/areas2', body={
+        create_resp = invoke('POST', '/darwin_dev/areas', body={
             'area_name': 'Close Test Area',
             'creator_fk': creator_fk,
             'domain_fk': test_ids['domain_id'],
@@ -462,29 +462,29 @@ class TestCRUDLifecycle:
         assert area_id is not None
 
         # Step 2: PUT to close (soft delete)
-        update_resp = invoke('PUT', '/darwin2/areas2', body=[
+        update_resp = invoke('PUT', '/darwin_dev/areas', body=[
             {'id': area_id, 'closed': '1'}
         ])
         assert update_resp['statusCode'] == 200
 
         # Step 3: GET verify closed
-        get_resp = invoke('GET', '/darwin2/areas2', query={'id': area_id})
+        get_resp = invoke('GET', '/darwin_dev/areas', query={'id': area_id})
         assert get_resp['statusCode'] == 200
         body = json.loads(get_resp['body'])
         assert body[0]['closed'] == 1
 
         # Step 4: PUT to reopen
-        update_resp = invoke('PUT', '/darwin2/areas2', body=[
+        update_resp = invoke('PUT', '/darwin_dev/areas', body=[
             {'id': area_id, 'closed': '0'}
         ])
         assert update_resp['statusCode'] == 200
 
         # Step 5: GET verify reopened
-        get_resp = invoke('GET', '/darwin2/areas2', query={'id': area_id})
+        get_resp = invoke('GET', '/darwin_dev/areas', query={'id': area_id})
         assert get_resp['statusCode'] == 200
         body = json.loads(get_resp['body'])
         assert body[0]['closed'] == 0
 
         # Step 6: DELETE hard delete
-        delete_resp = invoke('DELETE', '/darwin2/areas2', body={'id': area_id})
+        delete_resp = invoke('DELETE', '/darwin_dev/areas', body={'id': area_id})
         assert delete_resp['statusCode'] == 200
