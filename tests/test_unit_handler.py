@@ -22,7 +22,7 @@ _MOCK_ENV = {
     'endpoint': 'localhost',
     'username': 'test_user',
     'db_password': 'test_pass',
-    'db_name': 'darwin2',
+    'db_name': 'darwin_dev',
 }
 
 with patch.dict(os.environ, _MOCK_ENV):
@@ -44,7 +44,7 @@ class TestSafeNameRegex:
     """Tests for the SAFE_NAME_RE table name validation regex."""
 
     def test_valid_simple_name(self):
-        assert SAFE_NAME_RE.match('profiles2')
+        assert SAFE_NAME_RE.match('profiles')
 
     def test_valid_underscore_prefix(self):
         assert SAFE_NAME_RE.match('_private_table')
@@ -79,24 +79,24 @@ class TestParsePath:
 
     @patch('handler.get_connection')
     def test_valid_database_and_table(self, mock_conn):
-        """Standard path /darwin2/areas2 extracts both parts."""
+        """Standard path /darwin_dev/areas extracts both parts."""
         mock_conn.return_value = MagicMock()
-        result = parse_path('/darwin2/areas2')
-        assert result['database'] == 'darwin2'
-        assert result['table'] == 'areas2'
+        result = parse_path('/darwin_dev/areas')
+        assert result['database'] == 'darwin_dev'
+        assert result['table'] == 'areas'
         assert result['conn'] is not None
 
     @patch('handler.get_connection')
     def test_database_only_path(self, mock_conn):
         """Path with database only — table is empty string."""
         mock_conn.return_value = MagicMock()
-        result = parse_path('/darwin2')
-        assert result['database'] == 'darwin2'
+        result = parse_path('/darwin_dev')
+        assert result['database'] == 'darwin_dev'
         assert result['table'] == ''
 
     def test_invalid_table_name_returns_error(self):
         """Invalid table name returns error in result dict."""
-        result = parse_path('/darwin2/bad;name')
+        result = parse_path('/darwin_dev/bad;name')
         assert 'error' in result
         assert 'Invalid table name' in result['error']
 
@@ -110,9 +110,9 @@ class TestParsePath:
     def test_deep_path_ignores_extra_segments(self, mock_conn):
         """Path with 3+ segments still extracts first two."""
         mock_conn.return_value = MagicMock()
-        result = parse_path('/darwin2/areas2/extra/deep')
-        assert result['database'] == 'darwin2'
-        assert result['table'] == 'areas2'
+        result = parse_path('/darwin_dev/areas/extra/deep')
+        assert result['database'] == 'darwin_dev'
+        assert result['table'] == 'areas'
 
 
 # ===========================================================================
@@ -122,7 +122,7 @@ class TestParsePath:
 class TestRestApiFromTable:
     """Tests for HTTP method routing in rest_api_from_table()."""
 
-    def _make_event(self, method='GET', body=None, path='/darwin2/areas2'):
+    def _make_event(self, method='GET', body=None, path='/darwin_dev/areas'):
         return {
             'httpMethod': method,
             'path': path,
@@ -132,10 +132,10 @@ class TestRestApiFromTable:
 
     def _make_db_info(self, conn=_SENTINEL):
         return {
-            'database': 'darwin2',
-            'table': 'areas2',
+            'database': 'darwin_dev',
+            'table': 'areas',
             'conn': MagicMock() if conn is _SENTINEL else conn,
-            'path': '/darwin2/areas2',
+            'path': '/darwin_dev/areas',
         }
 
     def test_no_connection_returns_500(self):
@@ -169,7 +169,7 @@ class TestGetConnectionTimeouts:
         saved = handler.connection.copy()
         handler.connection.clear()
         try:
-            handler.get_connection('darwin2')
+            handler.get_connection('darwin_dev')
             mock_connect.assert_called_once()
             call_kwargs = mock_connect.call_args
             # Check timeout params are present (positional or keyword)

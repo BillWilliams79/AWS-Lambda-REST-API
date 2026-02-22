@@ -19,7 +19,7 @@ class TestHandlerRouting:
 
     def test_handler_options_returns_200(self, invoke):
         """HANDLER-01: OPTIONS request returns 200 with empty body."""
-        response = invoke('OPTIONS', '/darwin2/areas2')
+        response = invoke('OPTIONS', '/darwin_dev/areas')
         assert response['statusCode'] == 200
 
     # -----------------------------------------------------------------------
@@ -54,14 +54,14 @@ class TestHandlerRouting:
     # -----------------------------------------------------------------------
 
     def test_handler_substring_match_returns_404(self):
-        """HANDLER-04: db_names is a set; substring match should fail (e.g., '/dar' vs 'darwin2').
+        """HANDLER-04: db_names is a set; substring match should fail (e.g., '/dar' vs 'darwin_dev').
 
-        db_dict bug would have allowed '/dar' to match 'darwin2' via string containment.
+        db_dict bug would have allowed '/dar' to match 'darwin_dev' via string containment.
         Now that it's a set, only exact matches work.
         """
         event = {
             'httpMethod': 'GET',
-            'path': '/dar/areas2',
+            'path': '/dar/areas',
             'queryStringParameters': None,
             'body': None,
         }
@@ -79,7 +79,7 @@ class TestHandlerRouting:
         """
         event = {
             'httpMethod': 'POST',
-            'path': '/darwin2/areas2',
+            'path': '/darwin_dev/areas',
             'queryStringParameters': None,
             'body': None,
         }
@@ -97,7 +97,7 @@ class TestHandlerRouting:
         """
         event = {
             'httpMethod': 'PUT',
-            'path': '/darwin2/areas2',
+            'path': '/darwin_dev/areas',
             'queryStringParameters': None,
             'body': None,
         }
@@ -115,7 +115,7 @@ class TestHandlerRouting:
         """
         event = {
             'httpMethod': 'DELETE',
-            'path': '/darwin2/areas2',
+            'path': '/darwin_dev/areas',
             'queryStringParameters': None,
             'body': None,
         }
@@ -130,14 +130,14 @@ class TestHandlerRouting:
         """HANDLER-08: GET with None body should succeed (body not used for GET).
 
         GET can work with None body since the request uses queryStringParameters.
-        This tests GET /darwin2 (no table, returns list of tables).
+        This tests GET /darwin_dev (no table, returns list of tables).
         """
         event = {
             'httpMethod': 'GET',
-            'path': '/darwin2',
+            'path': '/darwin_dev',
             'queryStringParameters': None,
             'body': None,
         }
         response = lambda_handler(event, {})
-        # GET /darwin2 should return 200 with list of tables
+        # GET /darwin_dev should return 200 with list of tables
         assert response['statusCode'] == 200

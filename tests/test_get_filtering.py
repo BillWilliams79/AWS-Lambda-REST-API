@@ -21,11 +21,11 @@ from conftest import extract_id
 
 
 def test_get_filter_by_creator_fk(invoke, creator_fk):
-    """GET-01: Filter areas2 by creator_fk → 200, body contains area_name.
+    """GET-01: Filter areas by creator_fk → 200, body contains area_name.
 
     Tests basic field filtering where a single QSP matches records by creator.
     """
-    response = invoke('GET', '/darwin2/areas2', query={'creator_fk': creator_fk})
+    response = invoke('GET', '/darwin_dev/areas', query={'creator_fk': creator_fk})
     assert response['statusCode'] == 200
     body = json.loads(response['body'])
     assert isinstance(body, list)
@@ -35,12 +35,12 @@ def test_get_filter_by_creator_fk(invoke, creator_fk):
 
 
 def test_get_filter_by_id(invoke, test_ids):
-    """GET-02: Filter areas2 by id → 200, body contains the specific area.
+    """GET-02: Filter areas by id → 200, body contains the specific area.
 
     Tests exact ID filtering returns the single matching record.
     """
     area_id = test_ids['area_id']
-    response = invoke('GET', '/darwin2/areas2', query={'id': area_id})
+    response = invoke('GET', '/darwin_dev/areas', query={'id': area_id})
     assert response['statusCode'] == 200
     body = json.loads(response['body'])
     assert isinstance(body, list)
@@ -56,7 +56,7 @@ def test_get_multiple_filters_and(invoke, creator_fk, test_ids):
     Filters by both creator_fk and id.
     """
     area_id = test_ids['area_id']
-    response = invoke('GET', '/darwin2/areas2', query={
+    response = invoke('GET', '/darwin_dev/areas', query={
         'id': area_id,
         'creator_fk': creator_fk,
     })
@@ -75,7 +75,7 @@ def test_get_in_clause(invoke, test_ids):
     """
     area_id = test_ids['area_id']
     # Query with IN clause containing the test area and a non-existent ID
-    response = invoke('GET', '/darwin2/areas2', query={
+    response = invoke('GET', '/darwin_dev/areas', query={
         'id': f'({area_id},999999)',
     })
     assert response['statusCode'] == 200
@@ -96,7 +96,7 @@ def test_get_date_range_filter(invoke, creator_fk, test_ids):
     - DELETE the task to clean up
     """
     # Step 1: Create a done task with explicit done_ts
-    create_resp = invoke('POST', '/darwin2/tasks2', body={
+    create_resp = invoke('POST', '/darwin_dev/tasks', body={
         'description': 'Date Filter Test Task',
         'area_fk': test_ids['area_id'],
         'creator_fk': creator_fk,
@@ -109,7 +109,7 @@ def test_get_date_range_filter(invoke, creator_fk, test_ids):
     assert task_id is not None
 
     # Step 2: GET with filter_ts in range
-    response = invoke('GET', '/darwin2/tasks2', query={
+    response = invoke('GET', '/darwin_dev/tasks', query={
         'creator_fk': creator_fk,
         'filter_ts': '(done_ts,2025-06-01T00:00:00,2025-06-30T23:59:59)',
     })
@@ -121,7 +121,7 @@ def test_get_date_range_filter(invoke, creator_fk, test_ids):
     assert any(record['id'] == int(task_id) for record in body)
 
     # Step 3: DELETE cleanup
-    delete_resp = invoke('DELETE', '/darwin2/tasks2', body={'id': task_id})
+    delete_resp = invoke('DELETE', '/darwin_dev/tasks', body={'id': task_id})
     assert delete_resp['statusCode'] == 200
 
 
@@ -130,7 +130,7 @@ def test_get_sort_ascending(invoke, creator_fk):
 
     Tests ?sort=column:asc produces results in ascending order.
     """
-    response = invoke('GET', '/darwin2/areas2', query={
+    response = invoke('GET', '/darwin_dev/areas', query={
         'creator_fk': creator_fk,
         'sort': 'id:asc',
     })
@@ -148,7 +148,7 @@ def test_get_sort_descending(invoke, creator_fk):
 
     Tests ?sort=column:desc produces results in descending order.
     """
-    response = invoke('GET', '/darwin2/areas2', query={
+    response = invoke('GET', '/darwin_dev/areas', query={
         'creator_fk': creator_fk,
         'sort': 'id:desc',
     })
@@ -166,7 +166,7 @@ def test_get_multi_field_sort(invoke, creator_fk):
 
     Tests ?sort=col1:asc,col2:asc produces multi-level sort.
     """
-    response = invoke('GET', '/darwin2/areas2', query={
+    response = invoke('GET', '/darwin_dev/areas', query={
         'creator_fk': creator_fk,
         'sort': 'closed:asc,sort_order:asc',
     })
@@ -184,7 +184,7 @@ def test_get_sparse_fields(invoke, creator_fk):
 
     Tests that only specified fields are returned in the response.
     """
-    response = invoke('GET', '/darwin2/areas2', query={
+    response = invoke('GET', '/darwin_dev/areas', query={
         'creator_fk': creator_fk,
         'fields': 'id,area_name',
     })
@@ -206,7 +206,7 @@ def test_get_count_group(invoke, creator_fk):
 
     Tests ?fields=count(*),domain_fk produces count grouped by domain.
     """
-    response = invoke('GET', '/darwin2/areas2', query={
+    response = invoke('GET', '/darwin_dev/areas', query={
         'creator_fk': creator_fk,
         'fields': 'count(*),domain_fk',
     })
@@ -225,7 +225,7 @@ def test_get_invalid_qsp_key_returns_400(invoke):
 
     Tests that a QSP with a key that doesn't match any column returns 400.
     """
-    response = invoke('GET', '/darwin2/areas2', query={
+    response = invoke('GET', '/darwin_dev/areas', query={
         'nonexistent_column': 'value',
     })
     assert response['statusCode'] == 400
@@ -236,7 +236,7 @@ def test_get_invalid_field_returns_400(invoke, creator_fk):
 
     Tests that requesting a non-existent column in fields returns 400.
     """
-    response = invoke('GET', '/darwin2/areas2', query={
+    response = invoke('GET', '/darwin_dev/areas', query={
         'creator_fk': creator_fk,
         'fields': 'id,nonexistent_field',
     })
@@ -250,7 +250,7 @@ def test_get_nonexistent_table_returns_500(invoke):
     May raise an exception, which is also acceptable.
     """
     try:
-        response = invoke('GET', '/darwin2/nonexistent_table')
+        response = invoke('GET', '/darwin_dev/nonexistent_table')
         assert response['statusCode'] == 500
     except Exception:
         # Exception is acceptable for non-existent table
@@ -262,7 +262,7 @@ def test_get_no_matching_rows_returns_404(invoke):
 
     Tests that a valid query that matches zero records returns 404.
     """
-    response = invoke('GET', '/darwin2/areas2', query={
+    response = invoke('GET', '/darwin_dev/areas', query={
         'id': '999999999',
     })
     assert response['statusCode'] == 404
@@ -273,7 +273,7 @@ def test_get_invalid_sort_column_returns_400(invoke, creator_fk):
 
     Tests that sorting by a non-existent column returns 400.
     """
-    response = invoke('GET', '/darwin2/areas2', query={
+    response = invoke('GET', '/darwin_dev/areas', query={
         'creator_fk': creator_fk,
         'sort': 'BOGUS_COLUMN:asc',
     })
@@ -286,7 +286,7 @@ def test_get_response_single_encoded(invoke, test_ids):
     Tests that json.loads(response['body']) directly yields a list of dicts,
     not a string that requires a second parse.
     """
-    response = invoke('GET', '/darwin2/areas2', query={'id': test_ids['area_id']})
+    response = invoke('GET', '/darwin_dev/areas', query={'id': test_ids['area_id']})
     assert response['statusCode'] == 200
     body = json.loads(response['body'])
     # body should be a list of dicts, not a string
@@ -305,7 +305,7 @@ def test_get_count_too_many_fields_returns_400(invoke, creator_fk):
     Tests that count(*) aggregation with more than one group-by field
     returns 400 (only one group-by field allowed with count).
     """
-    response = invoke('GET', '/darwin2/areas2', query={
+    response = invoke('GET', '/darwin_dev/areas', query={
         'creator_fk': creator_fk,
         'fields': 'count(*),domain_fk,creator_fk',
     })

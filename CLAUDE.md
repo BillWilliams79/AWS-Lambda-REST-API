@@ -21,18 +21,18 @@ AWS Lambda function serving a REST API backed by MySQL (RDS) via API Gateway pro
 ### Database Connection
 
 - Connection is established at module load time (Lambda cold start), stored in `connection` dict keyed by database name
-- Currently only one database (`darwin2`) is configured
+- Two databases configured: `darwin` (production), `darwin_dev` (testing)
 - Uses pymysql with credentials from environment variables
 
 ## CRUD Modules
 
 ### rest_get_database.py
-- Triggered when GET path has no table segment (e.g., `/darwin2`)
+- Triggered when GET path has no table segment (e.g., `/darwin_dev`)
 - Runs `SHOW tables`, returns list of table name strings
 - Triple-encoded: calls `json.dumps(columns_array)` then passes result to `compose_rest_response` which calls `json.dumps` again
 
 ### rest_get_table.py
-- Triggered when GET path has a table segment (e.g., `/darwin2/areas2`)
+- Triggered when GET path has a table segment (e.g., `/darwin_dev/areas`)
 - Step 1: `DESC {table}` to discover columns (used to validate QSPs and build JSON_OBJECT)
 - Step 2: Parse query string parameters into WHERE clause, ORDER BY, fields/count/group_by
 - Step 3: Build and execute SQL using `CONCAT('[', GROUP_CONCAT(JSON_OBJECT(...)), ']')` to produce JSON directly from MySQL
@@ -75,7 +75,7 @@ AWS Lambda function serving a REST API backed by MySQL (RDS) via API Gateway pro
 
 ### handler.py
 
-- **`db_dict` is a string, not a dict (line 27-70)**: `db_dict = os.environ['db_name']` assigns the string `'darwin2'`. The check `db_info['database'] in db_dict` (line 70) performs a **substring match** on the string, not a dict key lookup. Works by coincidence because the name matches exactly, but a database named `'dar'` would incorrectly match `'darwin2'` since `'dar' in 'darwin2'` is True.
+- **`db_dict` is a string, not a dict (line 27-70)**: `db_dict = os.environ['db_name']` assigns the string (e.g., `'darwin,darwin_dev'`). The check `db_info['database'] in db_dict` (line 70) performs a **substring match** on the string, not a dict key lookup. Works because `db_names` was fixed to use `set(os.environ['db_name'].split(','))` with proper set membership test.
 
 - **Unbound `body` variable (line 97-98)**: If `event['body']` is None, the `if` block is skipped and `body` is never assigned. The method dispatch at lines 106/119/124 still passes `body` to the rest_* modules, which would raise `UnboundLocalError`. GET is unaffected since it doesn't use `body`.
 
@@ -117,5 +117,5 @@ AWS Lambda function serving a REST API backed by MySQL (RDS) via API Gateway pro
 
 - `exports.sh` contains database credentials (db_name, db_password, endpoint, username) — in `.gitignore`, never commit
 - Must be sourced before running tests: `. ./exports.sh` (use POSIX dot syntax, not `source`)
-- Database: MySQL on AWS RDS (darwin2)
+- Database: MySQL on AWS RDS (darwin for production, darwin_dev for testing)
 - Env vars: `endpoint`, `username`, `db_password`, `db_name`
