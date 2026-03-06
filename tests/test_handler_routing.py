@@ -82,6 +82,11 @@ class TestHandlerRouting:
             'path': '/darwin_dev/areas',
             'queryStringParameters': None,
             'body': None,
+            'requestContext': {
+                'authorizer': {
+                    'claims': {'cognito:username': 'test-user'}
+                }
+            },
         }
         response = lambda_handler(event, {})
         assert response['statusCode'] == 400
@@ -100,6 +105,11 @@ class TestHandlerRouting:
             'path': '/darwin_dev/areas',
             'queryStringParameters': None,
             'body': None,
+            'requestContext': {
+                'authorizer': {
+                    'claims': {'cognito:username': 'test-user'}
+                }
+            },
         }
         response = lambda_handler(event, {})
         assert response['statusCode'] == 400
@@ -118,6 +128,11 @@ class TestHandlerRouting:
             'path': '/darwin_dev/areas',
             'queryStringParameters': None,
             'body': None,
+            'requestContext': {
+                'authorizer': {
+                    'claims': {'cognito:username': 'test-user'}
+                }
+            },
         }
         response = lambda_handler(event, {})
         assert response['statusCode'] == 400

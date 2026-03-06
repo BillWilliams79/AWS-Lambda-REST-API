@@ -10,6 +10,7 @@ from rest_get_table import rest_get_table
 from rest_put import rest_put
 from rest_post import rest_post
 from rest_delete import rest_delete
+from auth_utils import get_authenticated_user, CREATOR_FK_TABLES, PROFILE_TABLE
 
 
 #
@@ -113,6 +114,19 @@ def rest_api_from_table(event, db_info):
         print('No HTTP method')
         return compose_rest_response(500, '', 'REST API call received with no HTTP method')
 
+    # OPTIONS (CORS preflight) — no auth required
+    if http_method == options_method:
+        return compose_rest_response(200, '', '')
+
+    # Extract authenticated user from Cognito authorizer claims
+    authenticated_user = get_authenticated_user(event)
+
+    # Block unauthenticated access to user-scoped tables
+    if table in CREATOR_FK_TABLES or table == PROFILE_TABLE:
+        if authenticated_user is None:
+            print(f'Auth: unauthenticated request to user table {table}')
+            return compose_rest_response(403, '', 'FORBIDDEN')
+
     body = None
     if event['body'] is not None:
         body = json.loads(event['body'])
@@ -123,26 +137,22 @@ def rest_api_from_table(event, db_info):
     if http_method == put_method:
 
         # PUT Method
-        return rest_put(put_method, conn, table, body)
+        return rest_put(put_method, conn, table, body, authenticated_user)
 
     elif http_method == get_method:
 
         # GET Method
         if table:
-            return rest_get_table(get_method, conn, table, event)
+            return rest_get_table(get_method, conn, table, event, authenticated_user)
         else:
             return rest_get_database(get_method, conn, database)
 
     elif http_method == post_method:
 
         # POST Method
-        return rest_post(post_method, conn, table, body)
+        return rest_post(post_method, conn, table, body, authenticated_user)
 
     elif http_method == delete_method:
 
         # DELETE Method
-        return rest_delete(delete_method, conn, table, body)
-
-    elif http_method == options_method:
-        #varDump(event, 'OPTIONS event dumps')
-        return compose_rest_response(200, '', '')
+        return rest_delete(delete_method, conn, table, body, authenticated_user)

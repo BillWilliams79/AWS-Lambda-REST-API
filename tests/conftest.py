@@ -72,24 +72,36 @@ def test_ids():
 # Lambda event builder
 # ---------------------------------------------------------------------------
 
+_UNSET = object()
+
 @pytest.fixture(scope="session")
-def invoke():
+def invoke(creator_fk):
     """Factory that builds an API Gateway event and invokes lambda_handler.
 
     Usage:
         response = invoke('GET', '/darwin_dev/areas', query={'id': '1'})
         response = invoke('POST', '/darwin_dev/areas', body={...})
+        response = invoke('GET', '/darwin_dev/areas', authenticated_user=None)  # no auth
+
+    By default, uses the session's creator_fk as authenticated_user.
+    Pass authenticated_user=None explicitly to test unauthenticated access.
 
     Skips if lambda_handler not available (unit test mode without exports.sh).
     """
     if lambda_handler is None:
         pytest.skip("lambda_handler not available (run . exports.sh for integration tests)")
-    def _invoke(method, path, query=None, body=None):
+    def _invoke(method, path, query=None, body=None, authenticated_user=_UNSET):
+        auth_user = creator_fk if authenticated_user is _UNSET else authenticated_user
         event = {
             'httpMethod': method,
             'path': path,
             'queryStringParameters': query,
             'body': json.dumps(body) if body is not None else None,
+            'requestContext': {
+                'authorizer': {
+                    'claims': {'cognito:username': auth_user}
+                }
+            } if auth_user is not None else {},
         }
         return lambda_handler(event, {})
     return _invoke
@@ -135,7 +147,7 @@ def test_data(request, creator_fk, test_ids):
         'userName': creator_fk,
         'region': 'us-west-1',
         'userPoolId': 'test-pool',
-    })
+    }, authenticated_user=creator_fk)
     test_ids['profile_id'] = creator_fk
 
     # Create domain
@@ -143,7 +155,7 @@ def test_data(request, creator_fk, test_ids):
         'domain_name': 'pytest Domain',
         'creator_fk': creator_fk,
         'closed': '0',
-    })
+    }, authenticated_user=creator_fk)
     test_ids['domain_id'] = extract_id(resp)
 
     # Create area
@@ -153,7 +165,7 @@ def test_data(request, creator_fk, test_ids):
         'domain_fk': test_ids['domain_id'],
         'closed': '0',
         'sort_order': '1',
-    })
+    }, authenticated_user=creator_fk)
     test_ids['area_id'] = extract_id(resp)
 
     # Create task
@@ -163,7 +175,7 @@ def test_data(request, creator_fk, test_ids):
         'description': 'pytest Task',
         'area_fk': test_ids['area_id'],
         'creator_fk': creator_fk,
-    })
+    }, authenticated_user=creator_fk)
     test_ids['task_id'] = extract_id(resp)
 
     yield test_ids

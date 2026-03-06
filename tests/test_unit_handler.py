@@ -128,6 +128,11 @@ class TestRestApiFromTable:
             'path': path,
             'queryStringParameters': None,
             'body': json.dumps(body) if body is not None else None,
+            'requestContext': {
+                'authorizer': {
+                    'claims': {'cognito:username': 'test-user'}
+                }
+            },
         }
 
     def _make_db_info(self, conn=_SENTINEL):

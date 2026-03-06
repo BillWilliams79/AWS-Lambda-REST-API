@@ -2,8 +2,9 @@ import pymysql
 import json
 from rest_api_utils import compose_rest_response
 from classifier import varDump, pretty_print_sql
-        
-def rest_delete(delete_method, conn, table, body):
+from auth_utils import CREATOR_FK_TABLES, PROFILE_TABLE
+
+def rest_delete(delete_method, conn, table, body, authenticated_user=None):
        
     if not body:
         return compose_rest_response(400, '', 'BAD REQUEST')
@@ -12,6 +13,15 @@ def rest_delete(delete_method, conn, table, body):
     keys = list(body.keys())
     values = list(body.values())
     where_clause = ' AND '.join(f"{key} = %s" for key in keys)
+
+    # Add creator_fk scoping for user-owned tables
+    if authenticated_user is not None:
+        if table in CREATOR_FK_TABLES:
+            where_clause += ' AND creator_fk = %s'
+            values.append(authenticated_user)
+        elif table == PROFILE_TABLE:
+            where_clause += ' AND id = %s'
+            values.append(authenticated_user)
 
     try:
         sql_statement = f"""

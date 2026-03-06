@@ -29,14 +29,17 @@ class TestPostErrorPaths:
     # POST-02: Missing required field returns 500
     # -----------------------------------------------------------------------
 
-    def test_post_missing_required_field_returns_500(self, invoke):
-        """POST-02: POST with missing required field (creator_fk) returns 500.
+    def test_post_missing_required_field_returns_500(self, invoke, creator_fk):
+        """POST-02: POST with missing required field returns 500.
 
+        creator_fk is now injected from JWT, so we test a different missing
+        field: POST to areas without domain_fk (a required FK).
         May raise an exception; accept both 500 status or exception.
         """
         try:
-            response = invoke('POST', '/darwin_dev/domains', body={
-                'domain_name': 'No Creator',
+            response = invoke('POST', '/darwin_dev/areas', body={
+                'area_name': 'No Domain FK',
+                'closed': '0',
             })
             assert response['statusCode'] == 500
         except Exception:
@@ -49,12 +52,12 @@ class TestPostErrorPaths:
     def test_post_fk_violation_returns_500(self, invoke):
         """POST-03: POST with invalid FK (domain_fk='999999') returns 500.
 
+        creator_fk is overridden from JWT (valid), but domain_fk is invalid.
         May raise an exception; accept both 500 status or exception.
         """
         try:
             response = invoke('POST', '/darwin_dev/areas', body={
                 'area_name': 'Bad FK',
-                'creator_fk': 'nonexistent-user-id',
                 'domain_fk': '999999',
                 'closed': '0',
             })
