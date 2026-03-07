@@ -2,8 +2,9 @@ import pymysql
 import json
 from rest_api_utils import compose_rest_response
 from classifier import varDump, pretty_print_sql
-        
-def rest_get_table(get_method, conn, table, event):
+from auth_utils import CREATOR_FK_TABLES, PROFILE_TABLE
+
+def rest_get_table(get_method, conn, table, event, authenticated_user=None):
 
     # STEP 1: Execute helper SQL commands: build list of columns for the SQL
     #         command and allow for larger group concat. Build a list of columns
@@ -38,6 +39,10 @@ def rest_get_table(get_method, conn, table, event):
 
     if qsp:
         for key, value in qsp.items():
+
+            # Skip client-supplied creator_fk — backend injects from JWT
+            if key == 'creator_fk' and (table in CREATOR_FK_TABLES):
+                continue
 
             if key in sql_columns:
                 # if key is valid SQL column, it is a filter or part of the where clause
@@ -123,6 +128,17 @@ def rest_get_table(get_method, conn, table, event):
                 errorMsg = f"HTTP {get_method} invalid query string parameter {key} {value}"
                 print(errorMsg)
                 return compose_rest_response(400, '', "BAD REQUEST")
+
+    # Inject authenticated user filter from JWT
+    if authenticated_user is not None:
+        if table in CREATOR_FK_TABLES:
+            where_clause = f"{where_clause}{where_connector} creator_fk = %s"
+            where_params.append(authenticated_user)
+            where_count += 1
+        elif table == PROFILE_TABLE:
+            where_clause = f"{where_clause}{where_connector} id = %s"
+            where_params.append(authenticated_user)
+            where_count += 1
 
     # zero out where clause if there were no QSPs
     if where_count == 0:

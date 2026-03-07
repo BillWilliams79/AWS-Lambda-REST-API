@@ -2,11 +2,21 @@ import pymysql
 import json
 from rest_api_utils import compose_rest_response
 from classifier import varDump, pretty_print_sql
+from auth_utils import CREATOR_FK_TABLES, PROFILE_TABLE
 
-def rest_post(post_method, conn, table, body):
+def rest_post(post_method, conn, table, body, authenticated_user=None):
 
     if not body:
         return compose_rest_response(400, '', 'BAD REQUEST')
+
+    # Override creator_fk with authenticated user from JWT
+    if authenticated_user is not None:
+        if table in CREATOR_FK_TABLES:
+            body['creator_fk'] = authenticated_user
+        elif table == PROFILE_TABLE:
+            body['id'] = authenticated_user
+            body['userName'] = authenticated_user
+
     varDump(body, 'body inside rest_post')
     # Assemble list of keys and values for use in SQL
     keys = list(body.keys())

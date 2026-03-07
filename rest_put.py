@@ -2,8 +2,9 @@ import pymysql
 import json
 from rest_api_utils import compose_rest_response
 from classifier import varDump, pretty_print_sql
-        
-def rest_put(put_method, conn, table, body_list):
+from auth_utils import CREATOR_FK_TABLES, PROFILE_TABLE
+
+def rest_put(put_method, conn, table, body_list, authenticated_user=None):
 
     if not body_list:
         print('HTTP PUT with error 400: body not included')
@@ -32,14 +33,34 @@ def rest_put(put_method, conn, table, body_list):
 
         set_clause = ', '.join(f"{key} = %s" for key in keys)
 
-        sql_statement = f"""
-            UPDATE {table}
-            SET
-                {set_clause}
-            WHERE
-                id = %s;
-        """
-        put_params = tuple(values) + (id,)
+        # Add creator_fk scoping for user-owned tables
+        if authenticated_user is not None and table in CREATOR_FK_TABLES:
+            sql_statement = f"""
+                UPDATE {table}
+                SET
+                    {set_clause}
+                WHERE
+                    id = %s AND creator_fk = %s;
+            """
+            put_params = tuple(values) + (id, authenticated_user)
+        elif authenticated_user is not None and table == PROFILE_TABLE:
+            sql_statement = f"""
+                UPDATE {table}
+                SET
+                    {set_clause}
+                WHERE
+                    id = %s AND id = %s;
+            """
+            put_params = tuple(values) + (id, authenticated_user)
+        else:
+            sql_statement = f"""
+                UPDATE {table}
+                SET
+                    {set_clause}
+                WHERE
+                    id = %s;
+            """
+            put_params = tuple(values) + (id,)
     else:
         # when PUT receives multiple records, use case syntax. Here's an example:
         # UPDATE areas SET
@@ -95,11 +116,27 @@ def rest_put(put_method, conn, table, body_list):
         id_placeholders = ', '.join(['%s'] * len(id_list))
         put_params.extend(id_list)
 
-        sql_statement = f"""
-            UPDATE {table} SET
-                {set_clause}
-            WHERE id in ({id_placeholders});
-        """
+        # Add creator_fk scoping for user-owned tables
+        if authenticated_user is not None and table in CREATOR_FK_TABLES:
+            sql_statement = f"""
+                UPDATE {table} SET
+                    {set_clause}
+                WHERE id in ({id_placeholders}) AND creator_fk = %s;
+            """
+            put_params.append(authenticated_user)
+        elif authenticated_user is not None and table == PROFILE_TABLE:
+            sql_statement = f"""
+                UPDATE {table} SET
+                    {set_clause}
+                WHERE id in ({id_placeholders}) AND id = %s;
+            """
+            put_params.append(authenticated_user)
+        else:
+            sql_statement = f"""
+                UPDATE {table} SET
+                    {set_clause}
+                WHERE id in ({id_placeholders});
+            """
 
     try:
         pretty_print_sql(sql_statement, put_method)
