@@ -3,8 +3,9 @@ import json
 from rest_api_utils import compose_rest_response
 from classifier import varDump, pretty_print_sql
 from auth_utils import CREATOR_FK_TABLES, PROFILE_TABLE
+from db_connection import with_retry
 
-def rest_put(put_method, conn, table, body_list, authenticated_user=None):
+def rest_put(put_method, conn, database, table, body_list, authenticated_user=None):
 
     if not body_list:
         print('HTTP PUT with error 400: body not included')
@@ -141,8 +142,11 @@ def rest_put(put_method, conn, table, body_list, authenticated_user=None):
     try:
         pretty_print_sql(sql_statement, put_method)
 
-        with conn.cursor() as cursor:
-            affected_rows = cursor.execute(sql_statement, tuple(put_params))
+        def execute_update(c):
+            with c.cursor() as cursor:
+                return cursor.execute(sql_statement, tuple(put_params))
+
+        affected_rows, conn = with_retry(conn, database, execute_update)
 
         if affected_rows > 0:
             conn.commit()
