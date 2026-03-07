@@ -166,15 +166,16 @@ class TestRestApiFromTable:
 class TestGetConnectionTimeouts:
     """Verify pymysql.connect is called with timeout parameters."""
 
-    @patch('handler.pymysql.connect')
+    @patch('db_connection.pymysql.connect')
     def test_get_connection_passes_timeouts(self, mock_connect):
         """get_connection() must pass connect_timeout, read_timeout, write_timeout."""
+        import db_connection
         mock_connect.return_value = MagicMock()
         # Clear connection cache so get_connection() calls pymysql.connect
-        saved = handler.connection.copy()
-        handler.connection.clear()
+        saved = db_connection.connection.copy()
+        db_connection.connection.clear()
         try:
-            handler.get_connection('darwin_dev')
+            db_connection.get_connection('darwin_dev')
             mock_connect.assert_called_once()
             call_kwargs = mock_connect.call_args
             # Check timeout params are present (positional or keyword)
@@ -186,4 +187,4 @@ class TestGetConnectionTimeouts:
             assert all_args['read_timeout'] > 0
             assert all_args['write_timeout'] > 0
         finally:
-            handler.connection = saved
+            db_connection.connection = saved

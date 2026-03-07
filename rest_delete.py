@@ -3,8 +3,9 @@ import json
 from rest_api_utils import compose_rest_response
 from classifier import varDump, pretty_print_sql
 from auth_utils import CREATOR_FK_TABLES, PROFILE_TABLE
+from db_connection import with_retry
 
-def rest_delete(delete_method, conn, table, body, authenticated_user=None):
+def rest_delete(delete_method, conn, database, table, body, authenticated_user=None):
        
     if not body:
         return compose_rest_response(400, '', 'BAD REQUEST')
@@ -31,8 +32,11 @@ def rest_delete(delete_method, conn, table, body, authenticated_user=None):
         """
         pretty_print_sql(sql_statement, delete_method)
 
-        with conn.cursor() as cursor:
-            affected_rows = cursor.execute(sql_statement, tuple(values))
+        def execute_delete(c):
+            with c.cursor() as cursor:
+                return cursor.execute(sql_statement, tuple(values))
+
+        affected_rows, conn = with_retry(conn, database, execute_delete)
 
         if affected_rows == 0:
             errorMsg = f"Affected_rows = 0, 404 time"

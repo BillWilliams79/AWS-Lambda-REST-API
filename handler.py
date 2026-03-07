@@ -5,6 +5,7 @@ import pymysql
 
 from classifier import varDump, pretty_print_sql
 from rest_api_utils import compose_rest_response
+from db_connection import get_connection
 from rest_get_database import rest_get_database
 from rest_get_table import rest_get_table
 from rest_put import rest_put
@@ -22,32 +23,9 @@ put_method = 'PUT'
 delete_method = 'DELETE'
 options_method = 'OPTIONS'
 
-# retrieve db credential environment variables
-endpoint = os.environ['endpoint']
-username = os.environ['username']
-password = os.environ['db_password']
 db_names = set(os.environ['db_name'].split(','))
 
 print('RestApi-MySql-Lambda init code executing.')
-
-connection = dict()
-
-def get_connection(database):
-    global connection
-    if database in connection:
-        try:
-            connection[database].ping(reconnect=True)
-            return connection[database]
-        except pymysql.MySQLError:
-            try:
-                connection[database].close()
-            except Exception:
-                pass
-            del connection[database]
-    connection[database] = pymysql.connect(
-        host=endpoint, user=username, password=password, database=database,
-        connect_timeout=3, read_timeout=8, write_timeout=5)
-    return connection[database]
 
 SAFE_NAME_RE = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
 
@@ -137,22 +115,22 @@ def rest_api_from_table(event, db_info):
     if http_method == put_method:
 
         # PUT Method
-        return rest_put(put_method, conn, table, body, authenticated_user)
+        return rest_put(put_method, conn, database, table, body, authenticated_user)
 
     elif http_method == get_method:
 
         # GET Method
         if table:
-            return rest_get_table(get_method, conn, table, event, authenticated_user)
+            return rest_get_table(get_method, conn, database, table, event, authenticated_user)
         else:
             return rest_get_database(get_method, conn, database)
 
     elif http_method == post_method:
 
         # POST Method
-        return rest_post(post_method, conn, table, body, authenticated_user)
+        return rest_post(post_method, conn, database, table, body, authenticated_user)
 
     elif http_method == delete_method:
 
         # DELETE Method
-        return rest_delete(delete_method, conn, table, body, authenticated_user)
+        return rest_delete(delete_method, conn, database, table, body, authenticated_user)

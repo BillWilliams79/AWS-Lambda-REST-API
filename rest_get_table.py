@@ -3,16 +3,20 @@ import json
 from rest_api_utils import compose_rest_response
 from classifier import varDump, pretty_print_sql
 from auth_utils import CREATOR_FK_TABLES, PROFILE_TABLE
+from db_connection import with_retry
 
-def rest_get_table(get_method, conn, table, event, authenticated_user=None):
+def rest_get_table(get_method, conn, database, table, event, authenticated_user=None):
 
     # STEP 1: Execute helper SQL commands: build list of columns for the SQL
     #         command and allow for larger group concat. Build a list of columns
     #         to verify correct QSP
     try:
-        with conn.cursor() as cursor:
-            cursor.execute(f""" DESC {table}; """)
-            rows = cursor.fetchall()
+        def execute_desc(c):
+            with c.cursor() as cursor:
+                cursor.execute(f""" DESC {table}; """)
+                return cursor.fetchall()
+
+        rows, conn = with_retry(conn, database, execute_desc)
 
         # default value used in queries to retrieve all fields, overwritten below with
         # more specific values as needed.
@@ -173,12 +177,15 @@ def rest_get_table(get_method, conn, table, event, authenticated_user=None):
 
         pretty_print_sql(sql_statement, get_method)
 
-        with conn.cursor() as cursor:
-            if where_params:
-                cursor.execute(sql_statement, tuple(where_params))
-            else:
-                cursor.execute(sql_statement)
-            row = cursor.fetchall()
+        def execute_select(c):
+            with c.cursor() as cursor:
+                if where_params:
+                    cursor.execute(sql_statement, tuple(where_params))
+                else:
+                    cursor.execute(sql_statement)
+                return cursor.fetchall()
+
+        row, conn = with_retry(conn, database, execute_select)
 
         if row[0][0]:
             if count_syntax == 0:
