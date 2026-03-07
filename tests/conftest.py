@@ -99,7 +99,7 @@ def invoke(creator_fk):
             'body': json.dumps(body) if body is not None else None,
             'requestContext': {
                 'authorizer': {
-                    'claims': {'cognito:username': auth_user}
+                    'claims': {'sub': auth_user}
                 }
             } if auth_user is not None else {},
         }

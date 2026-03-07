@@ -84,7 +84,7 @@ class TestHandlerRouting:
             'body': None,
             'requestContext': {
                 'authorizer': {
-                    'claims': {'cognito:username': 'test-user'}
+                    'claims': {'sub': 'test-user'}
                 }
             },
         }
@@ -107,7 +107,7 @@ class TestHandlerRouting:
             'body': None,
             'requestContext': {
                 'authorizer': {
-                    'claims': {'cognito:username': 'test-user'}
+                    'claims': {'sub': 'test-user'}
                 }
             },
         }
@@ -130,7 +130,7 @@ class TestHandlerRouting:
             'body': None,
             'requestContext': {
                 'authorizer': {
-                    'claims': {'cognito:username': 'test-user'}
+                    'claims': {'sub': 'test-user'}
                 }
             },
         }

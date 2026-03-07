@@ -33,7 +33,7 @@ def attacker_invoke(attacker_fk):
             'body': json.dumps(body) if body is not None else None,
             'requestContext': {
                 'authorizer': {
-                    'claims': {'cognito:username': attacker_fk}
+                    'claims': {'sub': attacker_fk}
                 }
             },
         }

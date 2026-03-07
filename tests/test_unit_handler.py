@@ -130,7 +130,7 @@ class TestRestApiFromTable:
             'body': json.dumps(body) if body is not None else None,
             'requestContext': {
                 'authorizer': {
-                    'claims': {'cognito:username': 'test-user'}
+                    'claims': {'sub': 'test-user'}
                 }
             },
         }

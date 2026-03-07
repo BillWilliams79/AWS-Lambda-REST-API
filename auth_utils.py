@@ -7,12 +7,15 @@ authorizer claims and defines which tables require creator_fk scoping.
 
 
 def get_authenticated_user(event):
-    """Extract cognito:username from the API Gateway authorizer claims.
+    """Extract the user's sub (UUID) from API Gateway Cognito authorizer claims.
+
+    Uses 'sub' because profiles.id = Cognito sub (set by Lambda-Cognito at signup).
+    'cognito:username' can differ (e.g. email) and would cause FK violations.
 
     Returns the authenticated user's ID (str) or None if not present.
     """
     try:
-        return event['requestContext']['authorizer']['claims']['cognito:username']
+        return event['requestContext']['authorizer']['claims']['sub']
     except (KeyError, TypeError):
         return None
 
