@@ -16,7 +16,6 @@ def rest_post(post_method, conn, database, table, body, authenticated_user=None)
             body['creator_fk'] = authenticated_user
         elif table == PROFILE_TABLE:
             body['id'] = authenticated_user
-            body['userName'] = authenticated_user
 
     varDump(body, 'body inside rest_post')
     # Assemble list of keys and values for use in SQL

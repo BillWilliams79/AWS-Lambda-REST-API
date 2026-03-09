@@ -48,10 +48,6 @@ def attacker_profile(attacker_fk, attacker_invoke, db_connection):
         'id': attacker_fk,
         'name': 'Attacker User',
         'email': 'attacker@test.com',
-        'subject': attacker_fk,
-        'userName': attacker_fk,
-        'region': 'us-west-1',
-        'userPoolId': 'test-pool',
     })
     yield attacker_fk
     import pymysql as _pymysql
