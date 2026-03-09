@@ -143,10 +143,6 @@ def test_data(request, creator_fk, test_ids):
         'id': creator_fk,
         'name': 'pytest User',
         'email': 'pytest@test.com',
-        'subject': creator_fk,
-        'userName': creator_fk,
-        'region': 'us-west-1',
-        'userPoolId': 'test-pool',
     }, authenticated_user=creator_fk)
     test_ids['profile_id'] = creator_fk
 
