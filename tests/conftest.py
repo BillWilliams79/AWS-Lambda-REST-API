@@ -181,6 +181,7 @@ def test_data(request, creator_fk, test_ids):
     try:
         with db_connection.cursor() as cur:
             cur.execute('DELETE FROM tasks WHERE creator_fk = %s', (creator_fk,))
+            cur.execute('DELETE FROM recurring_tasks WHERE creator_fk = %s', (creator_fk,))
             cur.execute('DELETE FROM areas WHERE creator_fk = %s', (creator_fk,))
             cur.execute('DELETE FROM domains WHERE creator_fk = %s', (creator_fk,))
             cur.execute('DELETE FROM profiles WHERE id = %s', (creator_fk,))
