@@ -24,7 +24,7 @@ def get_authenticated_user(event):
 CREATOR_FK_TABLES = frozenset({
     'domains', 'areas', 'tasks',
     'projects', 'categories', 'priorities',
-    'dev_servers', 'swarm_sessions',
+    'dev_servers', 'swarm_sessions', 'recurring_tasks',
 })
 
 PROFILE_TABLE = 'profiles'
