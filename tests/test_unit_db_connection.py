@@ -113,6 +113,38 @@ class TestWithRetry:
 
         assert exc_info.value.args[0] == 1045
 
+    def test_retry_on_interface_error(self):
+        """InterfaceError(0, '') from broken connection triggers reconnect and retry."""
+        old_conn = MagicMock()
+        new_conn = MagicMock()
+        call_count = 0
+
+        def operation(c):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise pymysql.InterfaceError(0, '')
+            return 'recovered'
+
+        with patch('db_connection.reconnect', return_value=new_conn) as mock_reconnect:
+            result, returned_conn = with_retry(old_conn, 'darwin_dev', operation)
+
+        assert result == 'recovered'
+        assert returned_conn is new_conn
+        mock_reconnect.assert_called_once_with('darwin_dev')
+
+    def test_propagates_error_when_interface_retry_also_fails(self):
+        """If InterfaceError retry also fails, the second error propagates."""
+        conn = MagicMock()
+        new_conn = MagicMock()
+
+        def operation(c):
+            raise pymysql.InterfaceError(0, '')
+
+        with patch('db_connection.reconnect', return_value=new_conn):
+            with pytest.raises(pymysql.InterfaceError):
+                with_retry(conn, 'darwin_dev', operation)
+
     def test_propagates_non_operational_error(self):
         """Non-OperationalError (e.g. ProgrammingError) propagates without retry."""
         conn = MagicMock()

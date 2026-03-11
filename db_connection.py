@@ -34,6 +34,15 @@ def reconnect(database):
     return get_connection(database)
 
 
+def _is_connection_error(exc):
+    """Return True if the exception indicates a dead/stale connection worth retrying."""
+    if isinstance(exc, pymysql.InterfaceError):
+        return True
+    if isinstance(exc, pymysql.OperationalError) and exc.args[0] in STALE_CONNECTION_ERRORS:
+        return True
+    return False
+
+
 def with_retry(conn, database, operation):
     """Execute operation(conn). On stale connection error, reconnect and retry once.
 
@@ -42,10 +51,10 @@ def with_retry(conn, database, operation):
     try:
         result = operation(conn)
         return result, conn
-    except pymysql.OperationalError as e:
-        if e.args[0] in STALE_CONNECTION_ERRORS:
-            print(f"Stale connection detected (error {e.args[0]}), reconnecting...")
-            conn = reconnect(database)
-            result = operation(conn)
-            return result, conn
-        raise
+    except pymysql.Error as e:
+        if not _is_connection_error(e):
+            raise
+        print(f"Connection error ({type(e).__name__} {e.args[0]}), reconnecting...")
+        conn = reconnect(database)
+        result = operation(conn)
+        return result, conn
