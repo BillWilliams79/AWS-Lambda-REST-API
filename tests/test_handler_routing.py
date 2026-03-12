@@ -5,9 +5,22 @@ Tests the handler.py entry point: path parsing, HTTP method dispatch, and edge c
 Covers OPTIONS handling, invalid databases, missing paths, None body handling, etc.
 """
 import json
+import os
+import sys
+
 import pytest
 
-from handler import lambda_handler
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+try:
+    from handler import lambda_handler
+except KeyError:
+    lambda_handler = None
+
+pytestmark = pytest.mark.skipif(
+    lambda_handler is None,
+    reason="DB env vars not set — run . exports.sh for integration tests"
+)
 
 
 class TestHandlerRouting:

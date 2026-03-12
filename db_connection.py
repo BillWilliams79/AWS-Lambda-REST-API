@@ -14,12 +14,16 @@ STALE_CONNECTION_ERRORS = (2006, 2013)
 
 
 def get_connection(database):
-    """Return a cached connection or create a new one. No ping — callers use with_retry."""
+    """Return a live connection — pings cached connection; reconnects if stale."""
     if database in connection:
-        return connection[database]
+        try:
+            connection[database].ping(reconnect=False)
+            return connection[database]
+        except Exception:
+            return reconnect(database)
     connection[database] = pymysql.connect(
         host=endpoint, user=username, password=password, database=database,
-        connect_timeout=3, read_timeout=8, write_timeout=5)
+        connect_timeout=3, read_timeout=3, write_timeout=3)
     return connection[database]
 
 

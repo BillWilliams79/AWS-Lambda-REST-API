@@ -11,6 +11,7 @@ import os
 import sys
 from unittest.mock import patch, MagicMock
 
+import pymysql
 import pytest
 
 # Add Lambda-Rest root to path
@@ -27,7 +28,7 @@ _MOCK_ENV = {
 
 with patch.dict(os.environ, _MOCK_ENV):
     import handler
-    from handler import SAFE_NAME_RE, parse_path, rest_api_from_table
+    from handler import SAFE_NAME_RE, parse_path, rest_api_from_table, lambda_handler
     from rest_api_utils import compose_rest_response
 
 
@@ -184,7 +185,40 @@ class TestGetConnectionTimeouts:
             assert 'read_timeout' in all_args, "read_timeout missing from pymysql.connect call"
             assert 'write_timeout' in all_args, "write_timeout missing from pymysql.connect call"
             assert all_args['connect_timeout'] > 0
-            assert all_args['read_timeout'] > 0
-            assert all_args['write_timeout'] > 0
+            assert all_args['read_timeout'] == 3
+            assert all_args['write_timeout'] == 3
         finally:
             db_connection.connection = saved
+
+
+# ===========================================================================
+# lambda_handler global error handler tests
+# ===========================================================================
+
+class TestLambdaHandlerGlobalErrorHandler:
+    """Verify lambda_handler catches all exceptions and returns CORS-safe responses."""
+
+    def _base_event(self):
+        return {'httpMethod': 'GET', 'path': '/darwin_dev/areas',
+                'queryStringParameters': None, 'body': None}
+
+    @patch('handler.parse_path', side_effect=pymysql.OperationalError(1040, 'Too many connections'))
+    def test_connection_limit_returns_503_db_connection_limit(self, _):
+        response = lambda_handler(self._base_event(), {})
+        assert response['statusCode'] == 503
+        assert 'DB_CONNECTION_LIMIT' in response['body']
+        assert response['headers']['Access-Control-Allow-Origin'] == '*'
+
+    @patch('handler.parse_path', side_effect=pymysql.OperationalError(2003, "Can't connect"))
+    def test_db_error_returns_503_db_unavailable(self, _):
+        response = lambda_handler(self._base_event(), {})
+        assert response['statusCode'] == 503
+        assert 'DB_UNAVAILABLE' in response['body']
+        assert response['headers']['Access-Control-Allow-Origin'] == '*'
+
+    @patch('handler.parse_path', side_effect=RuntimeError('unexpected failure'))
+    def test_unhandled_exception_returns_503_service_unavailable(self, _):
+        response = lambda_handler(self._base_event(), {})
+        assert response['statusCode'] == 503
+        assert 'SERVICE_UNAVAILABLE' in response['body']
+        assert response['headers']['Access-Control-Allow-Origin'] == '*'

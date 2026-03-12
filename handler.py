@@ -51,26 +51,36 @@ def parse_path(path):
 
 #FAAS ENTRY POINT: the AWS Lambda function is configured to call this function by name.
 def lambda_handler(event, context):
+    try:
+        #varDump(event, 'lambda_handler dump event')
+        #varDump(context, 'lambda_handler context')
+        path = event.get('path')
+        print(f"Lambda Handler Invoked for {path}.{event['httpMethod']}")
 
-    #varDump(event, 'lambda_handler dump event')
-    #varDump(context, 'lambda_handler context')
-    path = event.get('path')
-    print(f"Lambda Handler Invoked for {path}.{event['httpMethod']}")
+        if path:
+            db_info = parse_path(path)
+        else:
+            return compose_rest_response(400, '', f"No path provided")
 
-    if path:
-        db_info = parse_path(path)
-    else:
-        return compose_rest_response(400, '', f"No path provided")
+        if 'error' in db_info:
+            return compose_rest_response(400, '', db_info['error'])
 
-    if 'error' in db_info:
-        return compose_rest_response(400, '', db_info['error'])
+        if db_info['database'] in db_names:
+            response = rest_api_from_table(event, db_info)
+        else:
+            response = compose_rest_response(404, '', f"URL/path not found: {path}")
 
-    if db_info['database'] in db_names:
-        response = rest_api_from_table(event, db_info)
-    else:
-        response = compose_rest_response(404, '', f"URL/path not found: {path}")
-
-    return response 
+        return response
+    except pymysql.OperationalError as e:
+        code = e.args[0] if e.args else 0
+        if code == 1040:
+            print(f"DB_CONNECTION_LIMIT ({code}): {e}")
+            return compose_rest_response(503, '', 'DB_CONNECTION_LIMIT')
+        print(f"DB_ERROR ({code}): {e}")
+        return compose_rest_response(503, '', 'DB_UNAVAILABLE')
+    except Exception as e:
+        print(f"UNHANDLED_EXCEPTION {type(e).__name__}: {e}")
+        return compose_rest_response(503, '', 'SERVICE_UNAVAILABLE')
 
 def rest_api_from_table(event, db_info):
 

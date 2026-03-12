@@ -248,3 +248,34 @@ class TestGetConnection:
             mock_connect.assert_called_once()
         finally:
             db_connection.connection = saved
+
+    @patch('db_connection.pymysql.connect')
+    def test_ping_called_on_healthy_cached_connection(self, mock_connect):
+        """Healthy cached connection: ping is called, same conn returned, no reconnect."""
+        mock_conn = MagicMock()
+        mock_connect.return_value = mock_conn
+        saved = db_connection.connection.copy()
+        db_connection.connection['ping_test_db'] = mock_conn
+        try:
+            result = get_connection('ping_test_db')
+            mock_conn.ping.assert_called_once_with(reconnect=False)
+            assert result is mock_conn
+            mock_connect.assert_not_called()  # no new connection created
+        finally:
+            db_connection.connection = saved
+
+    @patch('db_connection.pymysql.connect')
+    def test_reconnects_when_ping_fails(self, mock_connect):
+        """Stale cached connection: ping raises, reconnect called, new conn returned."""
+        stale_conn = MagicMock()
+        stale_conn.ping.side_effect = Exception('Connection closed')
+        new_conn = MagicMock()
+        mock_connect.return_value = new_conn
+        saved = db_connection.connection.copy()
+        db_connection.connection['stale_db'] = stale_conn
+        try:
+            result = get_connection('stale_db')
+            stale_conn.ping.assert_called_once_with(reconnect=False)
+            assert result is new_conn
+        finally:
+            db_connection.connection = saved
