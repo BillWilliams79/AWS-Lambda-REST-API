@@ -3,7 +3,6 @@ import json
 from rest_api_utils import compose_rest_response
 from classifier import varDump, pretty_print_sql
 from auth_utils import CREATOR_FK_TABLES, PROFILE_TABLE
-from db_connection import with_retry
 
 def rest_post(post_method, conn, database, table, body, authenticated_user=None):
 
@@ -33,14 +32,11 @@ def rest_post(post_method, conn, database, table, body, authenticated_user=None)
         """
         pretty_print_sql(sql_statement, post_method)
 
-        def execute_insert(c):
-            with c.cursor() as cursor:
-                return cursor.execute(sql_statement, tuple(values))
-
-        affected_post_rows, conn = with_retry(conn, database, execute_insert)
+        with conn.cursor() as cursor:
+            affected_post_rows = cursor.execute(sql_statement, tuple(values))
 
         if affected_post_rows > 0:
-            conn.commit()
+            pass
         else:
             errorMsg = f"HTTP {post_method} failed no rows affected"
             print(errorMsg)

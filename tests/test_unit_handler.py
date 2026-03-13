@@ -172,23 +172,16 @@ class TestGetConnectionTimeouts:
         """get_connection() must pass connect_timeout, read_timeout, write_timeout."""
         import db_connection
         mock_connect.return_value = MagicMock()
-        # Clear connection cache so get_connection() calls pymysql.connect
-        saved = db_connection.connection.copy()
-        db_connection.connection.clear()
-        try:
-            db_connection.get_connection('darwin_dev')
-            mock_connect.assert_called_once()
-            call_kwargs = mock_connect.call_args
-            # Check timeout params are present (positional or keyword)
-            all_args = call_kwargs.kwargs if call_kwargs.kwargs else {}
-            assert 'connect_timeout' in all_args, "connect_timeout missing from pymysql.connect call"
-            assert 'read_timeout' in all_args, "read_timeout missing from pymysql.connect call"
-            assert 'write_timeout' in all_args, "write_timeout missing from pymysql.connect call"
-            assert all_args['connect_timeout'] > 0
-            assert all_args['read_timeout'] == 3
-            assert all_args['write_timeout'] == 3
-        finally:
-            db_connection.connection = saved
+        db_connection.get_connection('darwin_dev')
+        mock_connect.assert_called_once()
+        call_kwargs = mock_connect.call_args
+        all_args = call_kwargs.kwargs if call_kwargs.kwargs else {}
+        assert 'connect_timeout' in all_args, "connect_timeout missing from pymysql.connect call"
+        assert 'read_timeout' in all_args, "read_timeout missing from pymysql.connect call"
+        assert 'write_timeout' in all_args, "write_timeout missing from pymysql.connect call"
+        assert all_args['connect_timeout'] > 0
+        assert all_args['read_timeout'] == 15
+        assert all_args['write_timeout'] == 15
 
 
 # ===========================================================================
