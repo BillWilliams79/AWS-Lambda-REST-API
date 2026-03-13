@@ -2,7 +2,6 @@ import json
 import pymysql
 from rest_api_utils import compose_rest_response
 from classifier import varDump
-from db_connection import with_retry
 
 def rest_get_database(get_method, conn, database):
 
@@ -11,12 +10,9 @@ def rest_get_database(get_method, conn, database):
 
         sql_statement = f"""SHOW tables"""
 
-        def execute_show_tables(c):
-            with c.cursor() as cursor:
-                cursor.execute(sql_statement)
-                return cursor.fetchall()
-
-        rows, conn = with_retry(conn, database, execute_show_tables)
+        with conn.cursor() as cursor:
+            cursor.execute(sql_statement)
+            rows = cursor.fetchall()
 
         columns_array = []
         for row in rows:

@@ -51,6 +51,7 @@ def parse_path(path):
 
 #FAAS ENTRY POINT: the AWS Lambda function is configured to call this function by name.
 def lambda_handler(event, context):
+    db_info = None
     try:
         #varDump(event, 'lambda_handler dump event')
         #varDump(context, 'lambda_handler context')
@@ -81,6 +82,12 @@ def lambda_handler(event, context):
     except Exception as e:
         print(f"UNHANDLED_EXCEPTION {type(e).__name__}: {e}")
         return compose_rest_response(503, '', 'SERVICE_UNAVAILABLE')
+    finally:
+        if db_info and db_info.get('conn'):
+            try:
+                db_info['conn'].close()
+            except Exception:
+                pass
 
 def rest_api_from_table(event, db_info):
 

@@ -3,7 +3,6 @@ import json
 from rest_api_utils import compose_rest_response
 from classifier import varDump, pretty_print_sql
 from auth_utils import CREATOR_FK_TABLES, PROFILE_TABLE
-from db_connection import with_retry
 
 def rest_put(put_method, conn, database, table, body_list, authenticated_user=None):
 
@@ -142,14 +141,10 @@ def rest_put(put_method, conn, database, table, body_list, authenticated_user=No
     try:
         pretty_print_sql(sql_statement, put_method)
 
-        def execute_update(c):
-            with c.cursor() as cursor:
-                return cursor.execute(sql_statement, tuple(put_params))
-
-        affected_rows, conn = with_retry(conn, database, execute_update)
+        with conn.cursor() as cursor:
+            affected_rows = cursor.execute(sql_statement, tuple(put_params))
 
         if affected_rows > 0:
-            conn.commit()
             return compose_rest_response(200, '', 'OK')
         else:
             errorMsg = f"HTTP {put_method}: NO DATA CHANGED"
