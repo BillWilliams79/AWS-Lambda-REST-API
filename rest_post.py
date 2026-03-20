@@ -9,6 +9,10 @@ def rest_post(post_method, conn, database, table, body, authenticated_user=None)
     if not body:
         return compose_rest_response(400, '', 'BAD REQUEST')
 
+    # Bulk POST: if body is a list, insert each item and return count
+    if isinstance(body, list):
+        return _rest_post_bulk(post_method, conn, table, body, authenticated_user)
+
     # Override creator_fk with authenticated user from JWT
     if authenticated_user is not None:
         if table in CREATOR_FK_TABLES:
@@ -112,3 +116,41 @@ def rest_post(post_method, conn, database, table, body, authenticated_user=None)
         return compose_rest_response(500, '', errorMsg)
 
     return compose_rest_response(500, '', 'INVALID PATH')
+
+
+def _rest_post_bulk(post_method, conn, table, body_list, authenticated_user):
+    """Insert multiple rows via single multi-value INSERT. Returns 201 with inserted count."""
+
+    if not body_list:
+        return compose_rest_response(400, '', 'BAD REQUEST')
+
+    # Override creator_fk on each item before building SQL
+    if authenticated_user is not None and table in CREATOR_FK_TABLES:
+        for item in body_list:
+            item['creator_fk'] = authenticated_user
+
+    # All items must have the same keys (same columns)
+    keys = list(body_list[0].keys())
+    sql_key_list = ', '.join(keys)
+    row_placeholder = '(' + ', '.join(['%s'] * len(keys)) + ')'
+
+    # Flatten all values into a single tuple for one execute call
+    all_values = []
+    for item in body_list:
+        all_values.extend(None if v == "NULL" else v for v in (item[k] for k in keys))
+
+    placeholders = ', '.join([row_placeholder] * len(body_list))
+    sql_statement = f"INSERT INTO {table} ({sql_key_list}) VALUES {placeholders}"
+    pretty_print_sql(sql_statement, post_method)
+
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(sql_statement, tuple(all_values))
+
+        return compose_rest_response(201, json.dumps({"inserted": len(body_list)}), 'CREATED')
+
+    except pymysql.Error as e:
+        conn.rollback()
+        errorMsg = f"HTTP {post_method} bulk failed: {e.args[0]} {e.args[1]}"
+        print(errorMsg)
+        return compose_rest_response(500, '', errorMsg)
