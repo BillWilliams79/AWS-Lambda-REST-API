@@ -27,6 +27,7 @@ CREATOR_FK_TABLES = frozenset({
     'dev_servers', 'swarm_sessions', 'recurring_tasks',
     'map_routes', 'map_runs', 'map_views',
     'map_partners',
+    'user_integrations',
 })
 
 PROFILE_TABLE = 'profiles'
