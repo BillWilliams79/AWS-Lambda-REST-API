@@ -488,3 +488,53 @@ class TestCRUDLifecycle:
         # Step 6: DELETE hard delete
         delete_resp = invoke('DELETE', '/darwin_dev/areas', body={'id': area_id})
         assert delete_resp['statusCode'] == 200
+
+
+class TestBulkDeleteByCreatorFk:
+    """Verifies that DELETE with creator_fk body deletes all rows for the user.
+
+    This is the mechanism used by MapsPage handleDeleteAll — instead of N
+    sequential per-row DELETEs, a single DELETE with { creator_fk } wipes all
+    rows for the authenticated user in one SQL statement.
+
+    rest_delete.py generates: WHERE creator_fk = %s AND creator_fk = %s
+    Both bind to the same JWT-authenticated user sub — redundant but valid SQL.
+    """
+
+    def test_bulk_delete_map_routes_by_creator_fk(self, invoke, creator_fk):
+        """BULK-01: POST 3 map_routes → DELETE all via creator_fk → GET 404.
+
+        Validates the creator_fk-scoped bulk delete mechanism used by
+        MapsPage handleDeleteAll. A single DELETE call with { creator_fk }
+        removes all rows for the user without per-row iteration.
+        """
+        # Step 1: POST 3 map_routes (route_id must be unique per creator_fk — migration 027)
+        route_ids = []
+        for i in range(3):
+            resp = invoke('POST', '/darwin_dev/map_routes', body={
+                'name': f'BulkDeleteTest Route {i}',
+                'route_id': i + 1000,  # distinct values to satisfy uq_creator_route
+                'creator_fk': creator_fk,
+            })
+            assert resp['statusCode'] == 200
+            route_id = extract_id(resp)
+            assert route_id is not None
+            route_ids.append(route_id)
+
+        # Step 2: GET verify all 3 exist (filter by creator_fk to isolate test data)
+        get_resp = invoke('GET', '/darwin_dev/map_routes', query={'creator_fk': creator_fk})
+        assert get_resp['statusCode'] == 200
+        body = json.loads(get_resp['body'])
+        existing_ids = {r['id'] for r in body}
+        route_ids_int = [int(rid) for rid in route_ids]
+        assert all(rid in existing_ids for rid in route_ids_int), \
+            f"Expected route IDs {route_ids_int} in GET response, got {existing_ids}"
+
+        # Step 3: DELETE all via single creator_fk-scoped call
+        delete_resp = invoke('DELETE', '/darwin_dev/map_routes', body={'creator_fk': creator_fk})
+        assert delete_resp['statusCode'] == 200
+
+        # Step 4: GET verify all deleted — should 404 (no rows match creator_fk)
+        get_after_resp = invoke('GET', '/darwin_dev/map_routes', query={'creator_fk': creator_fk})
+        assert get_after_resp['statusCode'] == 404, \
+            f"Expected 404 after bulk delete, got {get_after_resp['statusCode']}"
