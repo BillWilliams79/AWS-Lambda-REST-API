@@ -119,7 +119,7 @@ def rest_post(post_method, conn, database, table, body, authenticated_user=None)
 
 
 def _rest_post_bulk(post_method, conn, table, body_list, authenticated_user):
-    """Insert multiple rows via single multi-value INSERT. Returns 201 with inserted count."""
+    """Insert multiple rows via single multi-value INSERT. Returns 201 with inserted count and first_id."""
 
     if not body_list:
         return compose_rest_response(400, '', 'BAD REQUEST')
@@ -147,7 +147,19 @@ def _rest_post_bulk(post_method, conn, table, body_list, authenticated_user):
         with conn.cursor() as cursor:
             cursor.execute(sql_statement, tuple(all_values))
 
-        return compose_rest_response(201, json.dumps({"inserted": len(body_list)}), 'CREATED')
+        # Retrieve first auto-increment ID from the multi-row INSERT.
+        # MySQL guarantees consecutive IDs for a single multi-value INSERT statement.
+        result = {"inserted": len(body_list)}
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT LAST_INSERT_ID()")
+                row = cursor.fetchone()
+                if row and row[0]:
+                    result["first_id"] = row[0]
+        except pymysql.Error:
+            pass  # Non-fatal: callers can fall back to individual inserts
+
+        return compose_rest_response(201, result, 'CREATED')
 
     except pymysql.Error as e:
         conn.rollback()

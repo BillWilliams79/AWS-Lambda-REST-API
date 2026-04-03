@@ -489,6 +489,58 @@ class TestCRUDLifecycle:
         delete_resp = invoke('DELETE', '/darwin_dev/areas', body={'id': area_id})
         assert delete_resp['statusCode'] == 200
 
+    # -----------------------------------------------------------------------
+    # CRUD-10: Bulk POST returns first_id with consecutive IDs
+    # -----------------------------------------------------------------------
+
+    def test_bulk_post_returns_first_id(self, invoke, creator_fk, test_ids):
+        """CRUD-10: Bulk POST map_runs returns first_id and inserted count with consecutive IDs.
+
+        Tests the bulk POST enhancement that returns the first auto-increment ID:
+        - POST array of 3 map_runs
+        - Verify response contains first_id and inserted=3
+        - Verify each computed ID (first_id+0, +1, +2) resolves to a real row
+        - Cleanup: DELETE all 3 rows
+        """
+        # Step 1: Bulk POST 3 map_runs
+        runs = [
+            {
+                'run_id': 99000 + i,
+                'map_route_fk': 'NULL',
+                'start_time': f'2025-01-0{i+1}T12:00:00Z',
+                'run_time_sec': 3600,
+                'distance_mi': 10.5,
+                'source': 'test-bulk',
+                'creator_fk': creator_fk,
+            }
+            for i in range(3)
+        ]
+        resp = invoke('POST', '/darwin_dev/map_runs', body=runs)
+        assert resp['statusCode'] == 201, f"Expected 201, got {resp['statusCode']}"
+        body = json.loads(resp['body'])
+        # Handle potential double-encoding from compose_rest_response
+        if isinstance(body, str):
+            body = json.loads(body)
+        assert body['inserted'] == 3
+        assert 'first_id' in body, "Bulk POST response missing first_id"
+        first_id = body['first_id']
+        assert isinstance(first_id, int) and first_id > 0
+
+        # Step 2: GET each consecutive ID to verify they exist
+        for offset in range(3):
+            expected_id = first_id + offset
+            get_resp = invoke('GET', '/darwin_dev/map_runs', query={'id': str(expected_id)})
+            assert get_resp['statusCode'] == 200, \
+                f"Expected 200 for ID {expected_id}, got {get_resp['statusCode']}"
+            row = json.loads(get_resp['body'])
+            assert row[0]['id'] == expected_id, \
+                f"Expected id={expected_id}, got id={row[0]['id']}"
+            assert row[0]['source'] == 'test-bulk'
+
+        # Step 3: Cleanup — DELETE each row
+        for offset in range(3):
+            invoke('DELETE', '/darwin_dev/map_runs', body={'id': first_id + offset})
+
 
 class TestBulkDeleteByCreatorFk:
     """Verifies that DELETE with creator_fk body deletes all rows for the user.
