@@ -23,7 +23,7 @@ def get_authenticated_user(event):
 # Tables that have a creator_fk column and must be scoped to the authenticated user
 CREATOR_FK_TABLES = frozenset({
     'domains', 'areas', 'tasks',
-    'projects', 'categories', 'priorities',
+    'projects', 'categories', 'requirements',
     'dev_servers', 'swarm_sessions', 'recurring_tasks',
     'map_routes', 'map_runs', 'map_views',
     'map_partners',
