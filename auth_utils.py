@@ -28,6 +28,10 @@ CREATOR_FK_TABLES = frozenset({
     'map_routes', 'map_runs', 'map_views',
     'map_partners',
     'user_integrations',
+    # Req #2380 — Swarm Features & Test Cases registry (migrations 042/043/044).
+    # Missing entries here are a silent security gap: unauthenticated writes
+    # to these tables would be accepted by the generic Lambda-Rest passthrough.
+    'features', 'test_cases', 'test_plans', 'test_runs', 'test_results',
 })
 
 PROFILE_TABLE = 'profiles'
