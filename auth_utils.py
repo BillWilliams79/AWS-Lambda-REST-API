@@ -35,6 +35,9 @@ CREATOR_FK_TABLES = frozenset({
     # Req #2422 — swarm_start log (migration 046). swarm_start_sessions is a
     # junction table with no creator_fk and stays out of this set.
     'swarm_starts',
+    # Req #2604 — Customer Release (migration 049). customers table carries
+    # creator_fk; every CRUD must scope to the authenticated user.
+    'customers',
 })
 
 PROFILE_TABLE = 'profiles'
