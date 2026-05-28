@@ -41,6 +41,8 @@ CREATOR_FK_TABLES = frozenset({
     # Req #2606 — SQL-backed Build Visualizer data model (migration 050).
     # build_projects, branches, builds, customer_releases all carry creator_fk.
     'build_projects', 'branches', 'builds', 'customer_releases',
+    # Req #2719 — swarm_undo log (migration 053).
+    'swarm_undos',
 })
 
 PROFILE_TABLE = 'profiles'
