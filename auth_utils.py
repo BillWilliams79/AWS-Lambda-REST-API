@@ -35,7 +35,15 @@ CREATOR_FK_TABLES = frozenset({
     # Req #2422 — swarm_start log (migration 046). swarm_start_sessions is a
     # junction table with no creator_fk and stays out of this set.
     'swarm_starts',
-    # Req #2497 — swarm_complete log (migration 048). swarm_complete_sessions
+    # Req #2604 — Customer Release (migration 049). customers table carries
+    # creator_fk; every CRUD must scope to the authenticated user.
+    'customers',
+    # Req #2606 — SQL-backed Build Visualizer data model (migration 050).
+    # build_projects, branches, builds, customer_releases all carry creator_fk.
+    'build_projects', 'branches', 'builds', 'customer_releases',
+    # Req #2719 — swarm_undo log (migration 053).
+    'swarm_undos',
+    # Req #2497 — swarm_complete log. swarm_complete_sessions
     # is a junction table with no creator_fk and stays out of this set.
     'swarm_completes',
 })
