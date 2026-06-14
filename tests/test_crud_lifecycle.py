@@ -590,3 +590,73 @@ class TestBulkDeleteByCreatorFk:
         get_after_resp = invoke('GET', '/darwin_dev/map_routes', query={'creator_fk': creator_fk})
         assert get_after_resp['statusCode'] == 404, \
             f"Expected 404 after bulk delete, got {get_after_resp['statusCode']}"
+
+
+class TestBulkDeleteByIdList:
+    """Verifies the array-body bulk DELETE path (req #1911).
+
+    rest_delete.py detects isinstance(body, list) and routes to _rest_delete_bulk,
+    which generates DELETE FROM {table} WHERE id IN (%s,...) [AND creator_fk = %s].
+    This is the mechanism MapRunsView handleBulkPartnerEdit uses to remove all
+    run/partner links in a single round trip instead of N sequential DELETEs.
+    """
+
+    def test_bulk_delete_by_id_list(self, invoke, creator_fk):
+        """BULK-02: POST 3 map_routes → DELETE [{id},{id},{id}] → 200 → GET 404."""
+        # Step 1: POST 3 map_routes (route_id unique per creator_fk — migration 027)
+        route_ids = []
+        for i in range(3):
+            resp = invoke('POST', '/darwin_dev/map_routes', body={
+                'name': f'BulkDeleteIdList Route {i}',
+                'route_id': i + 2000,
+                'creator_fk': creator_fk,
+            })
+            assert resp['statusCode'] == 200
+            rid = extract_id(resp)
+            assert rid is not None
+            route_ids.append(int(rid))
+
+        # Step 2: DELETE all via single array body of {id} objects
+        delete_body = [{'id': rid} for rid in route_ids]
+        delete_resp = invoke('DELETE', '/darwin_dev/map_routes', body=delete_body)
+        assert delete_resp['statusCode'] == 200, \
+            f"Expected 200 from bulk id-list delete, got {delete_resp['statusCode']}"
+
+        # Step 3: GET verify all gone — 404 (no rows match creator_fk)
+        get_after = invoke('GET', '/darwin_dev/map_routes', query={'creator_fk': creator_fk})
+        assert get_after['statusCode'] == 404, \
+            f"Expected 404 after bulk id-list delete, got {get_after['statusCode']}"
+
+    def test_bulk_delete_id_list_nonexistent_returns_404(self, invoke, creator_fk):
+        """BULK-03: bulk DELETE of ids that match no rows → 404 (zero affected)."""
+        delete_resp = invoke('DELETE', '/darwin_dev/map_routes',
+                             body=[{'id': 999999998}, {'id': 999999999}])
+        assert delete_resp['statusCode'] == 404, \
+            f"Expected 404 for non-existent id-list delete, got {delete_resp['statusCode']}"
+
+    def test_bulk_delete_id_list_scoped_to_creator_fk(self, invoke, creator_fk):
+        """BULK-04: bulk DELETE cannot remove another user's rows (creator_fk guard).
+
+        POST a map_route as creator_fk, then attempt a bulk id-list DELETE while
+        authenticated as a different user. The id matches but creator_fk does not,
+        so zero rows are affected → 404. Confirms the scoping clause is applied on
+        the bulk path, not just single-object delete.
+        """
+        resp = invoke('POST', '/darwin_dev/map_routes', body={
+            'name': 'BulkDeleteScopeTest Route',
+            'route_id': 2050,
+            'creator_fk': creator_fk,
+        })
+        assert resp['statusCode'] == 200
+        rid = int(extract_id(resp))
+
+        # Attempt delete as a different authenticated user → must not delete
+        other_user = f"{creator_fk}-intruder"
+        delete_resp = invoke('DELETE', '/darwin_dev/map_routes',
+                            body=[{'id': rid}], authenticated_user=other_user)
+        assert delete_resp['statusCode'] == 404, \
+            f"Expected 404 (scoped out), got {delete_resp['statusCode']}"
+
+        # Row still exists for the real owner → cleanup
+        cleanup = invoke('DELETE', '/darwin_dev/map_routes', body=[{'id': rid}])
+        assert cleanup['statusCode'] == 200
