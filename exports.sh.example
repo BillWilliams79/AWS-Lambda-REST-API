@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# exports.sh.example — template for Lambda-Rest/exports.sh
+#
+# Sourced (POSIX dot, not `source`) before running Lambda-Rest tests:
+#   cd _rest_api_lambda_test && . ../exports.sh && python3 lambda_test_darwin.py
+#
+# Copy to exports.sh in this directory and fill in real values — exports.sh is
+# gitignored and must never be committed.
+export endpoint="your-rds-endpoint.rds.amazonaws.com"
+export username="your-db-username"
+export db_password="your-db-password"
+export db_name="darwin,darwin_dev"
