@@ -50,6 +50,13 @@ CREATOR_FK_TABLES = frozenset({
     # Req #2497 — swarm_complete log. swarm_complete_sessions
     # is a junction table with no creator_fk and stays out of this set.
     'swarm_completes',
+    # Req #2943 — machines registry. Carries creator_fk but was never added
+    # here; caught by the req #2998 audit of this file.
+    'machines',
+    # Req #2997/#2998 — agents registry (migration 067). agents, instructions,
+    # and architecture_documents each carry creator_fk. agent_documents and
+    # agent_instructions are junctions with no creator_fk and stay out.
+    'agents', 'instructions', 'architecture_documents',
 })
 
 PROFILE_TABLE = 'profiles'
