@@ -57,6 +57,10 @@ CREATOR_FK_TABLES = frozenset({
     # and architecture_documents each carry creator_fk. agent_documents and
     # agent_instructions are junctions with no creator_fk and stay out.
     'agents', 'instructions', 'architecture_documents',
+    # Req #3031 — agent context telemetry (migration 069). Both the run header
+    # and the per-agent rows carry creator_fk; scope generic passthrough to the
+    # authenticated user.
+    'agent_telemetry_runs', 'agent_telemetry_rows',
 })
 
 PROFILE_TABLE = 'profiles'
