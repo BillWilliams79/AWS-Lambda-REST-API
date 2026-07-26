@@ -1,4 +1,4 @@
-"""REST contracts for the `agent_instructions` junction (req #3049, #3057).
+"""REST contracts for the `agent_instructions` junction (req #3049, #3057, #3059).
 
 This table has a composite PK and NO `id` column. Both insert paths are locked
 here because neither is visible from the table definition alone:
@@ -17,6 +17,14 @@ here because neither is visible from the table definition alone:
    which is why `Darwin/src/Agents/actions/instructionsApi.js` keeps using it
    for every link, single links included.
 
+3. **A rejected INSERT is a 409 CONFLICT, on either path** (req #3059). The
+   composite PK makes 1062 the everyday failure here, and a bad `agent_fk` makes
+   1452 the other. Both now carry `{errno, constraint, table}` instead of a
+   pymysql string the UI had to regex. Note how this composes with (1): #3057
+   made the READ-BACK stop reporting failure, #3059 made the WRITE report its
+   failure precisely — the 201 covers only what happens after the row commits,
+   so it cannot swallow a rejected INSERT.
+
 PUT is impossible (rest_put.py requires `id`), so a load-order change is a
 DELETE + re-POST. `DELETE {agent_fk}` clearing one agent's whole list is the
 primitive that makes the reorder normalize pass possible.
@@ -29,6 +37,7 @@ from conftest import extract_id
 
 
 def _err(response):
+    """A dict for 409 CONFLICT (req #3059), a bare string for any other error."""
     return json.loads(response['body'])
 
 
@@ -126,7 +135,7 @@ class TestAgentInstructionsInsert:
         assert [(r['instruction_fk'], r['sort_order']) for r in rows] == \
             [(instruction, 1)]
 
-    def test_single_object_post_duplicate_is_still_500_with_1062(
+    def test_single_object_post_duplicate_is_a_409_not_a_201(
             self, invoke, registry):
         """The 201 is scoped to the read-back, not to INSERT errors.
 
@@ -134,6 +143,10 @@ class TestAgentInstructionsInsert:
         read-back cannot swallow one. If this ever returns 201 the guard has
         been moved above the INSERT's error handling and every junction write
         has become unverifiable.
+
+        req #3059 changed the failure status from 500 to 409 — the assertion
+        that matters is unchanged in spirit: a rejected INSERT must still be
+        reported as a failure, and it must still name 1062.
         """
         agent = registry['agent']('single-dupe')
         instruction = registry['instruction']('single-dupe-a')
@@ -142,10 +155,19 @@ class TestAgentInstructionsInsert:
         assert invoke('POST', '/darwin_dev/agent_instructions',
                       body=dict(body))['statusCode'] == 201
         resp = invoke('POST', '/darwin_dev/agent_instructions', body=dict(body))
-        assert resp['statusCode'] == 500
-        assert '1062' in _err(resp)
+        assert resp['statusCode'] == 409
+        payload = _err(resp)
+        assert payload['errno'] == 1062
+        assert payload['table'] == 'agent_instructions'
 
-    def test_duplicate_link_is_500_with_1062(self, invoke, registry):
+    def test_duplicate_link_is_409_conflict(self, invoke, registry):
+        """req #3059: the bulk INSERT path reports a composite-PK collision.
+
+        `constraint` is 'PRIMARY' — which every table has — so it only identifies
+        anything paired with `table`. That is exactly how the UI reads it, and
+        why `table` is sourced from the handler rather than parsed out of the
+        driver's `'agent_instructions.PRIMARY'`.
+        """
         agent = registry['agent']('dupe')
         instruction = registry['instruction']('dupe-a')
         body = [{'agent_fk': agent, 'instruction_fk': instruction, 'sort_order': 1}]
@@ -153,12 +175,13 @@ class TestAgentInstructionsInsert:
         assert invoke('POST', '/darwin_dev/agent_instructions',
                       body=body)['statusCode'] == 201
         resp = invoke('POST', '/darwin_dev/agent_instructions', body=body)
-        assert resp['statusCode'] == 500
-        message = _err(resp)
-        assert '1062' in message
-        assert 'agent_instructions.PRIMARY' in message
+        assert resp['statusCode'] == 409
+        payload = _err(resp)
+        assert payload['errno'] == 1062
+        assert payload['constraint'] == 'PRIMARY'
+        assert payload['table'] == 'agent_instructions'
 
-    def test_duplicate_slot_is_500_with_uq_agent_instructions_slot(
+    def test_duplicate_slot_is_409_with_uq_agent_instructions_slot(
             self, invoke, registry, db_connection):
         """req #3075, migration 073: two instructions may not share one agent's
         NUMBERED load slot.
@@ -169,11 +192,13 @@ class TestAgentInstructionsInsert:
         so two concurrent binds against the same agent both propose the same slot
         and, without this key, both inserts succeed.
 
-        The key name is asserted because it is a CONTRACT: Lambda-Rest emits no
-        409, so the raw pymysql message is the only signal a caller gets, and both
-        `agentRegistryUtils.restErrorMessage` and darwin-mcp's
-        `link_agent_instruction` match on this exact token to turn the failure into
-        something a human can act on. Rename the key and both go silently generic.
+        The key name is asserted because it is a CONTRACT. req #3059 changed HOW
+        it travels — it is now the `constraint` field of a 409 body rather than a
+        token to be regexed out of a 500's pymysql string — but not THAT it
+        travels: `agentRegistryUtils.restErrorMessage` and darwin-mcp's
+        `link_agent_instruction` both key on this exact name to turn the failure
+        into something a human can act on. Rename the key and both go silently
+        generic.
         """
         agent = registry['agent']('slot')
         first = registry['instruction']('slot-a')
@@ -186,10 +211,11 @@ class TestAgentInstructionsInsert:
         resp = invoke('POST', '/darwin_dev/agent_instructions', body=[
             {'agent_fk': agent, 'instruction_fk': second, 'sort_order': 1},
         ])
-        assert resp['statusCode'] == 500
-        message = _err(resp)
-        assert '1062' in message
-        assert 'uq_agent_instructions_slot' in message
+        assert resp['statusCode'] == 409
+        payload = _err(resp)
+        assert payload['errno'] == 1062
+        assert payload['constraint'] == 'uq_agent_instructions_slot'
+        assert payload['table'] == 'agent_instructions'
 
         # The rejected row was NOT written — the agent keeps exactly one link.
         assert [(r['instruction_fk'], r['sort_order'])
@@ -234,13 +260,15 @@ class TestAgentInstructionsInsert:
         assert [(r['instruction_fk'], r['sort_order'])
                 for r in _links(db_connection, agent_b)] == [(instruction, 1)]
 
-    def test_bad_foreign_key_is_500_with_1452(self, invoke, registry):
+    def test_bad_foreign_key_is_409_conflict(self, invoke, registry):
         instruction = registry['instruction']('badfk-a')
         resp = invoke('POST', '/darwin_dev/agent_instructions', body=[
             {'agent_fk': 999999999, 'instruction_fk': instruction, 'sort_order': 1},
         ])
-        assert resp['statusCode'] == 500
-        assert '1452' in _err(resp)
+        assert resp['statusCode'] == 409
+        payload = _err(resp)
+        assert payload['errno'] == 1452
+        assert payload['table'] == 'agent_instructions'
 
 
 class TestAgentInstructionsDelete:

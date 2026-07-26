@@ -4,11 +4,11 @@ The Darwin UI at /agents/instructions writes this table directly, so these tests
 lock the behaviours that UI depends on. Two are contracts about FAILURE, and they
 matter as much as the happy path:
 
-- A duplicate `name` surfaces as HTTP **500** carrying the raw pymysql message,
-  not a 409. The UI parses `1062` + `uq_instructions_name` out of that string to
-  tell "you picked a taken name" from "the database is broken". If someone later
-  maps IntegrityError to a real status code, these tests fail and force the UI's
-  error parser to be updated in the same change.
+- A duplicate `name` surfaces as HTTP **409** with a structured CONFLICT body
+  (req #3059 — it used to be a 500 carrying the raw pymysql string, which the UI
+  had to regex). `agentRegistryUtils.restErrorMessage` reads `errno` and
+  `constraint` off that body, so a change to either field here breaks the UI's
+  "that name is taken" message and must be made in the same commit.
 - `instructions` is in CREATOR_FK_TABLES, so a client-supplied `creator_fk` must
   be OVERWRITTEN with the authenticated Cognito sub, never trusted.
 """
@@ -20,7 +20,10 @@ from conftest import extract_id
 
 
 def _err(response):
-    """The error string Lambda-Rest puts on the wire (JSON-encoded)."""
+    """The error payload Lambda-Rest puts on the wire (JSON-encoded).
+
+    A dict for 409 CONFLICT, a bare string for every other error status.
+    """
     return json.loads(response['body'])
 
 
@@ -113,28 +116,49 @@ class TestInstructionsCRUD:
 class TestInstructionsUniqueName:
     """The exact wire contract the UI's error parser reads."""
 
-    def test_duplicate_name_post_is_500_with_1062(self, invoke, creator_fk, instruction):
+    def test_duplicate_name_post_is_409_conflict(self, invoke, creator_fk, instruction):
         name = f'pytest-{creator_fk}-dupe'
         instruction(name)
         resp = invoke('POST', '/darwin_dev/instructions', body={
             'name': name, 'content': 'second row', 'creator_fk': creator_fk,
         })
-        assert resp['statusCode'] == 500
-        message = _err(resp)
-        assert '1062' in message
-        assert 'uq_instructions_name' in message
+        assert resp['statusCode'] == 409
+        body = _err(resp)
+        assert body['error'] == 'CONFLICT'
+        assert body['errno'] == 1062
+        assert body['constraint'] == 'uq_instructions_name'
+        assert body['table'] == 'instructions'
+        # The raw driver string is still carried, unchanged from the 500 era.
+        assert '1062' in body['message']
 
-    def test_rename_onto_existing_name_is_500_with_1062(self, invoke, creator_fk, instruction):
+    def test_rename_onto_existing_name_is_409_conflict(self, invoke, creator_fk, instruction):
         taken = f'pytest-{creator_fk}-taken'
         instruction(taken)
         victim_id = instruction(f'pytest-{creator_fk}-victim')
 
         resp = invoke('PUT', '/darwin_dev/instructions',
                       body=[{'id': victim_id, 'name': taken}])
-        assert resp['statusCode'] == 500
-        message = _err(resp)
-        assert '1062' in message
-        assert 'uq_instructions_name' in message
+        assert resp['statusCode'] == 409
+        body = _err(resp)
+        assert body['errno'] == 1062
+        assert body['constraint'] == 'uq_instructions_name'
+        assert body['table'] == 'instructions'
+
+    def test_the_constraint_name_is_unqualified(self, invoke, creator_fk, instruction):
+        """MySQL 8 reports the key as `instructions.uq_instructions_name`.
+
+        The response strips the table qualifier so a consumer can compare against
+        the name the DDL declares — `table` carries what the strip removed. The
+        UI's equality check depends on this; a qualified value would silently
+        stop matching and every duplicate would render the generic fallback.
+        """
+        name = f'pytest-{creator_fk}-unqualified'
+        instruction(name)
+        body = _err(invoke('POST', '/darwin_dev/instructions', body={
+            'name': name, 'content': 'x', 'creator_fk': creator_fk,
+        }))
+        assert body['constraint'] == 'uq_instructions_name'
+        assert '.' not in body['constraint']
 
     def test_unique_key_does_not_exclude_closed_rows(self, invoke, creator_fk, instruction):
         """A CLOSED row still owns its name.
@@ -150,8 +174,22 @@ class TestInstructionsUniqueName:
         resp = invoke('POST', '/darwin_dev/instructions', body={
             'name': name, 'content': 'reusing a retired name', 'creator_fk': creator_fk,
         })
+        assert resp['statusCode'] == 409
+        assert _err(resp)['constraint'] == 'uq_instructions_name'
+
+    def test_a_non_integrity_failure_is_still_a_500(self, invoke, creator_fk):
+        """The boundary, asserted against the live handler.
+
+        A 409 promises the caller that different data can succeed. An unknown
+        column (1054) never can, so it must NOT be swept into the conflict path —
+        a client that retries on it would loop forever.
+        """
+        resp = invoke('POST', '/darwin_dev/instructions', body={
+            'name': f'pytest-{creator_fk}-badcol', 'content': 'x',
+            'no_such_column': 'boom', 'creator_fk': creator_fk,
+        })
         assert resp['statusCode'] == 500
-        assert 'uq_instructions_name' in _err(resp)
+        assert isinstance(_err(resp), str)
 
 
 class TestInstructionsCreatorIsolation:

@@ -1,6 +1,7 @@
 import pymysql
 import json
-from rest_api_utils import compose_rest_response
+from rest_api_utils import (compose_rest_response, compose_conflict_response,
+                            error_detail, integrity_errno)
 from classifier import varDump, pretty_print_sql
 from auth_utils import CREATOR_FK_TABLES, PROFILE_TABLE
 
@@ -47,8 +48,11 @@ def rest_post(post_method, conn, database, table, body, authenticated_user=None)
             return compose_rest_response(500, '', "NO DATA SAVED")
 
     except pymysql.Error as e:
-        errorMsg = f"HTTP {post_method} failed: {e.args[0]} {e.args[1]}"
+        errno, detail = error_detail(e)
+        errorMsg = f"HTTP {post_method} failed: {errno} {detail}"
         print(errorMsg)
+        if integrity_errno(e):
+            return compose_conflict_response(table, e, errorMsg)
         return compose_rest_response(500, '', errorMsg)
 
     # The INSERT has committed (autocommit). Everything below is the read-back,
@@ -129,6 +133,10 @@ def rest_post(post_method, conn, database, table, body, authenticated_user=None)
         # cause is logged; the caller is told the truth, which is CREATED.
         # `{e}` not `{e.args[0]} {e.args[1]}`: InterfaceError carries a single
         # arg, and indexing args[1] raised IndexError out of the except block.
+        #
+        # req #3059 deliberately does NOT map an integrity errno to 409 here.
+        # Only the INSERT above can reject a write; by this line the row exists,
+        # and a conflict status would be a lie about what happened.
         print(f"HTTP {post_method} helper SELECT after WRITE SQL command failed: {e}")
         return compose_rest_response(201, '', 'CREATED')
 
@@ -180,6 +188,9 @@ def _rest_post_bulk(post_method, conn, table, body_list, authenticated_user):
 
     except pymysql.Error as e:
         conn.rollback()
-        errorMsg = f"HTTP {post_method} bulk failed: {e.args[0]} {e.args[1]}"
+        errno, detail = error_detail(e)
+        errorMsg = f"HTTP {post_method} bulk failed: {errno} {detail}"
         print(errorMsg)
+        if integrity_errno(e):
+            return compose_conflict_response(table, e, errorMsg)
         return compose_rest_response(500, '', errorMsg)

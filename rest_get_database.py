@@ -1,6 +1,6 @@
 import json
 import pymysql
-from rest_api_utils import compose_rest_response
+from rest_api_utils import compose_rest_response, error_detail
 from classifier import varDump
 
 def rest_get_database(get_method, conn, database):
@@ -25,6 +25,7 @@ def rest_get_database(get_method, conn, database):
             return compose_rest_response(404,  '', 'NOT FOUND')
 
     except pymysql.Error as e:
-        errorMsg = f"HTTP {get_method}: show tables command failed: {e.args[0]} {e.args[1]}"
+        errno, detail = error_detail(e)
+        errorMsg = f"HTTP {get_method}: show tables command failed: {errno} {detail}"
         print(errorMsg)
         return compose_rest_response(500, '', errorMsg)

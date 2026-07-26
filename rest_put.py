@@ -1,6 +1,7 @@
 import pymysql
 import json
-from rest_api_utils import compose_rest_response
+from rest_api_utils import (compose_rest_response, compose_conflict_response,
+                            error_detail, integrity_errno)
 from classifier import varDump, pretty_print_sql
 from auth_utils import CREATOR_FK_TABLES, PROFILE_TABLE
 
@@ -152,6 +153,9 @@ def rest_put(put_method, conn, database, table, body_list, authenticated_user=No
             return compose_rest_response(204, 'NO DATA CHANGED', 'NO DATA CHANGED')
 
     except pymysql.Error as e:
-        errorMsg = f"HTTP {put_method} SQL FAILED: {e.args[0]} {e.args[1]}"
+        errno, detail = error_detail(e)
+        errorMsg = f"HTTP {put_method} SQL FAILED: {errno} {detail}"
         print(errorMsg)
+        if integrity_errno(e):
+            return compose_conflict_response(table, e, errorMsg)
         return compose_rest_response(500, '', errorMsg)

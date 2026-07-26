@@ -1,6 +1,6 @@
 import pymysql
 import json
-from rest_api_utils import compose_rest_response
+from rest_api_utils import compose_rest_response, error_detail
 from classifier import varDump, pretty_print_sql
 from auth_utils import CREATOR_FK_TABLES, PROFILE_TABLE
 
@@ -23,7 +23,8 @@ def rest_get_table(get_method, conn, database, table, event, authenticated_user=
             sql_columns.append(row[0])
 
     except pymysql.Error as e:
-        errorMsg = f"HTTP {get_method} helper SQL command failed: {e.args[0]} {e.args[1]}"
+        errno, detail = error_detail(e)
+        errorMsg = f"HTTP {get_method} helper SQL command failed: {errno} {detail}"
         print(errorMsg)
         return compose_rest_response(500, '', errorMsg)
 
@@ -199,6 +200,7 @@ def rest_get_table(get_method, conn, database, table, event, authenticated_user=
             return compose_rest_response(404, '', 'NOT FOUND')
 
     except pymysql.Error as e:
-        errorMsg = f"HTTP {get_method} actual SQL select statement failed: {e.args[0]} {e.args[1]}"
+        errno, detail = error_detail(e)
+        errorMsg = f"HTTP {get_method} actual SQL select statement failed: {errno} {detail}"
         print(errorMsg)
         return compose_rest_response(500, '', errorMsg)

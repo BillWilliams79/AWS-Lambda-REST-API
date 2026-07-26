@@ -1,6 +1,7 @@
 import pymysql
 import json
-from rest_api_utils import compose_rest_response
+from rest_api_utils import (compose_rest_response, compose_conflict_response,
+                            error_detail, integrity_errno)
 from classifier import varDump, pretty_print_sql
 from auth_utils import CREATOR_FK_TABLES, PROFILE_TABLE
 
@@ -46,8 +47,11 @@ def rest_delete(delete_method, conn, database, table, body, authenticated_user=N
             return compose_rest_response(200, '', 'OK')
 
     except pymysql.Error as e:
-        errorMsg = f"HTTP {delete_method} SQL FAILED: {e.args[0]} {e.args[1]}"
+        errno, detail = error_detail(e)
+        errorMsg = f"HTTP {delete_method} SQL FAILED: {errno} {detail}"
         print(errorMsg)
+        if integrity_errno(e):
+            return compose_conflict_response(table, e, errorMsg)
         return compose_rest_response(500, '', errorMsg)
 
 
@@ -100,6 +104,9 @@ def _rest_delete_bulk(delete_method, conn, table, body_list, authenticated_user)
 
     except pymysql.Error as e:
         conn.rollback()
-        errorMsg = f"HTTP {delete_method} bulk SQL FAILED: {e.args[0]} {e.args[1]}"
+        errno, detail = error_detail(e)
+        errorMsg = f"HTTP {delete_method} bulk SQL FAILED: {errno} {detail}"
         print(errorMsg)
+        if integrity_errno(e):
+            return compose_conflict_response(table, e, errorMsg)
         return compose_rest_response(500, '', errorMsg)

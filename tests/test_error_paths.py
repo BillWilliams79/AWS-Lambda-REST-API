@@ -46,24 +46,30 @@ class TestPostErrorPaths:
             pass  # Exception is also acceptable
 
     # -----------------------------------------------------------------------
-    # POST-03: FK violation returns 500
+    # POST-03: FK violation returns 409
     # -----------------------------------------------------------------------
 
-    def test_post_fk_violation_returns_500(self, invoke):
-        """POST-03: POST with invalid FK (domain_fk='999999') returns 500.
+    def test_post_fk_violation_returns_409(self, invoke):
+        """POST-03: POST with invalid FK (domain_fk='999999') returns 409.
 
         creator_fk is overridden from JWT (valid), but domain_fk is invalid.
-        May raise an exception; accept both 500 status or exception.
+
+        req #3059 moved this off 500: pointing at a domain that does not exist is
+        a conflict with the current state of the data, and a caller CAN fix it by
+        sending a real domain_fk. The bare `except Exception: pass` the sibling
+        tests use is gone — it would have swallowed a wrong status silently, and
+        this assertion is the whole point of the test.
         """
-        try:
-            response = invoke('POST', '/darwin_dev/areas', body={
-                'area_name': 'Bad FK',
-                'domain_fk': '999999',
-                'closed': '0',
-            })
-            assert response['statusCode'] == 500
-        except Exception:
-            pass  # Exception is also acceptable
+        response = invoke('POST', '/darwin_dev/areas', body={
+            'area_name': 'Bad FK',
+            'domain_fk': '999999',
+            'closed': '0',
+        })
+        assert response['statusCode'] == 409
+        body = json.loads(response['body'])
+        assert body['error'] == 'CONFLICT'
+        assert body['errno'] == 1452
+        assert body['table'] == 'areas'
 
     # -----------------------------------------------------------------------
     # POST-04: Response single-encoded verification
