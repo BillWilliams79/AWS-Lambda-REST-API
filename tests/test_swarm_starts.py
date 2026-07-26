@@ -19,14 +19,22 @@ class TestSwarmStartsCRUD:
 
     def test_swarm_starts_crud_lifecycle(self, invoke, creator_fk):
         """POST create swarm_start → PUT update → GET verify → DELETE → GET 404."""
-        # Step 1: POST a swarm_start record
+        # Step 1: POST a swarm_start record.
+        # Every key below must be a real swarm_starts column — the passthrough
+        # builds the INSERT column list straight from the body, so a phantom key
+        # is a MySQL 1054, not a skipped field. (req #3061: this fixture carried
+        # `category_filter` and `item_count`, neither of which was ever created.)
+        #
+        # ai_model/effort are deliberately NOT their DDL defaults ('opus'/'high'):
+        # posting the default would make the read-back below pass even if the
+        # field never reached the INSERT at all.
         create_resp = invoke('POST', '/darwin_dev/swarm_starts', body={
             'arguments': 'swarm 1 2 3',
-            'category_filter': 'swarm',
             'autonomy_filter': 'implemented',
             'auto_start': '0',
-            'item_count': '3',
             'session_count': '3',
+            'ai_model': 'sonnet',
+            'effort': 'xhigh',
             'creator_fk': creator_fk,
         })
         assert create_resp['statusCode'] == 200
@@ -48,6 +56,9 @@ class TestSwarmStartsCRUD:
         assert body[0]['session_count'] == 5
         assert body[0]['auto_start'] == 1
         assert body[0]['arguments'] == 'swarm 1 2 3'
+        assert body[0]['autonomy_filter'] == 'implemented'
+        assert body[0]['ai_model'] == 'sonnet'
+        assert body[0]['effort'] == 'xhigh'
 
         # Step 4: DELETE
         delete_resp = invoke('DELETE', '/darwin_dev/swarm_starts', body={'id': swarm_start_id})
