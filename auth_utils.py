@@ -61,6 +61,9 @@ CREATOR_FK_TABLES = frozenset({
     # and the per-agent rows carry creator_fk; scope generic passthrough to the
     # authenticated user.
     'agent_telemetry_runs', 'agent_telemetry_rows',
+    # Req #3096 — per-document actual-token rows (migration 074). Carries
+    # creator_fk like its parent row; scope generic passthrough the same way.
+    'agent_telemetry_row_docs',
 })
 
 PROFILE_TABLE = 'profiles'
