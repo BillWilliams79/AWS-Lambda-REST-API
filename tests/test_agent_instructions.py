@@ -1,21 +1,21 @@
-"""REST contracts for the `agent_instructions` junction (req #3049).
+"""REST contracts for the `agent_instructions` junction (req #3049, #3057).
 
-This table has a composite PK and NO `id` column, which makes the generic
-passthrough behave in two ways the Darwin UI must be written around. Both are
-locked here because both are invisible until something depends on them:
+This table has a composite PK and NO `id` column. Both insert paths are locked
+here because neither is visible from the table definition alone:
 
-1. **A SINGLE-OBJECT POST COMMITS THE ROW AND THEN RETURNS 500.** `rest_post.py`
-   re-reads the new row with `SELECT ... WHERE id = <LAST_INSERT_ID()>`, which
-   raises 1054 on a table with no `id` column — after the INSERT has already
-   committed under autocommit. The caller sees a failure that actually succeeded.
-   The test below asserts BOTH halves on purpose. Do not "fix" it into a silent
-   regression: `test_swarm_starts.py` documents the same read-back assumption,
-   and the fix belongs in `rest_post.py`, not here.
+1. **A SINGLE-OBJECT POST RETURNS 201 WITH NO BODY.** `rest_post.py` reads the
+   new row back with `SELECT ... WHERE id = <LAST_INSERT_ID()>`, which no
+   `id`-less table can answer. Req #3057 made it consult the `DESC` column list
+   it already has and skip the read-back instead — before that it raised 1054
+   and returned 500 for a row that had already committed under autocommit, so
+   every caller saw a successful write as a failure. The 201 asserted below is
+   the whole fix: assert the status AND the committed row, because a regression
+   here is silent in either direction.
 
-2. **An ARRAY body works.** `_rest_post_bulk` does no read-back, so it returns
-   201 `{"inserted": N}`. That is the ONLY sound insert path for this table and
-   the one `Darwin/src/Agents/actions/instructionsApi.js` uses for every link,
-   including single links.
+2. **An ARRAY body returns 201 `{"inserted": N}`.** `_rest_post_bulk` never
+   read back, so this path was always sound. It is one round trip for N links,
+   which is why `Darwin/src/Agents/actions/instructionsApi.js` keeps using it
+   for every link, single links included.
 
 PUT is impossible (rest_put.py requires `id`), so a load-order change is a
 DELETE + re-POST. `DELETE {agent_fk}` clearing one agent's whole list is the
@@ -103,13 +103,15 @@ class TestAgentInstructionsInsert:
         assert [(r['instruction_fk'], r['sort_order']) for r in rows] == \
             [(first, 1), (second, 2)]
 
-    def test_single_object_post_returns_500_but_commits_the_row(
+    def test_single_object_post_returns_201_and_commits_the_row(
             self, invoke, registry, db_connection):
-        """Known-bad, deliberately locked. See this module's docstring.
+        """req #3057. See this module's docstring.
 
-        The row IS created; only the read-back fails. A caller that retries on
-        this "failure" gets a duplicate-key error on the second attempt, which is
-        exactly why the UI never uses the single-object path.
+        Both halves matter. The status must be 201 — a 500 here is the old bug,
+        which made callers treat a committed row as a failed write and retry
+        into a duplicate-key error. The body must stay empty — there is no
+        `id` to read the row back by, so the gateway has nothing honest to
+        return and callers re-read by composite key.
         """
         agent = registry['agent']('single')
         instruction = registry['instruction']('single-a')
@@ -117,11 +119,31 @@ class TestAgentInstructionsInsert:
         resp = invoke('POST', '/darwin_dev/agent_instructions', body={
             'agent_fk': agent, 'instruction_fk': instruction, 'sort_order': 1,
         })
-        assert resp['statusCode'] == 500
-        assert '1054' in _err(resp)
+        assert resp['statusCode'] == 201, resp['body']
+        assert json.loads(resp['body']) == ''
 
         rows = _links(db_connection, agent)
-        assert [r['instruction_fk'] for r in rows] == [instruction]
+        assert [(r['instruction_fk'], r['sort_order']) for r in rows] == \
+            [(instruction, 1)]
+
+    def test_single_object_post_duplicate_is_still_500_with_1062(
+            self, invoke, registry):
+        """The 201 is scoped to the read-back, not to INSERT errors.
+
+        `rest_post.py` returns early on an INSERT failure, so skipping the
+        read-back cannot swallow one. If this ever returns 201 the guard has
+        been moved above the INSERT's error handling and every junction write
+        has become unverifiable.
+        """
+        agent = registry['agent']('single-dupe')
+        instruction = registry['instruction']('single-dupe-a')
+        body = {'agent_fk': agent, 'instruction_fk': instruction, 'sort_order': 1}
+
+        assert invoke('POST', '/darwin_dev/agent_instructions',
+                      body=dict(body))['statusCode'] == 201
+        resp = invoke('POST', '/darwin_dev/agent_instructions', body=dict(body))
+        assert resp['statusCode'] == 500
+        assert '1062' in _err(resp)
 
     def test_duplicate_link_is_500_with_1062(self, invoke, registry):
         agent = registry['agent']('dupe')
