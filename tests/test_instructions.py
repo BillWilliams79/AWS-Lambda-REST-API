@@ -47,11 +47,19 @@ def instruction(invoke, creator_fk):
 class TestInstructionsCRUD:
 
     def test_crud_lifecycle(self, invoke, creator_fk):
-        """POST → PUT → GET → DELETE → GET 404 through the generic passthrough."""
+        """POST → PUT → GET → DELETE → GET 404 through the generic passthrough.
+
+        req #3061: this fixture used to round-trip a `sort_order` field, but
+        migration 072 (req #3063) dropped `instructions.sort_order` — the catalog
+        column that was always distinct from `agent_instructions.sort_order`, the
+        boot load order. The passthrough builds its column list from the body, so
+        the phantom key was a MySQL 1054, not a skipped field. The multi-column
+        PUT it was there to cover now round-trips `name`, which is the other
+        column the /agents/instructions UI edits.
+        """
         create = invoke('POST', '/darwin_dev/instructions', body={
             'name': f'pytest-{creator_fk}-lifecycle',
             'content': 'never fabricate a root cause',
-            'sort_order': '5',
             'creator_fk': creator_fk,
         })
         assert create['statusCode'] == 200
@@ -59,7 +67,8 @@ class TestInstructionsCRUD:
         assert row_id is not None
 
         update = invoke('PUT', '/darwin_dev/instructions', body=[
-            {'id': row_id, 'content': 'REVISED duty', 'sort_order': '9'},
+            {'id': row_id, 'content': 'REVISED duty',
+             'name': f'pytest-{creator_fk}-lifecycle-renamed'},
         ])
         assert update['statusCode'] in (200, 204)
 
@@ -67,7 +76,7 @@ class TestInstructionsCRUD:
         assert get['statusCode'] == 200
         row = json.loads(get['body'])[0]
         assert row['content'] == 'REVISED duty'
-        assert row['sort_order'] == 9
+        assert row['name'] == f'pytest-{creator_fk}-lifecycle-renamed'
 
         assert invoke('DELETE', '/darwin_dev/instructions',
                       body={'id': row_id})['statusCode'] == 200
