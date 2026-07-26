@@ -158,6 +158,82 @@ class TestAgentInstructionsInsert:
         assert '1062' in message
         assert 'agent_instructions.PRIMARY' in message
 
+    def test_duplicate_slot_is_500_with_uq_agent_instructions_slot(
+            self, invoke, registry, db_connection):
+        """req #3075, migration 073: two instructions may not share one agent's
+        NUMBERED load slot.
+
+        The composite PK is satisfied by both rows here — different
+        instruction_fk — which is precisely why this was invisible before the key
+        existed. `nextInstructionSortOrder` computes max+1 from a pre-write cache,
+        so two concurrent binds against the same agent both propose the same slot
+        and, without this key, both inserts succeed.
+
+        The key name is asserted because it is a CONTRACT: Lambda-Rest emits no
+        409, so the raw pymysql message is the only signal a caller gets, and both
+        `agentRegistryUtils.restErrorMessage` and darwin-mcp's
+        `link_agent_instruction` match on this exact token to turn the failure into
+        something a human can act on. Rename the key and both go silently generic.
+        """
+        agent = registry['agent']('slot')
+        first = registry['instruction']('slot-a')
+        second = registry['instruction']('slot-b')
+
+        assert invoke('POST', '/darwin_dev/agent_instructions', body=[
+            {'agent_fk': agent, 'instruction_fk': first, 'sort_order': 1},
+        ])['statusCode'] == 201
+
+        resp = invoke('POST', '/darwin_dev/agent_instructions', body=[
+            {'agent_fk': agent, 'instruction_fk': second, 'sort_order': 1},
+        ])
+        assert resp['statusCode'] == 500
+        message = _err(resp)
+        assert '1062' in message
+        assert 'uq_agent_instructions_slot' in message
+
+        # The rejected row was NOT written — the agent keeps exactly one link.
+        assert [(r['instruction_fk'], r['sort_order'])
+                for r in _links(db_connection, agent)] == [(first, 1)]
+
+    def test_null_slots_are_unconstrained(self, invoke, registry, db_connection):
+        """The deliberate SCOPE of uq_agent_instructions_slot: NULL claims no slot,
+        and MySQL UNIQUE treats NULLs as distinct, so one agent may hold any number
+        of unordered links.
+
+        This is the shape `link_agent_instruction` produces when `sort_order` is
+        omitted (req #3049 COALESCE contract), so a key that rejected it would
+        break every "ensure it is bound" re-seed."""
+        agent = registry['agent']('nullslot')
+        first = registry['instruction']('nullslot-a')
+        second = registry['instruction']('nullslot-b')
+
+        assert invoke('POST', '/darwin_dev/agent_instructions', body=[
+            {'agent_fk': agent, 'instruction_fk': first, 'sort_order': None},
+            {'agent_fk': agent, 'instruction_fk': second, 'sort_order': None},
+        ])['statusCode'] == 201
+
+        rows = _links(db_connection, agent)
+        assert len(rows) == 2
+        assert all(r['sort_order'] is None for r in rows)
+
+    def test_two_agents_may_hold_the_same_slot(self, invoke, registry, db_connection):
+        """agent_fk LEADS the key. Every agent has its own slot 1 — the banded
+        scheme puts per-agent rules at 1..N on all of them — so this must stay
+        legal. A global UNIQUE(sort_order) would have broken the whole registry."""
+        agent_a = registry['agent']('shared-a')
+        agent_b = registry['agent']('shared-b')
+        instruction = registry['instruction']('shared-i')
+
+        assert invoke('POST', '/darwin_dev/agent_instructions', body=[
+            {'agent_fk': agent_a, 'instruction_fk': instruction, 'sort_order': 1},
+            {'agent_fk': agent_b, 'instruction_fk': instruction, 'sort_order': 1},
+        ])['statusCode'] == 201
+
+        assert [(r['instruction_fk'], r['sort_order'])
+                for r in _links(db_connection, agent_a)] == [(instruction, 1)]
+        assert [(r['instruction_fk'], r['sort_order'])
+                for r in _links(db_connection, agent_b)] == [(instruction, 1)]
+
     def test_bad_foreign_key_is_500_with_1452(self, invoke, registry):
         instruction = registry['instruction']('badfk-a')
         resp = invoke('POST', '/darwin_dev/agent_instructions', body=[
@@ -221,6 +297,86 @@ class TestAgentInstructionsPut:
             {'agent_fk': agent, 'instruction_fk': instruction, 'sort_order': 2},
         ])
         assert resp['statusCode'] == 400
+
+
+class TestAgentInstructionsReorder:
+    """req #3075: the reorder path replayed through the REST surface it uses.
+
+    This class exists to pin the reason a plain UNIQUE key is safe on this table.
+    `setAgentInstructionOrder` was described during requirement authoring as
+    "DELETE-then-POST, so a swap transiently holds both rows at overlapping
+    values" — it does not. It DELETEs EVERY row in the write set first and only
+    then re-creates them all in ONE array-body POST. Nothing here is atomic (each
+    call is a separate Lambda invocation under autocommit), but at no instant do
+    two rows of one agent hold the same numbered slot.
+
+    If someone later "optimizes" that into a per-row delete-then-post, this test
+    is what fails.
+    """
+
+    def test_delete_all_then_repost_swaps_two_slots(
+            self, invoke, registry, db_connection):
+        agent = registry['agent']('swap')
+        first = registry['instruction']('swap-a')
+        second = registry['instruction']('swap-b')
+
+        invoke('POST', '/darwin_dev/agent_instructions', body=[
+            {'agent_fk': agent, 'instruction_fk': first, 'sort_order': 1},
+            {'agent_fk': agent, 'instruction_fk': second, 'sort_order': 2},
+        ])
+
+        for instruction in (first, second):
+            assert invoke('DELETE', '/darwin_dev/agent_instructions', body={
+                'agent_fk': agent, 'instruction_fk': instruction,
+            })['statusCode'] == 200
+
+        assert invoke('POST', '/darwin_dev/agent_instructions', body=[
+            {'agent_fk': agent, 'instruction_fk': first, 'sort_order': 2},
+            {'agent_fk': agent, 'instruction_fk': second, 'sort_order': 1},
+        ])['statusCode'] == 201
+
+        assert [(r['instruction_fk'], r['sort_order'])
+                for r in _links(db_connection, agent)] == [(second, 1), (first, 2)]
+
+    def test_moving_onto_an_occupied_slot_is_rejected_and_rolls_back(
+            self, invoke, registry, db_connection):
+        """A per-row move — delete one row, re-post it onto a slot it did not
+        vacate. Rejection is the DESIRED outcome, not a regression: before
+        migration 073 this silently produced two instructions at slot 1.
+
+        This is the shape `link_agent_instruction` USED to have, and the reason
+        req #3075 changed it: under the key a per-row move can no longer express a
+        reorder at all, so that function now deletes both rows before re-posting
+        either (a swap). Kept here as a raw-REST replay because any writer that
+        reaches for the old shape — a seed script, a repair tool — lands exactly
+        here, and the recovery replayed below (re-post the OLD value) is what
+        keeps such a writer from degrading into a silent unlink."""
+        agent = registry['agent']('move')
+        first = registry['instruction']('move-a')
+        second = registry['instruction']('move-b')
+
+        invoke('POST', '/darwin_dev/agent_instructions', body=[
+            {'agent_fk': agent, 'instruction_fk': first, 'sort_order': 1},
+            {'agent_fk': agent, 'instruction_fk': second, 'sort_order': 2},
+        ])
+
+        # Move `second` onto slot 1, which `first` still holds.
+        assert invoke('DELETE', '/darwin_dev/agent_instructions', body={
+            'agent_fk': agent, 'instruction_fk': second,
+        })['statusCode'] == 200
+        resp = invoke('POST', '/darwin_dev/agent_instructions', body=[
+            {'agent_fk': agent, 'instruction_fk': second, 'sort_order': 1},
+        ])
+        assert resp['statusCode'] == 500
+        assert 'uq_agent_instructions_slot' in _err(resp)
+
+        # Restore the old value, exactly as link_agent_instruction's except branch
+        # does — the link is back where it was, not lost.
+        assert invoke('POST', '/darwin_dev/agent_instructions', body=[
+            {'agent_fk': agent, 'instruction_fk': second, 'sort_order': 2},
+        ])['statusCode'] == 201
+        assert [(r['instruction_fk'], r['sort_order'])
+                for r in _links(db_connection, agent)] == [(first, 1), (second, 2)]
 
 
 class TestAgentInstructionsCascade:
