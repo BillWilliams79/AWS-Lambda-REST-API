@@ -5,8 +5,9 @@ any per-table code change. Mirrors test_crud_lifecycle.py.
 
 The junction table swarm_start_sessions is canonically written via the MCP
 tool `link_swarm_start_session`, not via REST — its cascade behavior is
-covered by DarwinSQL/tests/test_cascades.py. (Generic POST to junction
-tables fails the read-back because rest_post.py assumes an `id` column.)
+covered by DarwinSQL/tests/test_cascades.py. (Generic POST to a junction table
+returns 201 with no body: rest_post.py skips its `WHERE id=...` read-back on a
+table that has no `id` column. See test_agent_instructions.py, req #3057.)
 """
 import json
 import pytest
