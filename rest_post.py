@@ -55,6 +55,34 @@ def rest_post(post_method, conn, database, table, body, authenticated_user=None)
             return compose_conflict_response(table, e, errorMsg)
         return compose_rest_response(500, '', errorMsg)
 
+    # The INSERT has committed (autocommit). Everything below is the read-back,
+    # which is a convenience for the caller — never a reason to report failure.
+    try:
+        # retrieve table description and create json object and sql columns
+        with conn.cursor() as cursor:
+            cursor.execute(f""" DESC {table}; """)
+            rows = cursor.fetchall()
+
+        json_object_columns = ', '.join(f"'{row[0]}', {row[0]}" for row in rows)
+
+        sql_columns = []
+        for row in rows:
+            sql_columns.append(row[0])
+
+    except pymysql.Error as e:
+        # `{e}` not `{e.args[0]} {e.args[1]}` — see the read-back handler below.
+        print(f"HTTP {post_method} helper DESC SQL command failed: {e}")
+        return compose_rest_response(201, '', 'CREATED')
+
+    # No `id` column means the read-back below (`WHERE id=...`) cannot be built.
+    # That is every junction table (composite PK). The row is already committed,
+    # so the only correct answer is 201 CREATED without a body — reporting the
+    # missing column as a 500 told callers a successful write had failed
+    # (req #3057). Callers that need the row read it back by its composite key.
+    if 'id' not in sql_columns:
+        print(f"HTTP {post_method}: {table} has no id column, skipping read-back.")
+        return compose_rest_response(201, '', 'CREATED')
+
     try:
         # retrieve ID of newly created row
         sql_statement= f"""SELECT LAST_INSERT_ID()"""
@@ -68,26 +96,7 @@ def rest_post(post_method, conn, database, table, body, authenticated_user=None)
                 return compose_rest_response(201, '', 'CREATED')
 
     except pymysql.Error as e:
-        errno, detail = error_detail(e)
-        print(f"HTTP {post_method} FAILED to read last_insert_id: {errno} {detail}")
-        return compose_rest_response(201, '', 'CREATED')
-
-    try:
-        # retrieve table description and create json object and sql columns
-        with conn.cursor() as cursor:
-            cursor.execute(f""" DESC {table}; """)
-            rows = cursor.fetchall()
-
-        json_object_columns = ', '.join(f"'{row[0]}', {row[0]}" for row in rows)
-
-        sql_columns = []
-        for row in rows:
-            sql_columns.append(row[0])
-        
-    except pymysql.Error as e:
-        errno, detail = error_detail(e)
-        errorMsg = f"HTTP {post_method} helper DESC SQL command failed: {errno} {detail}"
-        print(errorMsg)
+        print(f"HTTP {post_method} FAILED to read last_insert_id: {e}")
         return compose_rest_response(201, '', 'CREATED')
 
     try:
@@ -117,14 +126,19 @@ def rest_post(post_method, conn, database, table, body, authenticated_user=None)
             return compose_rest_response(201, '', 'CREATED')
 
     except pymysql.Error as e:
-        # Stays a 500 even for an integrity errno, which cannot reach here anyway:
-        # the INSERT already committed under autocommit, so this is a failed READ,
-        # not a rejected write. darwin-mcp's post_junction depends on that — it
-        # reads the 1054 "Unknown column 'id'" 500 as "the row IS there".
-        errno, detail = error_detail(e)
-        errorMsg = f"HTTP {post_method} helper SELECT after WRITE SQL command failed: {errno} {detail}"
-        print(errorMsg)
-        return compose_rest_response(500, '', errorMsg)
+        # The row committed under autocommit before this SELECT ran, so NO
+        # failure here is a failed write — 500 would repeat req #3057's defect
+        # under a different error code (a lost connection or a read timeout
+        # between the INSERT and the read-back reaches exactly this line). The
+        # cause is logged; the caller is told the truth, which is CREATED.
+        # `{e}` not `{e.args[0]} {e.args[1]}`: InterfaceError carries a single
+        # arg, and indexing args[1] raised IndexError out of the except block.
+        #
+        # req #3059 deliberately does NOT map an integrity errno to 409 here.
+        # Only the INSERT above can reject a write; by this line the row exists,
+        # and a conflict status would be a lie about what happened.
+        print(f"HTTP {post_method} helper SELECT after WRITE SQL command failed: {e}")
+        return compose_rest_response(201, '', 'CREATED')
 
     return compose_rest_response(500, '', 'INVALID PATH')
 

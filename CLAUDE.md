@@ -80,10 +80,12 @@ that way. Helpers + boundary are unit-tested in `tests/test_unit_conflict.py`
 - Returns `row[0]` (a tuple) to `compose_rest_response` — causes double-encoding
 
 ### rest_post.py
-- Accepts a single object (dict) body, not an array
-- INSERT into table, then SELECT LAST_INSERT_ID(), then re-reads the full row using JSON_OBJECT and returns it
-- Three separate try/except blocks: insert, get ID, read-back
-- On partial failure (insert succeeds but read-back fails), returns 201 with empty body
+- Accepts a single object (dict) body, or an array (bulk path, `_rest_post_bulk`)
+- Single object: INSERT into table, then `DESC {table}`, then SELECT LAST_INSERT_ID(), then re-reads the full row using JSON_OBJECT and returns it (200)
+- Four separate try/except blocks: insert, DESC, get ID, read-back
+- **The INSERT is the only step that can produce a 500.** Once it commits (autocommit), every later step — DESC, LAST_INSERT_ID, the read-back, and any `pymysql.Error` out of any of them — degrades to `201 CREATED` with an empty body. Reporting a committed row as a failed write is what req #3057 fixed; a lost connection or a read timeout during the read-back is the same lie under a different error code
+- **A table with no `id` column skips the read-back entirely** and returns 201 — that is every junction table (composite PK). The `DESC` runs before LAST_INSERT_ID precisely so the column list is available to make that call (req #3057)
+- Array body: one multi-value INSERT, no read-back, `201 {"inserted": N, "first_id": M}`. The whole statement rolls back on failure
 - Returns `row[0]` (tuple) to `compose_rest_response` — causes double-encoding
 
 ### rest_put.py
