@@ -69,6 +69,15 @@ def rest_post(post_method, conn, database, table, body, authenticated_user=None)
         for row in rows:
             sql_columns.append(row[0])
 
+        # DESC column 6 (`Extra`) reads `auto_increment` exactly when MySQL
+        # GENERATES the id. That — not the mere presence of an `id` column — is
+        # what makes LAST_INSERT_ID() meaningful below (req #3094). Taken off
+        # the DESC rows already in hand, so no extra round trip.
+        id_is_auto_increment = any(
+            row[0] == 'id' and len(row) > 5 and str(row[5]).lower() == 'auto_increment'
+            for row in rows
+        )
+
     except pymysql.Error as e:
         # `{e}` not `{e.args[0]} {e.args[1]}` — see the read-back handler below.
         print(f"HTTP {post_method} helper DESC SQL command failed: {e}")
@@ -83,21 +92,72 @@ def rest_post(post_method, conn, database, table, body, authenticated_user=None)
         print(f"HTTP {post_method}: {table} has no id column, skipping read-back.")
         return compose_rest_response(201, '', 'CREATED')
 
-    try:
-        # retrieve ID of newly created row
-        sql_statement= f"""SELECT LAST_INSERT_ID()"""
-        with conn.cursor() as cursor:
-            affected_rows = cursor.execute(sql_statement)
+    # Which id identifies the row that was just written?
+    #
+    # The id the BODY supplied wins over LAST_INSERT_ID(). It is the only correct
+    # answer when MySQL did not generate the id — `profiles.id` is a varchar(64)
+    # Cognito sub with no AUTO_INCREMENT — and it is also right when a caller
+    # writes an explicit id into an AUTO_INCREMENT column, because MySQL only
+    # sets LAST_INSERT_ID() for a value it generated itself.
+    #
+    # req #3094: before this, the read-back ran LAST_INSERT_ID() for any table
+    # with an `id` column. On `profiles` that returned 0 (the connection is new
+    # per invocation, so nothing had generated an id on it) and the read-back
+    # became `WHERE id=0`. MySQL coerces the VARCHAR column to a number for that
+    # comparison, so EVERY id not starting with a digit coerced to 0 and matched
+    # — measured 2026-07-26 at 5 of 11 rows in darwin_dev and 5 of 17 in darwin —
+    # and GROUP_CONCAT with no GROUP BY collapsed them into one array. The POSTing
+    # caller got 200 plus five other users' profiles. A cross-tenant read out of
+    # a write endpoint.
+    #
+    # A FALSY id is no id. Darwin's "type into the blank row" pattern POSTs the
+    # spread template object, and every one of those templates carries `id: ''`
+    # (AreaTabPanel/TaskCard/CategoryCard/ProjectEdit/DomainEdit/...). MySQL
+    # coerces '' to 0 on an AUTO_INCREMENT column and generates a real id, so the
+    # body's '' names nothing — reading back on it would match no row and turn a
+    # 200-with-the-row into a 201-with-no-body, which those callers handle only
+    # by invalidating a query (losing the new id, the pending-mutation replay,
+    # and the post-create navigate). `"NULL"` is the caller's explicit-NULL
+    # sentinel and is truthy, so it needs its own check.
+    newId = body.get('id')
+    if not newId or newId == "NULL":
+        newId = None
 
-            if affected_rows > 0:
-                newId = cursor.fetchone()
-            else:
-                print(f"HTTP {post_method} FAILED to read last_insert_id.")
-                return compose_rest_response(201, '', 'CREATED')
+    if newId is None:
+        if not id_is_auto_increment:
+            # Nothing identifies the new row. Same call as the `id`-less
+            # junction path above: the row is committed, so 201 without a body.
+            print(f"HTTP {post_method}: {table}.id is not auto_increment and the "
+                  f"body supplied no id, skipping read-back.")
+            return compose_rest_response(201, '', 'CREATED')
 
-    except pymysql.Error as e:
-        print(f"HTTP {post_method} FAILED to read last_insert_id: {e}")
-        return compose_rest_response(201, '', 'CREATED')
+        try:
+            # retrieve ID of newly created row
+            sql_statement= f"""SELECT LAST_INSERT_ID()"""
+            with conn.cursor() as cursor:
+                affected_rows = cursor.execute(sql_statement)
+
+                if affected_rows > 0:
+                    id_row = cursor.fetchone()
+                    newId = id_row[0] if id_row else None
+                else:
+                    print(f"HTTP {post_method} FAILED to read last_insert_id.")
+                    return compose_rest_response(201, '', 'CREATED')
+
+        except pymysql.Error as e:
+            print(f"HTTP {post_method} FAILED to read last_insert_id: {e}")
+            return compose_rest_response(201, '', 'CREATED')
+
+        if not newId:
+            # 0 means MySQL generated nothing on this connection. Never let that
+            # reach the read-back as `WHERE id=0` — that is the req #3094 bug.
+            print(f"HTTP {post_method}: last_insert_id is 0, skipping read-back.")
+            return compose_rest_response(201, '', 'CREATED')
+
+    # Bind it, never interpolate it: the id can be a Cognito sub. A non-generated
+    # id goes down as a STRING so MySQL compares varchar to varchar — passing a
+    # number would make it coerce the COLUMN instead, which is the bug above.
+    lookup_id = newId if id_is_auto_increment else str(newId)
 
     try:
         # read row(s) and format as JSON
@@ -109,12 +169,12 @@ def rest_post(post_method, conn, database, table, body, authenticated_user=None)
                                 ,']')
                             FROM
                                 {table}
-                            WHERE id={newId[0]}
+                            WHERE id=%s
         """
         pretty_print_sql(sql_statement, post_method)
 
         with conn.cursor() as cursor:
-            cursor.execute(sql_statement)
+            cursor.execute(sql_statement, (lookup_id,))
             row = cursor.fetchall()
 
         #varDump(row, 'row data from read table AFTER post')
@@ -125,7 +185,7 @@ def rest_post(post_method, conn, database, table, body, authenticated_user=None)
             print(f"HTTP {post_method} helper SELECT after WRITE SQL command failed")
             return compose_rest_response(201, '', 'CREATED')
 
-    except pymysql.Error as e:
+    except (pymysql.Error, ValueError, TypeError, IndexError, KeyError) as e:
         # The row committed under autocommit before this SELECT ran, so NO
         # failure here is a failed write — 500 would repeat req #3057's defect
         # under a different error code (a lost connection or a read timeout
@@ -137,7 +197,22 @@ def rest_post(post_method, conn, database, table, body, authenticated_user=None)
         # req #3059 deliberately does NOT map an integrity errno to 409 here.
         # Only the INSERT above can reject a write; by this line the row exists,
         # and a conflict status would be a lie about what happened.
-        print(f"HTTP {post_method} helper SELECT after WRITE SQL command failed: {e}")
+        #
+        # Wider than `pymysql.Error` (req #3094): passing args to execute() puts
+        # pymysql on its `query % escaped_args` path, so the SQL text is now a
+        # FORMAT STRING. `json_object_columns` is built from live DESC output, and
+        # a column name containing `%` raises ValueError out of a block whose
+        # entire thesis is that nothing after the INSERT reports failure — verified
+        # by POSTing to a scratch table with a `pct%` column, which returned 503 on
+        # a committed row before this line was widened. No such column exists in
+        # darwin or darwin_dev today; the promise should not depend on that staying
+        # true. TypeError/IndexError/KeyError cover the same shape of hazard around
+        # `row[0][0]` and `json.loads`.
+        #
+        # Deliberately NOT bare `Exception`: a NameError or AttributeError here is
+        # a coding mistake, and silently answering 201 forever would hide it.
+        print(f"HTTP {post_method} helper SELECT after WRITE SQL command failed: "
+              f"{type(e).__name__}: {e}")
         return compose_rest_response(201, '', 'CREATED')
 
     return compose_rest_response(500, '', 'INVALID PATH')

@@ -81,10 +81,12 @@ that way. Helpers + boundary are unit-tested in `tests/test_unit_conflict.py`
 
 ### rest_post.py
 - Accepts a single object (dict) body, or an array (bulk path, `_rest_post_bulk`)
-- Single object: INSERT into table, then `DESC {table}`, then SELECT LAST_INSERT_ID(), then re-reads the full row using JSON_OBJECT and returns it (200)
+- Single object: INSERT into table, then `DESC {table}`, then SELECT LAST_INSERT_ID() **only if the body supplied no id and `DESC` says `id` is `auto_increment`**, then re-reads the full row using JSON_OBJECT and returns it (200)
 - Four separate try/except blocks: insert, DESC, get ID, read-back
 - **The INSERT is the only step that can produce a 500.** Once it commits (autocommit), every later step — DESC, LAST_INSERT_ID, the read-back, and any `pymysql.Error` out of any of them — degrades to `201 CREATED` with an empty body. Reporting a committed row as a failed write is what req #3057 fixed; a lost connection or a read timeout during the read-back is the same lie under a different error code
 - **A table with no `id` column skips the read-back entirely** and returns 201 — that is every junction table (composite PK). The `DESC` runs before LAST_INSERT_ID precisely so the column list is available to make that call (req #3057)
+- **Which id the read-back uses (req #3094).** In order: the id the **body** supplied; else `LAST_INSERT_ID()`, but **only when `DESC` says the `id` column is `auto_increment`** (column 6, `Extra`); else 201 with no body. `LAST_INSERT_ID()` is meaningful only for a value MySQL *generated* — it stays 0 both on a non-`AUTO_INCREMENT` id and on an explicit id written into an `AUTO_INCREMENT` column, and `db_connection.py` opens a fresh connection per invocation so there is no earlier value to inherit. **A `LAST_INSERT_ID()` of 0 must never reach the read-back.** `profiles.id` is a `varchar(64)` Cognito sub, so `WHERE id=0` made MySQL coerce the column to a number and match every id not starting with a digit — `GROUP_CONCAT` with no `GROUP BY` then handed the POSTing caller a pile of other users' profiles. Regression-locked in `tests/test_profiles_readback.py` (the `TestReadBackIdSelection` half needs no DB)
+- **The read-back id is bound, not interpolated** — `WHERE id=%s`. A non-generated id binds as a **string** so MySQL compares varchar to varchar; binding a number would coerce the column instead, which is the #3094 defect
 - Array body: one multi-value INSERT, no read-back, `201 {"inserted": N, "first_id": M}`. The whole statement rolls back on failure
 - Returns `row[0]` (tuple) to `compose_rest_response` — causes double-encoding
 
