@@ -1,6 +1,7 @@
 import pymysql
 import json
-from rest_api_utils import compose_rest_response
+from rest_api_utils import (compose_rest_response, compose_conflict_response,
+                            error_detail, integrity_errno)
 from classifier import varDump, pretty_print_sql
 from auth_utils import CREATOR_FK_TABLES, PROFILE_TABLE
 
@@ -47,8 +48,11 @@ def rest_post(post_method, conn, database, table, body, authenticated_user=None)
             return compose_rest_response(500, '', "NO DATA SAVED")
 
     except pymysql.Error as e:
-        errorMsg = f"HTTP {post_method} failed: {e.args[0]} {e.args[1]}"
+        errno, detail = error_detail(e)
+        errorMsg = f"HTTP {post_method} failed: {errno} {detail}"
         print(errorMsg)
+        if integrity_errno(e):
+            return compose_conflict_response(table, e, errorMsg)
         return compose_rest_response(500, '', errorMsg)
 
     try:
@@ -64,7 +68,8 @@ def rest_post(post_method, conn, database, table, body, authenticated_user=None)
                 return compose_rest_response(201, '', 'CREATED')
 
     except pymysql.Error as e:
-        print(f"HTTP {post_method} FAILED to read last_insert_id: {e.args[0]} {e.args[1]}")
+        errno, detail = error_detail(e)
+        print(f"HTTP {post_method} FAILED to read last_insert_id: {errno} {detail}")
         return compose_rest_response(201, '', 'CREATED')
 
     try:
@@ -80,7 +85,8 @@ def rest_post(post_method, conn, database, table, body, authenticated_user=None)
             sql_columns.append(row[0])
         
     except pymysql.Error as e:
-        errorMsg = f"HTTP {post_method} helper DESC SQL command failed: {e.args[0]} {e.args[1]}"
+        errno, detail = error_detail(e)
+        errorMsg = f"HTTP {post_method} helper DESC SQL command failed: {errno} {detail}"
         print(errorMsg)
         return compose_rest_response(201, '', 'CREATED')
 
@@ -111,7 +117,12 @@ def rest_post(post_method, conn, database, table, body, authenticated_user=None)
             return compose_rest_response(201, '', 'CREATED')
 
     except pymysql.Error as e:
-        errorMsg = f"HTTP {post_method} helper SELECT after WRITE SQL command failed: {e.args[0]} {e.args[1]}"
+        # Stays a 500 even for an integrity errno, which cannot reach here anyway:
+        # the INSERT already committed under autocommit, so this is a failed READ,
+        # not a rejected write. darwin-mcp's post_junction depends on that — it
+        # reads the 1054 "Unknown column 'id'" 500 as "the row IS there".
+        errno, detail = error_detail(e)
+        errorMsg = f"HTTP {post_method} helper SELECT after WRITE SQL command failed: {errno} {detail}"
         print(errorMsg)
         return compose_rest_response(500, '', errorMsg)
 
@@ -163,6 +174,9 @@ def _rest_post_bulk(post_method, conn, table, body_list, authenticated_user):
 
     except pymysql.Error as e:
         conn.rollback()
-        errorMsg = f"HTTP {post_method} bulk failed: {e.args[0]} {e.args[1]}"
+        errno, detail = error_detail(e)
+        errorMsg = f"HTTP {post_method} bulk failed: {errno} {detail}"
         print(errorMsg)
+        if integrity_errno(e):
+            return compose_conflict_response(table, e, errorMsg)
         return compose_rest_response(500, '', errorMsg)

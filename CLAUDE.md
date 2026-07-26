@@ -5,7 +5,7 @@ AWS Lambda function serving a REST API backed by MySQL (RDS) via API Gateway pro
 ## Architecture
 
 - `handler.py` — Lambda entry point (`lambda_handler`). Parses the URL path into database + table, routes by httpMethod.
-- `rest_api_utils.py` — `compose_rest_response(status_code, body, http_message)` builds the API Gateway Lambda proxy response dict. Always calls `json.dumps(body)` on the body before inserting it. On error status codes (not 200/201/204), replaces body with http_message.
+- `rest_api_utils.py` — `compose_rest_response(status_code, body, http_message)` builds the API Gateway Lambda proxy response dict. Always calls `json.dumps(body)` on the body before inserting it. On error status codes (not 200/201/204), replaces body with http_message. Also owns the 409 CONFLICT mapping (see below).
 - `classifier.py` — `varDump(value, description, dump_type)` for debug printing, `pretty_print_sql()` collapses whitespace for readable SQL logs.
 - `pymysql/` — Vendored MySQL driver (do not modify)
 
@@ -23,6 +23,46 @@ AWS Lambda function serving a REST API backed by MySQL (RDS) via API Gateway pro
 - Connection is established at module load time (Lambda cold start), stored in `connection` dict keyed by database name
 - Two databases configured: `darwin` (production), `darwin_dev` (testing)
 - Uses pymysql with credentials from environment variables
+
+## Error Status Contract
+
+Every failure used to be a 500 whose body was the raw pymysql string, so a client
+could not tell "you picked a taken name" from "the database is broken" without
+regexing prose. **Req #3059** carved out the conflicts:
+
+| MySQL errno | Meaning | Status |
+|---|---|---|
+| 1062 | Duplicate entry — UNIQUE / PRIMARY KEY collision | **409** |
+| 1451 | Cannot delete or update a parent row (FK RESTRICT) | **409** |
+| 1452 | Cannot add or update a child row (FK target missing) | **409** |
+| everything else | 1054 unknown column, 1364 no default, 2013 lost connection, … | 500 |
+
+The line is the promise a 409 makes: *retrying with different data can succeed*.
+Do not widen `INTEGRITY_ERRNOS` without checking a new errno keeps it — a client
+that retries on a 409 it can never satisfy loops forever.
+
+409 body (single-encoded JSON **object**, unlike every other error status, which
+sends a bare JSON string):
+
+```json
+{"error": "CONFLICT", "errno": 1062,
+ "constraint": "uq_instructions_name", "table": "instructions",
+ "message": "HTTP PUT SQL FAILED: 1062 Duplicate entry 'x' for key 'instructions.uq_instructions_name'"}
+```
+
+- `constraint` is **unqualified** — MySQL 8 reports the key as `table.index`, 5.7
+  as `index`; the qualifier is stripped so it matches the name the DDL declares.
+  Every table has a `PRIMARY`, so it only identifies anything paired with `table`.
+- `table` comes from the handler, not from parsing the driver message.
+- `message` is byte-identical to what the 500 path used to send. That is a
+  compatibility promise: `darwin-mcp/darwin_rest/client.py` falls back to
+  substring-matching it, and log greps written against the 500 era still work.
+
+Applies to `rest_post.py` (single + bulk), `rest_put.py`, `rest_delete.py`
+(single + bulk). **NOT** to rest_post's post-insert read-back failure — that 500
+means the INSERT already committed, and `darwin-mcp`'s `post_junction` reads it
+that way. Helpers + boundary are unit-tested in `tests/test_unit_conflict.py`
+(no DB needed).
 
 ## CRUD Modules
 

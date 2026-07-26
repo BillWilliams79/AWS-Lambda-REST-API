@@ -12,6 +12,10 @@ locked here because both are invisible until something depends on them:
    regression: `test_swarm_starts.py` documents the same read-back assumption,
    and the fix belongs in `rest_post.py`, not here.
 
+   This 500 stayed a 500 through req #3059's 409 mapping, deliberately: 1054 is
+   not an integrity errno, and darwin-mcp's `post_junction` reads exactly this
+   response as "the row IS committed, go read it back".
+
 2. **An ARRAY body works.** `_rest_post_bulk` does no read-back, so it returns
    201 `{"inserted": N}`. That is the ONLY sound insert path for this table and
    the one `Darwin/src/Agents/actions/instructionsApi.js` uses for every link,
@@ -29,6 +33,7 @@ from conftest import extract_id
 
 
 def _err(response):
+    """A dict for 409 CONFLICT (req #3059), a bare string for any other error."""
     return json.loads(response['body'])
 
 
@@ -123,7 +128,14 @@ class TestAgentInstructionsInsert:
         rows = _links(db_connection, agent)
         assert [r['instruction_fk'] for r in rows] == [instruction]
 
-    def test_duplicate_link_is_500_with_1062(self, invoke, registry):
+    def test_duplicate_link_is_409_conflict(self, invoke, registry):
+        """req #3059: the bulk INSERT path reports a composite-PK collision.
+
+        `constraint` is 'PRIMARY' — which every table has — so it only identifies
+        anything paired with `table`. That is exactly how the UI reads it, and
+        why `table` is sourced from the handler rather than parsed out of the
+        driver's `'agent_instructions.PRIMARY'`.
+        """
         agent = registry['agent']('dupe')
         instruction = registry['instruction']('dupe-a')
         body = [{'agent_fk': agent, 'instruction_fk': instruction, 'sort_order': 1}]
@@ -131,18 +143,21 @@ class TestAgentInstructionsInsert:
         assert invoke('POST', '/darwin_dev/agent_instructions',
                       body=body)['statusCode'] == 201
         resp = invoke('POST', '/darwin_dev/agent_instructions', body=body)
-        assert resp['statusCode'] == 500
-        message = _err(resp)
-        assert '1062' in message
-        assert 'agent_instructions.PRIMARY' in message
+        assert resp['statusCode'] == 409
+        payload = _err(resp)
+        assert payload['errno'] == 1062
+        assert payload['constraint'] == 'PRIMARY'
+        assert payload['table'] == 'agent_instructions'
 
-    def test_bad_foreign_key_is_500_with_1452(self, invoke, registry):
+    def test_bad_foreign_key_is_409_conflict(self, invoke, registry):
         instruction = registry['instruction']('badfk-a')
         resp = invoke('POST', '/darwin_dev/agent_instructions', body=[
             {'agent_fk': 999999999, 'instruction_fk': instruction, 'sort_order': 1},
         ])
-        assert resp['statusCode'] == 500
-        assert '1452' in _err(resp)
+        assert resp['statusCode'] == 409
+        payload = _err(resp)
+        assert payload['errno'] == 1452
+        assert payload['table'] == 'agent_instructions'
 
 
 class TestAgentInstructionsDelete:
