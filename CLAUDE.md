@@ -24,6 +24,82 @@ AWS Lambda function serving a REST API backed by MySQL (RDS) via API Gateway pro
 - Two databases configured: `darwin` (production), `darwin_dev` (testing)
 - Uses pymysql with credentials from environment variables
 
+## Row Ownership — three registries, every table in exactly one (req #3122)
+
+`auth_utils.py` answers *who owns this row* for the whole gateway:
+
+| Registry | Applies when | Predicate injected |
+|---|---|---|
+| `CREATOR_FK_TABLES` | the table carries `creator_fk` | `creator_fk = <sub>` |
+| `PROFILE_TABLE` | `profiles` — the row IS the user | `id = <sub>` |
+| `JUNCTION_OWNERSHIP` | the table has **no** `creator_fk` | `<col> IN (SELECT id FROM <parent> WHERE creator_fk = <sub>)` |
+
+Thirteen tables are in the third group and had **no scoping at all** before
+req #3122: an unscoped `GET /darwin/pipeline_step_deps` returned every user's
+rows, and PUT/DELETE by id fell into the unscoped `else` branch of `rest_put.py` /
+`rest_delete.py`. Authorization is now DERIVED from the parent that owns the row
+rather than stored on it — a `creator_fk` column here would be a second copy of
+ownership that MySQL cannot keep in agreement with the first.
+
+- **GET / PUT / DELETE** append `junction_scope_clause(table)` to the WHERE clause,
+  so a foreign row simply is not there: 404 on a read or delete, 204 on a PUT.
+- **POST and PUT** additionally call `junction_write_guard()` (rest_api_utils),
+  which runs `check_junction_parent_ownership()` BEFORE the statement — one SELECT
+  per distinct parent table, never per row, so a 3,000-row `map_coordinates`
+  import costs one extra query. It returns before opening a cursor for tables it
+  does not apply to.
+- The unauthenticated **403 gate in `handler.py`** covers these tables too: with
+  no identity there is nothing to derive scoping from.
+
+**Scoping the WHERE clause is not sufficient on a PUT, and this bit.** The
+predicate proves ownership of the row's parent *before* the statement, while the
+`SET` clause is built from every key in the body — including the scope column. So
+`PUT [{"id": <my edge>, "step_fk": <their step>}]` passed the predicate on its
+current parent and then handed the row over; `dep_step_fk` was worse, because
+`ON DELETE RESTRICT` then made the victim's step undeletable. That is why PUT
+carries the write guard too (`require_scope=False` there — on an UPDATE an absent
+scope column means *unchanged*). `rest_put` also force-overrides `creator_fk` from
+the token exactly as `rest_post` does, so a body cannot push a row into another
+account.
+
+**Parent ids are canonicalized before comparison.** Every scope/verify column is
+an INT FK and this RDS instance runs a **non-strict `sql_mode`**
+(`NO_ENGINE_SUBSTITUTION` — no `STRICT_TRANS_TABLES`), so MySQL truncates
+`'9825abc'` to 9825 silently rather than rejecting it. Comparing the request's raw
+text against the database's canonical id made every non-canonical form
+(`9825.0`, `' 9825'`, `'09825'`, …) read as "row does not exist", fall through to
+the FK, and get coerced back and written. The verdict is now derived from the rows
+the database returned, never from the request, and `_reference_value()`
+canonicalizes at the door.
+
+That canonicalizer matches **MySQL's** integer grammar, not Python's, and the
+distinction is exploitable: `int()` accepts PEP 515 underscores and Unicode
+digits, so `int('9825_0')` is 98250 — nonexistent, waved through to the FK — while
+MySQL truncates at the `_` and writes the row onto 9825. Hence an explicit
+`[+-]?[0-9]+` (**`[0-9]`, never `\d`** — `\d` matches the Unicode digits MySQL
+reads as 0; likewise never `str.isdigit()`) and an ASCII-only whitespace strip.
+Anything else is a 400 before any lookup.
+
+**A DELETE body's keys are SQL identifiers and are now validated.** They are
+interpolated into the WHERE clause, so `{"id = 1 OR 1=1 OR id": 1}` rendered as
+`WHERE id = 1 OR 1=1 OR id = %s AND creator_fk = %s` — parsed as `id=1 OR TRUE OR
+(…)` because AND binds tighter than OR, with the placeholder and argument counts
+still balanced. Measured against darwin_dev: it deleted every row in the table and
+cancelled the junction predicate *and* the pre-existing `creator_fk` scoping alike.
+`_unknown_columns()` now checks every key against `DESC {table}` — the same check
+`rest_get_table` has always made — and 400s otherwise. It raises rather than
+swallowing a `pymysql.Error`, and is called from inside the statement's own try
+block, so an unreachable database stays a 500 instead of becoming a misleading 400.
+
+`verify` columns are checked on INSERT only, never ANDed into a read — `dep_step_fk`
+is NULL on a wall-clock gate row, and a read predicate would hide every time gate
+in a plan.
+
+**Adding a table with no `creator_fk` obliges you to register it.** Conformance
+tests in `tests/test_unit_junction_scoping.py` derive the set from `schema.sql`
+and fail otherwise; `UNSCOPED_TABLES` is the written-down exemption set and is
+empty.
+
 ## Error Status Contract
 
 Every failure used to be a 500 whose body was the raw pymysql string, so a client
@@ -36,6 +112,14 @@ regexing prose. **Req #3059** carved out the conflicts:
 | 1451 | Cannot delete or update a parent row (FK RESTRICT) | **409** |
 | 1452 | Cannot add or update a child row (FK target missing) | **409** |
 | everything else | 1054 unknown column, 1364 no default, 2013 lost connection, … | 500 |
+
+**403 is not on this table and that is the point (req #3122).** It is not a MySQL
+outcome at all — it is the gateway refusing before the statement runs, when a
+write names a parent row that *exists and belongs to another creator*. A parent
+that does not exist stays a **409/1452**: absent is not the same as foreign, and
+retrying a typo'd FK with different data genuinely can succeed, which is the
+promise 409 makes and 403 does not. The body is a bare `"FORBIDDEN"` — the log
+carries which ids were refused, the response never does.
 
 The line is the promise a 409 makes: *retrying with different data can succeed*.
 Do not widen `INTEGRITY_ERRNOS` without checking a new errno keeps it — a client

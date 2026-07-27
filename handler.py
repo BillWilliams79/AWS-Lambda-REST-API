@@ -11,7 +11,8 @@ from rest_get_table import rest_get_table
 from rest_put import rest_put
 from rest_post import rest_post
 from rest_delete import rest_delete
-from auth_utils import get_authenticated_user, CREATOR_FK_TABLES, PROFILE_TABLE
+from auth_utils import (get_authenticated_user, CREATOR_FK_TABLES,
+                        JUNCTION_OWNERSHIP, PROFILE_TABLE)
 
 
 #
@@ -116,8 +117,16 @@ def rest_api_from_table(event, db_info):
     # Extract authenticated user from Cognito authorizer claims
     authenticated_user = get_authenticated_user(event)
 
-    # Block unauthenticated access to user-scoped tables
-    if table in CREATOR_FK_TABLES or table == PROFILE_TABLE:
+    # Block unauthenticated access to user-scoped tables.
+    #
+    # JUNCTION_OWNERSHIP tables join in (req #3122). Their scoping is derived
+    # from a parent's creator_fk, so with no identity there is nothing to derive
+    # it FROM — every WHERE clause below would simply omit the predicate and hand
+    # back every user's rows. API Gateway's Cognito authorizer should mean this
+    # never fires; it is the second lock, for the day the authorizer is
+    # misconfigured on one route.
+    if (table in CREATOR_FK_TABLES or table == PROFILE_TABLE
+            or table in JUNCTION_OWNERSHIP):
         if authenticated_user is None:
             print(f'Auth: unauthenticated request to user table {table}')
             return compose_rest_response(403, '', 'FORBIDDEN')

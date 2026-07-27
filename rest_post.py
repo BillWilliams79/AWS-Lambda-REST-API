@@ -1,7 +1,7 @@
 import pymysql
 import json
 from rest_api_utils import (compose_rest_response, compose_conflict_response,
-                            error_detail, integrity_errno)
+                            error_detail, integrity_errno, junction_write_guard)
 from classifier import varDump, pretty_print_sql
 from auth_utils import CREATOR_FK_TABLES, PROFILE_TABLE
 
@@ -20,6 +20,15 @@ def rest_post(post_method, conn, database, table, body, authenticated_user=None)
             body['creator_fk'] = authenticated_user
         elif table == PROFILE_TABLE:
             body['id'] = authenticated_user
+
+    # req #3122 — a table with no creator_fk has nothing to override, so its
+    # INSERT is authorized by checking the parents it references instead. Without
+    # this, `POST /darwin/pipeline_step_deps {"step_fk": <somebody else's step>}`
+    # injected a dependency gate into another user's plan.
+    refusal = junction_write_guard(conn, table, [body], authenticated_user,
+                                   post_method)
+    if refusal is not None:
+        return refusal
 
     varDump(body, 'body inside rest_post')
     # Assemble list of keys and values for use in SQL
@@ -228,6 +237,16 @@ def _rest_post_bulk(post_method, conn, table, body_list, authenticated_user):
     if authenticated_user is not None and table in CREATOR_FK_TABLES:
         for item in body_list:
             item['creator_fk'] = authenticated_user
+
+    # req #3122 — EVERY row is checked, not a sample. The statement is one
+    # multi-value INSERT that lands or rolls back as a unit, so a single foreign
+    # reference anywhere in the batch must refuse the whole batch. `map_coordinates`
+    # imports arrive here thousands of rows at a time; the check still costs one
+    # SELECT, because it groups the distinct parent ids across all of them.
+    refusal = junction_write_guard(conn, table, body_list, authenticated_user,
+                                   post_method)
+    if refusal is not None:
+        return refusal
 
     # All items must have the same keys (same columns)
     keys = list(body_list[0].keys())
