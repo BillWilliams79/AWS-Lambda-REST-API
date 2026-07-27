@@ -4,7 +4,7 @@ Authentication utilities for Lambda-Rest.
 
 Extracts the authenticated user identity from API Gateway Cognito authorizer
 claims and defines how each table is scoped to that user. There are exactly
-three answers, and every table in the schema has one:
+three answers to "WHOSE ROW IS THIS", and every table in the schema has one:
 
   * `CREATOR_FK_TABLES` — the table carries `creator_fk`; scoping is a column
     comparison.
@@ -15,6 +15,12 @@ three answers, and every table in the schema has one:
 A table in none of the three is unscoped, which means every user's rows on every
 verb. `tests/test_unit_junction_scoping.py` and darwin-mcp's
 `test_validation_full.py` both fail if `schema.sql` grows one.
+
+Owning the ROW is not the whole of authorization, which is what req #3125 adds.
+A fourth registry, `CREATOR_TABLE_REFERENCES`, answers the separate question
+"WHOSE ROW DOES THIS ROW POINT AT" for the tables in the first group. Scoping a
+row to its creator says nothing about the rows it REFERENCES, and every one of
+the three answers above is silent on that — which is the whole vulnerability.
 """
 
 import re
@@ -39,6 +45,119 @@ _SQL_SPACE = ' \t'
 # of the DATA and nothing enforces it; an explicit-id insert or a seeded import
 # could put a row at the boundary at any time.
 _INT_MIN, _INT_MAX = -2 ** 31, 2 ** 31 - 1
+
+
+# A MySQL identifier as `rest_post`/`rest_put` may safely interpolate one: the
+# unquoted identifier charset and nothing else. See `check_body_keys` below for
+# why a body key has to be held to it.
+_PLAIN_IDENTIFIER_RE = re.compile(r'[A-Za-z0-9_$]+')
+
+
+def check_body_keys(table, bodies):
+    """`(status, message)` when a body's KEYS cannot be trusted, else None.
+
+    A body's keys become SQL IDENTIFIERS: `rest_post` interpolates them into the
+    INSERT column list and `rest_put` into the SET clause, raw. Every other check
+    in this file then reads those same keys back out of the dict with
+    `body.get('area_fk')` — an exact Python string match.
+    **MySQL does not match column names that way, and the gap between the two is
+    an authorization bypass** (req #3125; the same trick defeated req #3122's
+    junction registry, which is why this is applied to every table rather than
+    the registered ones).
+
+    Measured against darwin_dev, every one of these wrote `tasks.area_fk` while
+    `body.get('area_fk')` returned None, so the ownership guard saw no reference
+    at all and waved the write through with a 200:
+
+        {"AREA_FK": n}        column names are CASE-INSENSITIVE in MySQL
+        {"Area_Fk": n}
+        {"`area_fk`": n}      backticks are quoting syntax, stripped by the parser
+        {"area_fk ": n}       trailing space is just token separation
+        {"area_fk/*x*/": n}   an inline comment the parser removes
+
+    The last one is why this is a CHARSET restriction and not a normalization
+    routine: no amount of case-folding and stripping can enumerate everything
+    MySQL's lexer discards, and each miss is silent. Constraining the key to
+    `[A-Za-z0-9_$]+` leaves case as the only variance MySQL still has, which the
+    callers of this module then handle explicitly.
+
+    The second rule is the one a normalizer alone would have missed. Two keys
+    that differ only in case name the SAME column, MySQL allows a column to be
+    assigned twice in one UPDATE, and the LAST assignment wins:
+
+        PUT [{"id": <mine>, "test_plan_fk": <my plan>,     <- the guard checks this
+                            "TEST_PLAN_FK": <their plan>}] <- the SET clause applies this
+
+    A guard that merely matched case-insensitively would look up whichever key it
+    found first, approve, and green-light the opposite write. So a collision is
+    refused outright rather than resolved — it is never a legitimate body.
+
+    Nothing legitimate is lost: every column in `schema.sql` is
+    `[a-z0-9_]`, and a key outside that charset could only ever have been a typo,
+    a SQL error, or an injection attempt. `rest_delete` already holds its body
+    keys to the real column list for exactly this reason (req #3122).
+    """
+    for body in bodies:
+        if not isinstance(body, dict):
+            return (400, 'BAD REQUEST')
+        seen = {}
+        for key in body:
+            if not isinstance(key, str) or not _PLAIN_IDENTIFIER_RE.fullmatch(key):
+                print(f"Auth: {table} write with a key that is not a plain column "
+                      f"name: {key!r} — it would reach MySQL as an identifier "
+                      "spelled differently from the one this gateway checked")
+                return (400, 'BAD REQUEST')
+            folded = key.lower()
+            if folded in seen:
+                print(f"Auth: {table} write naming the same column twice as "
+                      f"{seen[folded]!r} and {key!r} — MySQL applies the last one, "
+                      "so any check of the first would be meaningless")
+                return (400, 'BAD REQUEST')
+            seen[folded] = key
+    return None
+
+
+def body_column(body, column):
+    """The value a body carries for `column`, matched the way MySQL matches it.
+
+    Column names are case-insensitive, so `{"AREA_FK": 5}` names `area_fk`.
+    `check_body_keys` has already refused any body where two keys could both
+    match, so at most one can.
+
+    Returns `(present, value)` rather than just the value: `None` is a meaningful
+    VALUE here (SQL NULL) and must not be confused with "the caller did not
+    mention this column", which on an UPDATE means *unchanged*.
+
+    `column` is folded too. Every name in the registries is already lowercase, so
+    this changes nothing today — but a helper whose whole job is "match a column
+    name the way MySQL does" that then compared its OWN argument case-sensitively
+    would be a trap set for exactly the bug it exists to prevent.
+    """
+    column = column.lower()
+    if column in body:
+        return True, body[column]
+    for key, value in body.items():
+        if isinstance(key, str) and key.lower() == column:
+            return True, value
+    return False, None
+
+
+def force_column(body, column, value):
+    """Set `column` to `value`, replacing whatever spelling the body used.
+
+    `body['creator_fk'] = <sub>` alone is not enough. `PUT [{"id": <my task>,
+    "CREATOR_FK": "<their sub>"}]` names the same column to MySQL but not to
+    Python, so the override missed it, the `creator_fk = %s` predicate matched on
+    the row's CURRENT owner, and the SET clause then handed the row to the victim
+    — verified against darwin_dev, a row given away through a 200. On INSERT the
+    same body instead produced MySQL 1110 ("column specified twice") as a 500,
+    because the override ADDED a second spelling rather than replacing the first.
+    """
+    column = column.lower()
+    for key in [k for k in body
+                if isinstance(k, str) and k.lower() == column and k != column]:
+        del body[key]
+    body[column] = value
 
 
 def get_authenticated_user(event):
@@ -265,6 +384,175 @@ JUNCTION_OWNERSHIP = {
 UNSCOPED_TABLES = frozenset()
 
 
+# ---------------------------------------------------------------------------
+# Outbound references FROM a creator_fk-bearing table (req #3125)
+# ---------------------------------------------------------------------------
+#
+# THE HOLE THIS CLOSES — the GRIEF-LOCK. `JUNCTION_OWNERSHIP` above answers "who
+# owns this row" for tables that cannot answer it themselves. This registry
+# answers a different question for the tables that CAN: who owns the rows this
+# row POINTS AT.
+#
+# A table with `creator_fk` is scoped correctly on every verb, and that is
+# exactly what makes the attack work. The attacker inserts THEIR OWN row —
+# `creator_fk` is forced from their token, so it passes every check in this file
+# — carrying a `*_fk` that names a VICTIM's parent. Nothing ever looked at the
+# target. Two consequences, and the second is the one that has no recovery:
+#
+#   * ATTACHMENT. The attacker's row is now a child of the victim's row. On the
+#     22 columns below that are CASCADE or SET NULL, that is the whole of it: a
+#     cross-tenant write, the same refusal req #3122 makes for junctions.
+#
+#   * GRIEF-LOCK. On the 14 columns that are ON DELETE RESTRICT, the victim can
+#     no longer delete their own parent. `DELETE /darwin/test_plans?id=<mine>`
+#     answers 409 naming `fk_test_runs_plan` — a constraint held by a `test_runs`
+#     row the victim cannot see (it is scoped to the attacker), cannot list, and
+#     cannot delete. There is no self-service recovery: every tool the victim has
+#     is `creator_fk`-scoped away from the row pinning them. A permanent,
+#     unattributable denial of service on a single row, for the price of one
+#     POST.
+#
+# WHY IT IS ONLY LATENT TODAY. Darwin has one Cognito account, so no second
+# creator exists to be either attacker or victim. That is a property of the
+# DEPLOYMENT, not of the code, and it stops being true the moment a second
+# account is created. It is the only reason this shipped after req #3122 rather
+# than with it.
+#
+# THE SHAPE. `{table: ((column, parent_table), ...)}` — every `*_fk` on a
+# `creator_fk`-bearing table whose target is ALSO creator-scoped. There is no
+# `scope` entry and no `fk_enforced` flag, and both absences are load-bearing:
+#
+#   * No scope column. Ownership of the row is settled by `creator_fk`, forced
+#     from the token by rest_post/rest_put. Every column here is a `verify`
+#     entry in `JUNCTION_OWNERSHIP` terms — checked when PRESENT, never required.
+#     Absent means "not set" on INSERT and "unchanged" on UPDATE; a NOT NULL
+#     column that is genuinely missing is the database's 1364 to report, not an
+#     authorization answer.
+#
+#   * No `fk_enforced` flag. Every column here was DERIVED from a real
+#     `FOREIGN KEY` declaration in `schema.sql`, so "the parent does not exist"
+#     always falls through to a 409/1452 — `priority_card_order`'s exception
+#     cannot arise. `test_every_column_is_backed_by_a_real_foreign_key` re-derives
+#     that from the DDL rather than trusting this sentence.
+#
+# COLUMNS DELIBERATELY NOT HERE. `creator_fk` itself (forced from the token, and
+# the only FK on these tables that targets `profiles`), and any FK whose target
+# is NOT creator-scoped — there is nobody to steal from. As of migration 076
+# there are no such columns: all 36 non-`creator_fk` FKs on the 38
+# creator-scoped tables target creator-scoped tables.
+#
+# ADDING A COLUMN. You do not — `test_every_cross_tenant_fk_column_is_registered`
+# re-derives the whole set from `schema.sql` on every run, so a new FK column
+# fails the build until it is registered or written into
+# `UNCHECKED_CREATOR_REFERENCES` below. That is the same call req #3122 made for
+# `JUNCTION_OWNERSHIP`, and for the same reason: the previous audit of this class
+# reported "test_runs.test_plan_fk plus ten siblings" and the real count is 36.
+# A hand-maintained list of a security boundary drifts silently; a derived one
+# cannot.
+#
+# Comments give each column's ON DELETE action: RESTRICT is grief-lock capable
+# outright, CASCADE and SET NULL are cross-tenant attachment.
+
+CREATOR_TABLE_REFERENCES = {
+    'agent_telemetry_row_docs': (
+        ('row_fk', 'agent_telemetry_rows'),                  # CASCADE
+    ),
+    'agent_telemetry_rows': (
+        ('run_fk', 'agent_telemetry_runs'),                  # CASCADE
+    ),
+    'agent_telemetry_runs': (
+        ('machine_fk', 'machines'),                          # RESTRICT
+    ),
+    'areas': (
+        ('domain_fk', 'domains'),                            # CASCADE
+    ),
+    'branches': (
+        ('project_fk', 'build_projects'),                    # CASCADE
+        ('parent_build_fk', 'builds'),                       # SET NULL
+    ),
+    'build_projects': (
+        ('trunk_branch_fk', 'branches'),                     # SET NULL
+    ),
+    'builds': (
+        ('branch_fk', 'branches'),                           # CASCADE
+    ),
+    'categories': (
+        ('project_fk', 'projects'),                          # CASCADE
+    ),
+    'customer_releases': (
+        ('customer_fk', 'customers'),                        # RESTRICT
+        ('build_fk', 'builds'),                              # CASCADE
+    ),
+    'dev_servers': (
+        ('session_fk', 'swarm_sessions'),                    # SET NULL
+        ('machine_fk', 'machines'),                          # RESTRICT
+    ),
+    'epics': (
+        ('category_fk', 'categories'),                       # RESTRICT
+    ),
+    'features': (
+        ('category_fk', 'categories'),                       # RESTRICT
+        ('epic_fk', 'epics'),                                # SET NULL
+    ),
+    'map_runs': (
+        ('map_route_fk', 'map_routes'),                      # SET NULL
+    ),
+    'pipeline_steps': (
+        ('pipeline_fk', 'pipelines'),                        # CASCADE
+    ),
+    'pipelines': (
+        ('machine_fk', 'machines'),                          # RESTRICT
+    ),
+    'recurring_tasks': (
+        ('area_fk', 'areas'),                                # CASCADE
+    ),
+    'requirements': (
+        ('project_fk', 'projects'),                          # SET NULL
+        ('category_fk', 'categories'),                       # RESTRICT
+        ('machine_fk', 'machines'),                          # RESTRICT
+        ('feature_fk', 'features'),                          # SET NULL
+    ),
+    'swarm_sessions': (
+        ('machine_fk', 'machines'),                          # RESTRICT
+    ),
+    'swarm_starts': (
+        ('machine_fk', 'machines'),                          # RESTRICT
+    ),
+    'swarm_undos': (
+        ('session_fk', 'swarm_sessions'),                    # SET NULL
+        ('swarm_start_fk_at_undo', 'swarm_starts'),          # SET NULL
+        ('req_id_at_undo', 'requirements'),                  # SET NULL
+    ),
+    'tasks': (
+        ('area_fk', 'areas'),                                # CASCADE
+        ('recurring_task_fk', 'recurring_tasks'),            # SET NULL
+    ),
+    'test_cases': (
+        ('category_fk', 'categories'),                       # RESTRICT
+    ),
+    'test_plans': (
+        ('category_fk', 'categories'),                       # RESTRICT
+    ),
+    'test_results': (
+        ('test_run_fk', 'test_runs'),                        # CASCADE
+        ('test_case_fk', 'test_cases'),                      # RESTRICT
+    ),
+    'test_runs': (
+        ('test_plan_fk', 'test_plans'),                      # RESTRICT
+    ),
+}
+
+# `(table, column)` pairs a future maintainer has decided NOT to ownership-check.
+# Empty, and the same call as `UNSCOPED_TABLES`: an exemption has to be written
+# here and reviewed rather than achieved by quietly omitting a column, because
+# omission and exemption are indistinguishable in a hand-written registry.
+#
+# The bar is `priority_card_order`'s: an exemption is right only where checking
+# would refuse something legitimate. A pointer to a row the caller does not own,
+# on a column the database enforces, is not that.
+UNCHECKED_CREATOR_REFERENCES = frozenset()
+
+
 def junction_parent_columns(table):
     """[(column, parent_table), ...] — every reference that must resolve to a row
     the caller owns before a write to `table` is allowed. [] for other tables.
@@ -275,6 +563,40 @@ def junction_parent_columns(table):
     if entry is None:
         return []
     return [entry['scope']] + list(entry.get('verify', ()))
+
+
+def creator_table_reference_columns(table):
+    """[(column, parent_table), ...] a write to a creator_fk table must own (#3125).
+
+    [] for anything not in `CREATOR_TABLE_REFERENCES`. None of these is a scope
+    column: the row's own owner is `creator_fk`, forced from the token, so every
+    entry here is checked WHEN PRESENT and never required.
+    """
+    return list(CREATOR_TABLE_REFERENCES.get(table, ()))
+
+
+def referenced_parent_columns(table):
+    """Every (column, parent_table) a write to `table` must own, either registry.
+
+    The two are mutually exclusive by construction — `JUNCTION_OWNERSHIP` holds
+    tables with no `creator_fk`, `CREATOR_TABLE_REFERENCES` holds tables that have
+    one — and `test_the_two_registries_never_name_the_same_table` keeps it that
+    way, so the order of these branches can never matter.
+    """
+    if table in JUNCTION_OWNERSHIP:
+        return junction_parent_columns(table)
+    return creator_table_reference_columns(table)
+
+
+def _scope_column(table):
+    """The column that carries ownership of a row in `table`, or None.
+
+    Only a `JUNCTION_OWNERSHIP` table has one. A `creator_fk` table's ownership is
+    a column comparison, so its references are all optional — which is the one
+    behavioural difference between the two registries.
+    """
+    entry = JUNCTION_OWNERSHIP.get(table)
+    return entry['scope'][0] if entry else None
 
 
 def junction_scope_clause(table):
@@ -352,9 +674,193 @@ def _reference_value(raw):
     return str(number)
 
 
+def _written_value(body, column):
+    """What the STATEMENT will put in `column` — which is what must be checked.
+
+    Two ways this differs from `body.get(column)`, both of them cases where the
+    check and the writer would otherwise read the same body differently:
+
+      * **Case.** `body_column` resolves the name the way MySQL does.
+      * **The empty string.** `''` is NOT the NULL sentinel — `rest_post` and
+        `rest_put` map only the literal `"NULL"` to SQL NULL, so `''` is passed
+        through and this instance's non-strict `sql_mode` coerces it to **0** in
+        an INT column. Reading it as "names nothing" left a value the statement
+        writes entirely unchecked. Harmless in the tables that declare a FK — no
+        `id = 0` row exists, so it fails 1452 and the caller sees the same 409
+        either way — but `priority_card_order` declares no FK at all, so on a PUT
+        it wrote a `domain_id = 0` row that is invisible to everyone until
+        AUTO_INCREMENT reaches 0, which is the exact hazard req #3122 refused
+        `'\\n9825'` to prevent. Checked as 0 so the two layers agree.
+
+    A column the body does not mention returns None: on an UPDATE that means
+    *unchanged*, and it must not be confused with an explicit NULL.
+    """
+    present, value = body_column(body, column)
+    if not present:
+        return None
+    return '0' if value == '' else value
+
+
+def plan_parent_lookups(table, bodies, require_scope=True):
+    """`(lookups, refusal)` — WHAT to ask the database, decided without asking it.
+
+    `lookups` is `{parent_table: [canonical id, ...]}`, de-duplicated and in first
+    -seen order: one entry per distinct PARENT TABLE across every body, never per
+    row and never per column. `refusal` is `(status, message)` when the bodies are
+    malformed enough to answer without a lookup at all, else None.
+
+    Split out of the check (req #3125) so a caller can discover that there is
+    NOTHING TO LOOK UP before opening a cursor. That is not a micro-optimisation:
+    `CREATOR_TABLE_REFERENCES` covers `tasks`, `areas` and `requirements` — the
+    gateway's hottest tables — and the overwhelming majority of their writes name
+    no parent at all (`PUT /darwin/tasks [{"id": 5, "done": 1}]`). Opening a
+    cursor for those would put the request's first cursor acquisition ahead of the
+    INSERT, so a connection that dies on `cursor()` would fail with nothing
+    written and nothing to roll back — the shape of failure
+    `tests/test_unit_error_detail_wiring.py` exists for. (That file cannot pin
+    THIS property: every case in it passes `authenticated_user=None`, so the
+    guard returns at its first line. The `ExplodingConn` cases in
+    `tests/test_unit_junction_scoping.py` are what actually hold it.)
+
+    Pure: no cursor, no database, no I/O.
+    """
+    columns = referenced_parent_columns(table)
+    if not columns:
+        return {}, None
+
+    scope_column = _scope_column(table)
+    lookups = {}
+    for body in bodies:
+        if not isinstance(body, dict):
+            return {}, (400, 'BAD REQUEST')
+        try:
+            # `body_column`, not `body.get`: MySQL resolves a column name
+            # case-insensitively, so `{"AREA_FK": n}` writes `area_fk` while
+            # `body.get('area_fk')` returns None — a reference the statement
+            # carries and this check never saw. `check_body_keys` runs first and
+            # has already refused the spellings a case-fold cannot cover.
+            named = {column: _reference_value(_written_value(body, column))
+                     for column, _ in columns}
+        except ValueError as e:
+            # Not an integer id. MySQL would have truncated it silently under
+            # this instance's non-strict sql_mode; say no instead.
+            print(f"Auth: {table} write with a non-integer parent reference: {e}")
+            return {}, (400, 'BAD REQUEST')
+
+        # Only a junction has a scope column, and only INSERT requires it. A
+        # creator_fk table's ownership is settled by its own column, so every
+        # reference it declares is optional on both verbs.
+        if require_scope and scope_column is not None and named[scope_column] is None:
+            print(f"Auth: {table} write with no {scope_column} — ownership "
+                  "cannot be established")
+            return {}, (400, 'BAD REQUEST')
+
+        for column, parent in columns:
+            value = named[column]
+            if value is None:
+                continue
+            ids = lookups.setdefault(parent, [])
+            if value not in ids:
+                ids.append(value)
+
+    return lookups, None
+
+
+def resolve_parent_lookups(cursor, table, lookups, authenticated_user):
+    """`(status, message)` when a planned lookup names a foreign row, else None.
+
+    One SELECT per distinct parent table. THE VERDICT IS DERIVED FROM THE ROWS THE
+    DATABASE RETURNED, never from the request's own values — see the comment on
+    the loop below; that distinction was itself a shipped bug once.
+    """
+    fk_enforced = JUNCTION_OWNERSHIP.get(table, {}).get('fk_enforced', True)
+
+    for parent, ids in lookups.items():
+        # Selecting creator_fk rather than filtering on it is what separates
+        # "somebody else's row" from "no row at all" — the distinction the
+        # docstring above turns on. An absent id simply is not in the result.
+        placeholders = ', '.join(['%s'] * len(ids))
+        cursor.execute(
+            f"SELECT id, creator_fk FROM {parent} WHERE id IN ({placeholders})",
+            tuple(ids))
+        # Tolerate either cursor class. db_connection.py opens a plain (tuple)
+        # cursor today, but tests/conftest.py builds a DictCursor connection, so
+        # both shapes live in this repo — and a KeyError raised here is NOT a
+        # pymysql.Error, so it would escape the caller's guard.
+        #
+        # THE VERDICT IS DERIVED FROM THE ROWS THE DATABASE RETURNED, never from
+        # the request's own values. An earlier version keyed a dict on the DB's
+        # ids and then iterated the REQUEST's strings to decide — so any id whose
+        # text differed from MySQL's canonical form matched nothing, was read as
+        # "does not exist", and fell straight through to the FK, which coerced it
+        # back and wrote the row. `_reference_value` now canonicalizes as well;
+        # both halves are needed, because only this one is guaranteed to be
+        # comparing what the database actually said.
+        found = []
+        for row in cursor.fetchall():
+            if isinstance(row, dict):
+                found.append((str(row['id']), row['creator_fk']))
+            else:
+                found.append((str(row[0]), row[1]))
+
+        foreign = sorted(row_id for row_id, owner in found
+                         if owner != authenticated_user)
+        if foreign:
+            # Detail to the log, never to the client: the response body is a bare
+            # 'FORBIDDEN' so it cannot report back which ids were the problem.
+            print(f"Auth: refused {table} write referencing {parent} row(s) "
+                  f"{foreign} owned by another creator")
+            return (403, 'FORBIDDEN')
+
+        # A parent that does not exist is normally left to the FK (see the
+        # docstring). Where the table declares no FK, nothing would reject it, so
+        # it is refused here instead — otherwise the row sits invisible until
+        # AUTO_INCREMENT reaches that id and hands it to whoever gets there.
+        # Compared by COUNT, so a canonicalization slip cannot turn this into a
+        # false refusal of the caller's own row either.
+        if not fk_enforced and len(found) != len(ids):
+            present = {row_id for row_id, _ in found}
+            absent = sorted(i for i in ids if i not in present)
+            print(f"Auth: refused {table} write referencing {parent} row(s) "
+                  f"{absent} that do not exist ({table} declares no foreign "
+                  "key, so nothing else would reject them)")
+            return (403, 'FORBIDDEN')
+
+    return None
+
+
+def check_parent_ownership(cursor, table, bodies, authenticated_user,
+                           require_scope=True):
+    """Verify a write only references rows the caller owns — EITHER registry.
+
+    The single entry point behind both halves of the rule:
+
+      * a `JUNCTION_OWNERSHIP` table, where the references ARE the ownership
+        (req #3122), and
+      * a `CREATOR_FK_TABLES` table listed in `CREATOR_TABLE_REFERENCES`, where
+        the row's own owner is settled but its targets were never checked
+        (req #3125 — the grief-lock).
+
+    Returns None when the write is allowed, or `(status_code, message)`.
+    """
+    if authenticated_user is None:
+        return None
+    lookups, refusal = plan_parent_lookups(table, bodies, require_scope)
+    if refusal is not None:
+        return refusal
+    if not lookups:
+        return None
+    return resolve_parent_lookups(cursor, table, lookups, authenticated_user)
+
+
 def check_junction_parent_ownership(cursor, table, bodies, authenticated_user,
                                     require_scope=True):
     """Verify a write to a junction/child table only references rows the caller owns.
+
+    The `JUNCTION_OWNERSHIP` half of `check_parent_ownership`, kept as its own
+    entry point because the two registries answer different questions and a
+    caller that means "junctions" should not silently start covering 25 more
+    tables. Returns None for a table in the other registry.
 
     Returns None when the write is allowed, or `(status_code, message)` to answer
     with. `rest_post` and `rest_put` turn that into a response.
@@ -401,90 +907,7 @@ def check_junction_parent_ownership(cursor, table, bodies, authenticated_user,
     test_bad_foreign_key_is_409_conflict`, which this function broke when it
     collapsed the two.
     """
-    if authenticated_user is None:
+    if table not in JUNCTION_OWNERSHIP:
         return None
-    entry = JUNCTION_OWNERSHIP.get(table)
-    if entry is None:
-        return None
-
-    scope_column, _ = entry['scope']
-
-    # parent table -> ordered, de-duplicated CANONICAL ids across every body
-    wanted = {}
-    for body in bodies:
-        if not isinstance(body, dict):
-            return (400, 'BAD REQUEST')
-        try:
-            named = {column: _reference_value(body.get(column))
-                     for column, _ in junction_parent_columns(table)}
-        except ValueError as e:
-            # Not an integer id. MySQL would have truncated it silently under
-            # this instance's non-strict sql_mode; say no instead.
-            print(f"Auth: {table} write with a non-integer parent reference: {e}")
-            return (400, 'BAD REQUEST')
-
-        if require_scope and named[scope_column] is None:
-            print(f"Auth: {table} write with no {scope_column} — ownership "
-                  "cannot be established")
-            return (400, 'BAD REQUEST')
-
-        for column, parent in junction_parent_columns(table):
-            value = named[column]
-            if value is None:
-                continue
-            ids = wanted.setdefault(parent, [])
-            if value not in ids:
-                ids.append(value)
-
-    for parent, ids in wanted.items():
-        # Selecting creator_fk rather than filtering on it is what separates
-        # "somebody else's row" from "no row at all" — the distinction the
-        # docstring above turns on. An absent id simply is not in the result.
-        placeholders = ', '.join(['%s'] * len(ids))
-        cursor.execute(
-            f"SELECT id, creator_fk FROM {parent} WHERE id IN ({placeholders})",
-            tuple(ids))
-        # Tolerate either cursor class. db_connection.py opens a plain (tuple)
-        # cursor today, but tests/conftest.py builds a DictCursor connection, so
-        # both shapes live in this repo — and a KeyError raised here is NOT a
-        # pymysql.Error, so it would escape the caller's guard.
-        #
-        # THE VERDICT IS DERIVED FROM THE ROWS THE DATABASE RETURNED, never from
-        # the request's own values. An earlier version keyed a dict on the DB's
-        # ids and then iterated the REQUEST's strings to decide — so any id whose
-        # text differed from MySQL's canonical form matched nothing, was read as
-        # "does not exist", and fell straight through to the FK, which coerced it
-        # back and wrote the row. `_reference_value` now canonicalizes as well;
-        # both halves are needed, because only this one is guaranteed to be
-        # comparing what the database actually said.
-        found = []
-        for row in cursor.fetchall():
-            if isinstance(row, dict):
-                found.append((str(row['id']), row['creator_fk']))
-            else:
-                found.append((str(row[0]), row[1]))
-
-        foreign = sorted(row_id for row_id, owner in found
-                         if owner != authenticated_user)
-        if foreign:
-            # Detail to the log, never to the client: the response body is a bare
-            # 'FORBIDDEN' so it cannot report back which ids were the problem.
-            print(f"Auth: refused {table} write referencing {parent} row(s) "
-                  f"{foreign} owned by another creator")
-            return (403, 'FORBIDDEN')
-
-        # A parent that does not exist is normally left to the FK (see the
-        # docstring). Where the table declares no FK, nothing would reject it, so
-        # it is refused here instead — otherwise the row sits invisible until
-        # AUTO_INCREMENT reaches that id and hands it to whoever gets there.
-        # Compared by COUNT, so a canonicalization slip cannot turn this into a
-        # false refusal of the caller's own row either.
-        if not entry.get('fk_enforced', True) and len(found) != len(ids):
-            present = {row_id for row_id, _ in found}
-            absent = sorted(i for i in ids if i not in present)
-            print(f"Auth: refused {table} write referencing {parent} row(s) "
-                  f"{absent} that do not exist ({table} declares no foreign "
-                  "key, so nothing else would reject them)")
-            return (403, 'FORBIDDEN')
-
-    return None
+    return check_parent_ownership(cursor, table, bodies, authenticated_user,
+                                  require_scope=require_scope)

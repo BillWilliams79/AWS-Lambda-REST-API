@@ -372,10 +372,45 @@ def test_a_missing_scope_column_is_400_not_403():
 
 def test_a_null_scope_column_is_400():
     cursor = FakeCursor(ROWS)
-    for empty in (None, 'NULL', ''):
+    for empty in (None, 'NULL'):
         assert check_junction_parent_ownership(
             cursor, 'pipeline_step_deps', [{'step_fk': empty}], 'victim') \
             == (400, 'BAD REQUEST')
+
+
+def test_an_empty_string_scope_column_is_CHECKED_as_row_zero_not_treated_as_null():
+    """`''` is not NULL on this wire, and req #3125 stopped pretending it was.
+
+    Only the literal `"NULL"` is mapped to SQL NULL by rest_post/rest_put; `''`
+    is passed straight through, and this instance's non-strict `sql_mode`
+    coerces it to **0** in an INT column. Reading it as "no value" therefore left
+    a value the statement writes completely unchecked — the same
+    check-says-one-thing-writer-does-another shape as the `'9825_0'` bug.
+
+    Answer moves from 400 to whatever row 0 turns out to be. Here `pipeline_steps`
+    has no row 0, so it falls through to the FK as a 409/1452 — still a refusal,
+    now for the true reason. On `priority_card_order`, which declares NO foreign
+    key, this is the difference between refusing and writing a permanently
+    invisible `domain_id = 0` row (see the test below).
+    """
+    cursor = FakeCursor(ROWS)
+    assert check_junction_parent_ownership(
+        cursor, 'pipeline_step_deps', [{'step_fk': ''}], 'victim') is None
+    assert cursor.queries[0][1] == ('0',), 'row 0 was not the id looked up'
+
+
+def test_an_empty_string_on_a_table_with_no_fk_is_refused_rather_than_written():
+    """The hazard the change above actually closes.
+
+    `priority_card_order` declares no foreign keys, so nothing downstream would
+    reject `domain_id = 0`. On a PUT (`require_scope=False`) the old reading of
+    `''` skipped the column entirely and let the row land, invisible to every
+    user until AUTO_INCREMENT reached 0.
+    """
+    cursor = FakeCursor({'domains': {5: 'victim'}})
+    assert check_junction_parent_ownership(
+        cursor, 'priority_card_order', [{'domain_id': '', 'task_id': 77}],
+        'victim', require_scope=False) == (403, 'FORBIDDEN')
 
 
 def test_one_query_per_parent_table_not_per_row():
@@ -442,17 +477,52 @@ def test_the_write_guard_opens_no_cursor_when_it_does_not_apply():
     ahead of the INSERT, so a connection that fails on `cursor()` would fail with
     nothing written and nothing to roll back — which is exactly how this
     regressed `test_unit_error_detail_wiring.py`'s bulk-rollback assertion.
+
+    req #3125 renamed the guard (it now covers `CREATOR_TABLE_REFERENCES` too) and
+    made this property harder to hold rather than easier: `requirements` IS
+    registered now, so "does not apply" can no longer be answered from the table
+    name alone. The guard plans its lookups purely — no cursor — and returns when
+    there is nothing to look up. Each case below is a different route to that:
+    a body naming no parent, an unauthenticated call, and a table in neither
+    registry.
     """
-    from rest_api_utils import junction_write_guard
+    from rest_api_utils import parent_reference_guard
 
     class ExplodingConn:
         def cursor(self):
             raise AssertionError('the guard opened a cursor it did not need')
 
-    assert junction_write_guard(
+    # Registered under req #3125, but this body names no parent column.
+    assert parent_reference_guard(
         ExplodingConn(), 'requirements', [{'title': 'x'}], 'victim', 'POST') is None
-    assert junction_write_guard(
+    # The hot path req #3125 must not slow down or break.
+    assert parent_reference_guard(
+        ExplodingConn(), 'tasks', [{'id': 5, 'done': 1}], 'victim', 'PUT',
+        require_scope=False) is None
+    # No identity — nothing to derive an answer from.
+    assert parent_reference_guard(
         ExplodingConn(), 'pipeline_step_deps', [{'step_fk': 1}], None, 'POST') is None
+    # In neither registry.
+    assert parent_reference_guard(
+        ExplodingConn(), 'profiles', [{'name': 'x'}], 'victim', 'PUT') is None
+
+
+def test_the_write_guard_answers_a_malformed_body_without_a_cursor():
+    """A 400 needs no lookup, so it must not need a cursor either.
+
+    `'9825_0'` is refused by `_reference_value` at the door — Python reads 98250,
+    MySQL reads 9825. Planning is pure, so that verdict is reached before the
+    guard ever asks the connection for anything.
+    """
+    from rest_api_utils import parent_reference_guard
+
+    class ExplodingConn:
+        def cursor(self):
+            raise AssertionError('the guard opened a cursor it did not need')
+
+    response = parent_reference_guard(
+        ExplodingConn(), 'test_runs', [{'test_plan_fk': '9825_0'}], 'victim', 'POST')
+    assert response['statusCode'] == 400
 
 
 def test_put_omitting_the_scope_column_is_not_a_400():
@@ -605,9 +675,18 @@ def test_the_verdict_comes_from_the_rows_the_database_returned():
     A verdict derived by iterating the REQUEST's ids can disagree with the
     database whenever the two spell an id differently. Deriving it from the
     returned rows cannot.
+
+    Follows the loop rather than the entry point: req #3125 split the check into
+    a pure planner and `resolve_parent_lookups`, which is now the one place any
+    verdict is reached — for the junctions here and for the 36 creator-table
+    columns alike. Asserting on the wrapper would have quietly stopped checking
+    anything.
     """
     import inspect
-    source = inspect.getsource(check_junction_parent_ownership)
+
+    from auth_utils import resolve_parent_lookups
+
+    source = inspect.getsource(resolve_parent_lookups)
     assert 'for row_id, owner in found' in source, \
         'the ownership verdict must be derived from the fetched rows'
 
