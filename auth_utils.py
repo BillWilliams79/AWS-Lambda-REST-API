@@ -64,6 +64,17 @@ CREATOR_FK_TABLES = frozenset({
     # Req #3096 — per-document actual-token rows (migration 074). Carries
     # creator_fk like its parent row; scope generic passthrough the same way.
     'agent_telemetry_row_docs',
+    # Req #3111 — Swarm Orchestration foundation (migration 076). epics,
+    # pipelines and pipeline_steps each carry a NOT NULL creator_fk, so
+    # membership here is not optional hardening — it is what makes the generic
+    # passthrough work at all: rest_post injects creator_fk only for tables in
+    # this set, so an unregistered table's INSERT fails outright (the column has
+    # no default), and its GET would return every user's rows unscoped.
+    #
+    # pipeline_step_requirements and pipeline_step_deps stay OUT: neither has a
+    # creator_fk. They inherit ownership from their step, the same call made for
+    # every other junction (swarm_start_sessions, agent_documents, ...).
+    'epics', 'pipelines', 'pipeline_steps',
 })
 
 PROFILE_TABLE = 'profiles'
