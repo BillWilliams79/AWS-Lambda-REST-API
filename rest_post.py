@@ -1,9 +1,10 @@
 import pymysql
 import json
 from rest_api_utils import (compose_rest_response, compose_conflict_response,
-                            error_detail, integrity_errno, junction_write_guard)
+                            error_detail, integrity_errno, parent_reference_guard)
 from classifier import varDump, pretty_print_sql
-from auth_utils import CREATOR_FK_TABLES, PROFILE_TABLE
+from auth_utils import (CREATOR_FK_TABLES, PROFILE_TABLE, check_body_keys,
+                        force_column)
 
 def rest_post(post_method, conn, database, table, body, authenticated_user=None):
 
@@ -14,19 +15,41 @@ def rest_post(post_method, conn, database, table, body, authenticated_user=None)
     if isinstance(body, list):
         return _rest_post_bulk(post_method, conn, table, body, authenticated_user)
 
-    # Override creator_fk with authenticated user from JWT
+    # req #3125 — the keys become SQL identifiers a few lines down, and every
+    # authorization check below reads them back as exact Python strings. MySQL
+    # matches a column name case-insensitively and its lexer discards backticks,
+    # whitespace and comments, so `{"AREA_FK": n}` wrote `tasks.area_fk` while
+    # every check saw no reference at all. Held to a plain identifier here so the
+    # set of columns checked IS the set of columns written.
+    refusal = check_body_keys(table, [body])
+    if refusal is not None:
+        return compose_rest_response(refusal[0], '', refusal[1])
+
+    # Override creator_fk with authenticated user from JWT.
+    # `force_column`, not plain assignment: it replaces any spelling the body
+    # already used, so `{"CREATOR_FK": "<their sub>"}` cannot survive alongside
+    # the injected `creator_fk` and reach MySQL as the same column twice.
     if authenticated_user is not None:
         if table in CREATOR_FK_TABLES:
-            body['creator_fk'] = authenticated_user
+            force_column(body, 'creator_fk', authenticated_user)
         elif table == PROFILE_TABLE:
-            body['id'] = authenticated_user
+            force_column(body, 'id', authenticated_user)
 
+    # Authorize what the row POINTS AT, not just who owns it.
+    #
     # req #3122 — a table with no creator_fk has nothing to override, so its
     # INSERT is authorized by checking the parents it references instead. Without
     # this, `POST /darwin/pipeline_step_deps {"step_fk": <somebody else's step>}`
     # injected a dependency gate into another user's plan.
-    refusal = junction_write_guard(conn, table, [body], authenticated_user,
-                                   post_method)
+    #
+    # req #3125 — the creator_fk override just above settles WHOSE ROW THIS IS and
+    # says nothing about the rows it references. `POST /darwin/test_runs
+    # {"test_plan_fk": <somebody else's plan>}` writes a row scoped to the caller
+    # that hangs off the victim's plan, and `fk_test_runs_plan` is ON DELETE
+    # RESTRICT — so the victim can never delete that plan again, blocked by a row
+    # they cannot see, list or delete. Same guard, other registry.
+    refusal = parent_reference_guard(conn, table, [body], authenticated_user,
+                                     post_method)
     if refusal is not None:
         return refusal
 
@@ -233,18 +256,49 @@ def _rest_post_bulk(post_method, conn, table, body_list, authenticated_user):
     if not body_list:
         return compose_rest_response(400, '', 'BAD REQUEST')
 
+    # req #3125 — see the single-row path. Same reason, every item.
+    refusal = check_body_keys(table, body_list)
+    if refusal is not None:
+        return compose_rest_response(refusal[0], '', refusal[1])
+
     # Override creator_fk on each item before building SQL
     if authenticated_user is not None and table in CREATOR_FK_TABLES:
         for item in body_list:
-            item['creator_fk'] = authenticated_user
+            force_column(item, 'creator_fk', authenticated_user)
 
-    # req #3122 — EVERY row is checked, not a sample. The statement is one
+    # EVERY item must name the same columns, because the statement below builds
+    # ONE column list from item 0 and then indexes every item by it. Two failures
+    # came out of that assumption going unchecked (req #3125 review):
+    #
+    #   * a column in item 0 but missing from item 5 raised KeyError from OUTSIDE
+    #     the try block, which `lambda_handler`'s blanket `except Exception`
+    #     turned into a 503 SERVICE_UNAVAILABLE naming nothing — and darwin-mcp
+    #     retries idempotent calls on 503, so it went out twice;
+    #   * a column missing from item 0 but PRESENT later was silently DROPPED
+    #     from the INSERT. The ownership guard still inspected its value, so the
+    #     set of references checked and the set written had drifted apart. In
+    #     that direction it only over-refuses — but that divergence is the shape
+    #     of the bypass above, and it should not be left to luck which way it
+    #     leans.
+    #
+    # Answered as a 400 naming the difference rather than either of those.
+    expected = set(body_list[0])
+    for index, item in enumerate(body_list[1:], start=1):
+        if set(item) != expected:
+            differing = sorted(set(item) ^ expected)
+            print(f"HTTP {post_method} bulk: item {index} names different "
+                  f"columns than item 0 ({differing}) — a bulk INSERT builds one "
+                  "column list for the whole batch")
+            return compose_rest_response(400, '', 'BAD REQUEST')
+
+    # req #3122 / #3125 — EVERY row is checked, not a sample. The statement is one
     # multi-value INSERT that lands or rolls back as a unit, so a single foreign
     # reference anywhere in the batch must refuse the whole batch. `map_coordinates`
     # imports arrive here thousands of rows at a time; the check still costs one
-    # SELECT, because it groups the distinct parent ids across all of them.
-    refusal = junction_write_guard(conn, table, body_list, authenticated_user,
-                                   post_method)
+    # SELECT per distinct PARENT TABLE, because it groups the distinct parent ids
+    # across all of them.
+    refusal = parent_reference_guard(conn, table, body_list, authenticated_user,
+                                     post_method)
     if refusal is not None:
         return refusal
 

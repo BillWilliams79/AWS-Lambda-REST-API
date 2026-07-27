@@ -1,15 +1,26 @@
 import pymysql
 import json
 from rest_api_utils import (compose_rest_response, compose_conflict_response,
-                            error_detail, integrity_errno, junction_write_guard)
+                            error_detail, integrity_errno, parent_reference_guard)
 from classifier import varDump, pretty_print_sql
-from auth_utils import CREATOR_FK_TABLES, PROFILE_TABLE, junction_scope_clause
+from auth_utils import (CREATOR_FK_TABLES, PROFILE_TABLE, body_column,
+                        check_body_keys, force_column, junction_scope_clause)
 
 def rest_put(put_method, conn, database, table, body_list, authenticated_user=None):
 
     if not body_list:
         print('HTTP PUT with error 400: body not included')
         return compose_rest_response(400, '', 'BAD REQUEST')
+
+    # req #3125 — the keys become the SET clause, and every check below reads
+    # them back as exact Python strings. MySQL does not match column names that
+    # way. This is worse on PUT than on POST, because a body can name the same
+    # column twice in two spellings and MySQL applies the LAST one: the guard
+    # would check `test_plan_fk` and the statement would apply `TEST_PLAN_FK`.
+    # Both are refused here, before anything reads a key.
+    refusal = check_body_keys(table, body_list)
+    if refusal is not None:
+        return compose_rest_response(refusal[0], '', refusal[1])
 
     if authenticated_user is not None:
         # An UPDATE may not hand a row to another creator. The WHERE clauses below
@@ -24,18 +35,41 @@ def rest_put(put_method, conn, database, table, body_list, authenticated_user=No
             # for every legitimate caller (none send it), and it stops
             # `PUT [{"id": <my task>, "creator_fk": "<their sub>"}]` from pushing
             # a row into somebody else's account.
+            #
+            # Matched case-insensitively (req #3125): `'creator_fk' in body` is a
+            # Python string test and MySQL's column lookup is not, so
+            # `{"CREATOR_FK": "<their sub>"}` slipped past this override entirely
+            # — the WHERE clause matched on the row's current owner and the SET
+            # clause then handed the row to the victim. Verified against
+            # darwin_dev: a row given away through a 200.
             for body in body_list:
-                if 'creator_fk' in body:
-                    body['creator_fk'] = authenticated_user
-        else:
-            # `require_scope=False`: on an UPDATE an absent scope column means
-            # "unchanged", which is the common case — PriorityCard.jsx bulk-PUTs
-            # {id, sort_order} on every hand-sort save.
-            refusal = junction_write_guard(conn, table, body_list,
-                                           authenticated_user, put_method,
-                                           require_scope=False)
-            if refusal is not None:
-                return refusal
+                if body_column(body, 'creator_fk')[0]:
+                    force_column(body, 'creator_fk', authenticated_user)
+
+        # Then check what the row POINTS AT, for EVERY table — not just the ones
+        # with no creator_fk.
+        #
+        # req #3125: this call used to be the `else` of the branch above, so no
+        # creator_fk-bearing table ever reached it. Forcing `creator_fk` settles
+        # whose row it is and leaves its `*_fk` columns untouched, which is
+        # exactly the gap: `PUT /darwin/test_runs [{"id": <my run>,
+        # "test_plan_fk": <their plan>}]` passed the `creator_fk = %s` predicate
+        # on a row the caller genuinely owns and then re-pointed it at the
+        # victim's plan. `fk_test_runs_plan` is ON DELETE RESTRICT, so the victim
+        # permanently loses the ability to delete their own plan — and PUT is the
+        # door that stays open if only POST is guarded, the same way it did for
+        # junctions in req #3122.
+        #
+        # `require_scope=False`: on an UPDATE an absent reference means
+        # "unchanged", which is the common case — PriorityCard.jsx bulk-PUTs
+        # {id, sort_order} on every hand-sort save, and `PUT /darwin/tasks
+        # [{"id": 5, "done": 1}]` names no parent at all (the guard returns
+        # without opening a cursor for those).
+        refusal = parent_reference_guard(conn, table, body_list,
+                                         authenticated_user, put_method,
+                                         require_scope=False)
+        if refusal is not None:
+            return refusal
 
     # use the simple, more typical 'update' SQL syntax when updating a single record
     if len(body_list) == 1:

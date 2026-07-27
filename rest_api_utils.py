@@ -4,7 +4,8 @@ import re
 import pymysql
 
 from classifier import varDump
-from auth_utils import JUNCTION_OWNERSHIP, check_junction_parent_ownership
+from auth_utils import (plan_parent_lookups, referenced_parent_columns,
+                        resolve_parent_lookups)
 
 #
 # json response utility function
@@ -49,39 +50,75 @@ def compose_rest_response(status_code, body='', http_message=''):
 
 
 # ---------------------------------------------------------------------------
-# Junction write authorization (req #3122)
+# Parent-reference write authorization (req #3122 junctions, req #3125 creator
+# tables)
 # ---------------------------------------------------------------------------
 
-def junction_write_guard(conn, table, bodies, authenticated_user, method,
-                         require_scope=True):
+def parent_reference_guard(conn, table, bodies, authenticated_user, method,
+                           require_scope=True):
     """403/400 response when a write names a parent the caller does not own, else None.
 
-    Shared by `rest_post` and `rest_put` because BOTH can hand a row to another
-    creator, by different routes: POST has no WHERE clause to scope, and PUT's
-    WHERE only proves ownership of the row's parent BEFORE the update while its
-    SET clause can rewrite that very column afterwards. Guarding one verb and not
-    the other simply moves the hole.
+    Covers BOTH halves of the rule, because they are the same check asked of two
+    different registries:
 
-    Returns BEFORE opening a cursor for any table this does not apply to, which is
-    almost every write. Opening one unconditionally is not merely wasteful: it
-    moves the request's first cursor acquisition ahead of the INSERT, so a
-    connection that fails on `cursor()` fails HERE — with nothing written and
-    nothing to roll back. That regressed `tests/test_unit_error_detail_wiring.py`.
+      * a **junction** table with no `creator_fk`, where the parent references ARE
+        the row's ownership (req #3122); and
+      * a **`creator_fk`-bearing** table, where the row's own owner is settled and
+        it is the rows it POINTS AT that went unchecked (req #3125). Scoping a row
+        to its creator says nothing about what it references — an attacker's own,
+        correctly-scoped row carrying an `ON DELETE RESTRICT` `*_fk` at a victim's
+        parent makes that parent permanently undeletable by its owner.
+
+    Shared by `rest_post` and `rest_put` because BOTH can point a row at another
+    creator, by different routes: POST has no WHERE clause to scope, and PUT's
+    WHERE only proves ownership BEFORE the update while its SET clause can rewrite
+    the reference afterwards. Guarding one verb and not the other simply moves the
+    hole.
+
+    Returns BEFORE opening a cursor whenever there is nothing to look up — a table
+    in neither registry, an unauthenticated call, or (the case req #3125 makes
+    common) a registered table whose body names no parent at all. Opening one
+    unconditionally is not merely wasteful: it moves the request's first cursor
+    acquisition ahead of the INSERT, so a connection that fails on `cursor()`
+    fails HERE — with nothing written and nothing to roll back. Req #3125 widened
+    the exposure to `tasks`/`areas`/`requirements`, where most writes name no
+    parent: `PUT /darwin/tasks [{"id": 5, "done": 1}]` must still reach the UPDATE
+    with its cursor unopened.
+
+    Held by the `ExplodingConn` cases in `tests/test_unit_junction_scoping.py`,
+    which cover all four no-work routes including the 400 refusal. NOT by
+    `tests/test_unit_error_detail_wiring.py`, whose comments used to claim it:
+    every case there passes `authenticated_user=None`, so this function returns
+    on its first line and is never exercised.
+
+    Note that on a write which DOES name a parent, this SELECT is now legitimately
+    the first cursor acquisition, so a dead connection reports "parent ownership
+    check failed" rather than "POST failed". Nothing is written either way.
 
     A failure of the CHECK ITSELF is a 500, never a pass. It runs before any
     write, so refusing costs nothing; treating an unreadable parent table as
     "probably fine" would turn one broken query into an authorization bypass.
     """
-    if authenticated_user is None or table not in JUNCTION_OWNERSHIP:
+    if authenticated_user is None or not referenced_parent_columns(table):
         return None
+
+    # Planning is pure — it decides WHAT to ask without asking, so a malformed
+    # body and a body with no references are both answered with no cursor at all.
+    lookups, refusal = plan_parent_lookups(table, bodies,
+                                           require_scope=require_scope)
+    if refusal is not None:
+        status, message = refusal
+        return compose_rest_response(status, '', message)
+    if not lookups:
+        return None
+
     try:
         with conn.cursor() as cursor:
-            verdict = check_junction_parent_ownership(
-                cursor, table, bodies, authenticated_user,
-                require_scope=require_scope)
+            verdict = resolve_parent_lookups(cursor, table, lookups,
+                                             authenticated_user)
     except pymysql.Error as e:
         errno, detail = error_detail(e)
-        errorMsg = (f"HTTP {method} junction ownership check failed: "
+        errorMsg = (f"HTTP {method} parent ownership check failed: "
                     f"{errno} {detail}")
         print(errorMsg)
         return compose_rest_response(500, '', errorMsg)

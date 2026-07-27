@@ -24,9 +24,11 @@ AWS Lambda function serving a REST API backed by MySQL (RDS) via API Gateway pro
 - Two databases configured: `darwin` (production), `darwin_dev` (testing)
 - Uses pymysql with credentials from environment variables
 
-## Row Ownership — three registries, every table in exactly one (req #3122)
+## Row Ownership — three registries for the row, one more for what it points at
 
-`auth_utils.py` answers *who owns this row* for the whole gateway:
+`auth_utils.py` answers *who owns this row* for the whole gateway (req #3122),
+and separately *who owns the rows it references* (req #3125). The second is not
+implied by the first — see § Outbound references below.
 
 | Registry | Applies when | Predicate injected |
 |---|---|---|
@@ -43,11 +45,11 @@ ownership that MySQL cannot keep in agreement with the first.
 
 - **GET / PUT / DELETE** append `junction_scope_clause(table)` to the WHERE clause,
   so a foreign row simply is not there: 404 on a read or delete, 204 on a PUT.
-- **POST and PUT** additionally call `junction_write_guard()` (rest_api_utils),
-  which runs `check_junction_parent_ownership()` BEFORE the statement — one SELECT
-  per distinct parent table, never per row, so a 3,000-row `map_coordinates`
-  import costs one extra query. It returns before opening a cursor for tables it
-  does not apply to.
+- **POST and PUT** additionally call `parent_reference_guard()` (rest_api_utils),
+  which resolves the referenced parents BEFORE the statement — one SELECT per
+  distinct parent table, never per row, so a 3,000-row `map_coordinates` import
+  costs one extra query. It plans the lookups purely and returns *before opening
+  a cursor* whenever there is nothing to look up.
 - The unauthenticated **403 gate in `handler.py`** covers these tables too: with
   no identity there is nothing to derive scoping from.
 
@@ -99,6 +101,87 @@ in a plan.
 tests in `tests/test_unit_junction_scoping.py` derive the set from `schema.sql`
 and fail otherwise; `UNSCOPED_TABLES` is the written-down exemption set and is
 empty.
+
+## Outbound references — owning a row is not owning what it points at (req #3125)
+
+`CREATOR_TABLE_REFERENCES` is the fourth registry: **36 columns across 25
+tables** — every `*_fk` on a `creator_fk`-bearing table whose target is also
+creator-scoped.
+
+**The attack does not defeat `creator_fk` scoping, it rides on it.** The attacker
+POSTs a row of their OWN, so the token-forced `creator_fk` is theirs and every
+check above passes; the row merely names a **victim's** parent in a `*_fk`
+nobody was looking at. Where the FK is `ON DELETE RESTRICT` (14 of the 36) that
+is a **grief-lock**: `DELETE /darwin/test_plans?id=<the victim's own>` answers 409
+naming `fk_test_runs_plan`, held by a `test_runs` row scoped to the attacker —
+invisible to the victim's GET, unaddressable by their PUT, untouchable by their
+DELETE. **No self-service recovery exists.** The other 22 (CASCADE / SET NULL) are
+cross-tenant attachment: the attacker's row living inside the victim's tree.
+
+Shape differs from `JUNCTION_OWNERSHIP` in two ways, both deliberate:
+
+- **No scope column.** Ownership is settled by `creator_fk`, so every entry is
+  checked *when present* and never *required*. An absent reference means "not
+  set" on POST and "unchanged" on PUT; a genuinely missing NOT NULL column is
+  MySQL's 1364 to report, not a 400 from here.
+- **No `fk_enforced` flag.** Every column came from a real `FOREIGN KEY`, so
+  `priority_card_order`'s exception cannot arise — "parent does not exist" always
+  falls through to 409/1452.
+
+**PUT needs the guard as much as POST**, for the same reason it did for
+junctions: `PUT /darwin/test_runs [{"id": <my run>, "test_plan_fk": <their
+plan>}]` passes the `creator_fk = %s` predicate on a row the caller really owns,
+then re-points it. The guard used to sit in the `else` of `if table in
+CREATOR_FK_TABLES`, so no creator table ever reached it.
+
+Everything else is inherited from #3122 unchanged — canonicalization by MySQL's
+grammar, verdict derived from returned rows, 403 / 400 / 409-1452, one SELECT per
+parent table.
+
+### A body's KEYS are SQL identifiers — `check_body_keys()`
+
+Found reviewing #3125 and it defeated **both** registries. Every ownership check
+reads a key with `body.get('area_fk')` (exact Python match); `rest_post`/`rest_put`
+interpolate that key as a **SQL identifier**, where MySQL's rules differ. Measured
+against darwin_dev, each of these wrote `tasks.area_fk` while the guard saw
+nothing and answered 200: `{"AREA_FK": n}` (case-insensitive), `` {"`area_fk`": n} ``
+(backticks are quoting syntax), `{"area_fk ": n}` (token separation),
+`{"area_fk/*x*/": n}` (comment the lexer discards).
+
+- **Charset restriction, not normalization.** Keys must be `[A-Za-z0-9_$]+`; no
+  fold-and-strip routine can enumerate what MySQL's lexer throws away. That
+  leaves case, which `body_column()` then matches explicitly.
+- **A post-fold collision is refused, never resolved.** MySQL applies the LAST
+  assignment of a repeated column, so `{"test_plan_fk": <mine>, "TEST_PLAN_FK":
+  <theirs>}` would have the guard approve one value and the statement apply the
+  other. 400.
+- **`creator_fk` had the same hole.** `if 'creator_fk' in body` missed
+  `{"CREATOR_FK": "<their sub>"}`, so `rest_put`'s override — the thing that
+  stops a body pushing a row into another account — was bypassed and the row was
+  handed over. `force_column()` replaces whatever spelling was used.
+- Applied on POST and PUT for **every** table. `rest_delete` already validated
+  keys against `DESC` (req #3122).
+
+Bulk POST gained a column-uniformity check with it: a column in item 0 but absent
+later raised `KeyError` outside the try block and became a **503 naming nothing**;
+absent from item 0 but present later was silently **dropped** from the INSERT
+while the guard still inspected it. Both are now a 400.
+
+> **The rule:** anything this gateway both CHECKS and WRITES must be read by the
+> check exactly as the writer writes it — keys as well as values. #3122 learned
+> it for values (`'9825_0'`); this is the same lesson for keys.
+
+**Status note:** on the 25 newly-covered tables a non-integer reference is now a
+**400** where MySQL used to coerce it into a 409/1452. That is the #3122 rule
+reaching new tables, not a new rule.
+
+**The list is DERIVED, never hand-maintained.** The audit that filed this
+requirement counted eleven columns; `schema.sql` says thirty-six.
+`test_unit_creator_fk_references.py` re-derives it on every run — a new FK column
+fails the build until registered. `UNCHECKED_CREATOR_REFERENCES` is the
+written-down exemption set and is empty. Cross-tenant coverage is
+`tests/test_creator_fk_references.py` (21 tests; 16 fail without the fix, the
+other 5 being victim-side regression tests that must pass either way).
 
 ## Error Status Contract
 
