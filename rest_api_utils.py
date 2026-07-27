@@ -1,6 +1,10 @@
 import json
 import re
+
+import pymysql
+
 from classifier import varDump
+from auth_utils import JUNCTION_OWNERSHIP, check_junction_parent_ownership
 
 #
 # json response utility function
@@ -42,6 +46,50 @@ def compose_rest_response(status_code, body='', http_message=''):
     #varDump(lambda_rest_api_response, 'Lambda proxy response')
 
     return lambda_rest_api_response
+
+
+# ---------------------------------------------------------------------------
+# Junction write authorization (req #3122)
+# ---------------------------------------------------------------------------
+
+def junction_write_guard(conn, table, bodies, authenticated_user, method,
+                         require_scope=True):
+    """403/400 response when a write names a parent the caller does not own, else None.
+
+    Shared by `rest_post` and `rest_put` because BOTH can hand a row to another
+    creator, by different routes: POST has no WHERE clause to scope, and PUT's
+    WHERE only proves ownership of the row's parent BEFORE the update while its
+    SET clause can rewrite that very column afterwards. Guarding one verb and not
+    the other simply moves the hole.
+
+    Returns BEFORE opening a cursor for any table this does not apply to, which is
+    almost every write. Opening one unconditionally is not merely wasteful: it
+    moves the request's first cursor acquisition ahead of the INSERT, so a
+    connection that fails on `cursor()` fails HERE — with nothing written and
+    nothing to roll back. That regressed `tests/test_unit_error_detail_wiring.py`.
+
+    A failure of the CHECK ITSELF is a 500, never a pass. It runs before any
+    write, so refusing costs nothing; treating an unreadable parent table as
+    "probably fine" would turn one broken query into an authorization bypass.
+    """
+    if authenticated_user is None or table not in JUNCTION_OWNERSHIP:
+        return None
+    try:
+        with conn.cursor() as cursor:
+            verdict = check_junction_parent_ownership(
+                cursor, table, bodies, authenticated_user,
+                require_scope=require_scope)
+    except pymysql.Error as e:
+        errno, detail = error_detail(e)
+        errorMsg = (f"HTTP {method} junction ownership check failed: "
+                    f"{errno} {detail}")
+        print(errorMsg)
+        return compose_rest_response(500, '', errorMsg)
+
+    if verdict is None:
+        return None
+    status, message = verdict
+    return compose_rest_response(status, '', message)
 
 
 # ---------------------------------------------------------------------------

@@ -2,7 +2,7 @@ import pymysql
 import json
 from rest_api_utils import compose_rest_response, error_detail
 from classifier import varDump, pretty_print_sql
-from auth_utils import CREATOR_FK_TABLES, PROFILE_TABLE
+from auth_utils import CREATOR_FK_TABLES, PROFILE_TABLE, junction_scope_clause
 
 def rest_get_table(get_method, conn, database, table, event, authenticated_user=None):
 
@@ -140,6 +140,16 @@ def rest_get_table(get_method, conn, database, table, event, authenticated_user=
             where_clause = f"{where_clause}{where_connector} id = %s"
             where_params.append(authenticated_user)
             where_count += 1
+        else:
+            # req #3122: a table with no creator_fk is scoped by JOINING THROUGH
+            # to the parent that owns it. This is the read half of the fix, and
+            # it is the bigger half — an unscoped LIST returned every user's rows
+            # long before any junction had a surrogate id to address them by.
+            junction_clause = junction_scope_clause(table)
+            if junction_clause:
+                where_clause = f"{where_clause}{where_connector} {junction_clause}"
+                where_params.append(authenticated_user)
+                where_count += 1
 
     # zero out where clause if there were no QSPs
     if where_count == 0:
@@ -181,7 +191,13 @@ def rest_get_table(get_method, conn, database, table, event, authenticated_user=
                 cursor.execute(sql_statement)
             row = cursor.fetchall()
 
-        if row[0][0]:
+        # `row` can be EMPTY on the count path: `GROUP BY` returns no rows for an
+        # empty set, where the un-grouped GROUP_CONCAT above always returns one
+        # (NULL). Newly reachable since req #3122 — a caller who used to see every
+        # creator's junction rows can now legitimately match none. `row[0][0]`
+        # would raise IndexError, which is not a pymysql.Error, so it escaped to
+        # the handler's blanket except as a 503 instead of this 404.
+        if row and row[0][0]:
             if count_syntax == 0:
                 return compose_rest_response(200, json.loads(row[0][0]), 'OK')
             else:
