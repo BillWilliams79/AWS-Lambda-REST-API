@@ -231,6 +231,15 @@ CREATOR_FK_TABLES = frozenset({
     # since req #3122 that inheritance is ENFORCED, in JUNCTION_OWNERSHIP below,
     # rather than merely asserted in a migration comment.
     'epics', 'pipelines', 'pipeline_steps',
+    # Req #3224 — the durable orchestration reservation (migration
+    # 20260801150404). Carries a NOT NULL creator_fk, so membership here is what
+    # makes the generic passthrough work at all, exactly as for the #3111 three
+    # above. It is also the security-relevant half of a COORDINATION table: an
+    # unscoped LIST read would publish which machine and terminal every user is
+    # orchestrating from, and an unscoped DELETE would let anyone release
+    # somebody else's live reservation — which is not a leak but a way to make
+    # two orchestrators believe they both hold a scope.
+    'orchestration_claims',
 })
 
 PROFILE_TABLE = 'profiles'
@@ -438,7 +447,7 @@ UNSCOPED_TABLES = frozenset()
 # COLUMNS DELIBERATELY NOT HERE. `creator_fk` itself (forced from the token, and
 # the only FK on these tables that targets `profiles`), and any FK whose target
 # is NOT creator-scoped — there is nobody to steal from. As of migration
-# 20260801020944 there are no such columns: all 38 non-`creator_fk` FKs on the 38
+# 20260801150404 there are no such columns: all 41 non-`creator_fk` FKs on the 39
 # creator-scoped tables target creator-scoped tables.
 #
 # ADDING A COLUMN. You do not — `test_every_cross_tenant_fk_column_is_registered`
@@ -496,6 +505,11 @@ CREATOR_TABLE_REFERENCES = {
     ),
     'map_runs': (
         ('map_route_fk', 'map_routes'),                      # SET NULL
+    ),
+    'orchestration_claims': (                                # req #3224
+        ('pipeline_fk', 'pipelines'),                        # CASCADE
+        ('epic_fk', 'epics'),                                # CASCADE
+        ('machine_fk', 'machines'),                          # RESTRICT
     ),
     'pipeline_steps': (
         ('pipeline_fk', 'pipelines'),                        # CASCADE

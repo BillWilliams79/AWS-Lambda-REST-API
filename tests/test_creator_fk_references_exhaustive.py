@@ -75,6 +75,12 @@ def _required_columns(table, seed):
         'map_runs': {'run_id': seed_int(seed), 'activity_id': f'{seed}-act',
                      'activity_name': 'ride', 'start_time': '2026-07-27 00:00:00',
                      'run_time_sec': 1, 'distance_mi': 1},
+        # Req #3224. NO required non-reference columns: `polls` and `claimed_at`
+        # carry DEFAULTs, `epic_key` is GENERATED, and `creator_fk` is forced
+        # from the token — so the body is exactly the three references the test
+        # adds. Its UNIQUE (pipeline_fk, epic_key) is why `_drop` matters here,
+        # like the three tables named in that function.
+        'orchestration_claims': {},
         'pipeline_steps': {'title': f'{seed}-step'},
         'pipelines': {'title': f'{seed}-pipeline'},
         'recurring_tasks': {'description': f'{seed}-rt', 'recurrence': 'daily',
@@ -103,7 +109,10 @@ def seed_int(seed):
 def test_the_matrix_is_the_whole_registry():
     """Guard the guard: a generation bug would make every case below vacuous."""
     assert len(TRIPLES) == sum(len(v) for v in CREATOR_TABLE_REFERENCES.values())
-    assert len(TRIPLES) == 36, f'expected 36 registered columns, generated {len(TRIPLES)}'
+    # 36 at req #3125, 38 at #3186 (which added the two `swarm_sessions`
+    # attribution FKs and left this literal at 36 — it has been failing since),
+    # 41 at #3224's three `orchestration_claims` columns.
+    assert len(TRIPLES) == 41, f'expected 41 registered columns, generated {len(TRIPLES)}'
     assert len(PARENTS) == 22, PARENTS
     assert ('test_runs', 'test_plan_fk', 'test_plans') in TRIPLES
 
@@ -286,9 +295,10 @@ def _count_referencing(conn, table, column, value):
 def _drop(conn, table, row_id):
     """Remove a row a case created, so the next case can create the same shape.
 
-    Three tables put a UNIQUE key ON their reference columns —
+    Four tables put a UNIQUE key ON their reference columns —
     `builds (branch_fk, position)`, `customer_releases (customer_fk, build_fk)`,
-    `test_results (test_run_fk, test_case_fk)` — so two cases writing the
+    `test_results (test_run_fk, test_case_fk)` and, since req #3224,
+    `orchestration_claims (pipeline_fk, epic_key)` — so two cases writing the
     identical owned row collide on 1062 rather than testing anything. Deleting
     between cases is simpler and more honest than manufacturing a pool of spare
     parents whose only purpose is to dodge a UNIQUE key.

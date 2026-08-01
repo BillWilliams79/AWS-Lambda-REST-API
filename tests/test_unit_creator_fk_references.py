@@ -7,7 +7,7 @@ that CAN: **who owns the rows this row points at.**
 THE GRIEF-LOCK. `creator_fk` scoping is not weakened by the attack — it is what
 makes the attack work. The attacker POSTs a row of their OWN, so the token-forced
 `creator_fk` is theirs and every check in `auth_utils` passes, carrying a `*_fk`
-that names a VICTIM's parent. On the fourteen columns that are `ON DELETE
+that names a VICTIM's parent. On the fifteen columns that are `ON DELETE
 RESTRICT`, the victim's `DELETE` of their own parent now answers 409 naming a
 constraint held by a row they cannot see (it is scoped to the attacker), cannot
 list, and cannot delete. Every tool the victim has is `creator_fk`-scoped away
@@ -16,9 +16,10 @@ from the row pinning them: there is no self-service recovery at all.
 **The registry must be COMPLETE, and it is DERIVED here rather than reviewed.**
 That is the load-bearing test in this file. The audit that filed req #3125
 reported "test_runs.test_plan_fk and ten sibling columns"; re-deriving the same
-rule from `schema.sql` gives **38 columns across 25 tables** (36 when #3125
-shipped; req #3186's two `swarm_sessions` attribution FKs are the proof the
-mechanism works — they failed this test until registered). A hand-counted
+rule from `schema.sql` gives **41 columns across 26 tables** (36 when #3125
+shipped; req #3186's two `swarm_sessions` attribution FKs and req #3224's three
+`orchestration_claims` ones are the proof the mechanism works — they failed this
+test until registered). A hand-counted
 security boundary drifts silently — `test_every_cross_tenant_fk_column_is_registered`
 re-derives it on every run, so a new FK column fails the build instead.
 
