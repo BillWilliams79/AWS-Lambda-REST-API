@@ -16,7 +16,9 @@ from the row pinning them: there is no self-service recovery at all.
 **The registry must be COMPLETE, and it is DERIVED here rather than reviewed.**
 That is the load-bearing test in this file. The audit that filed req #3125
 reported "test_runs.test_plan_fk and ten sibling columns"; re-deriving the same
-rule from `schema.sql` gives **36 columns across 25 tables**. A hand-counted
+rule from `schema.sql` gives **38 columns across 25 tables** (36 when #3125
+shipped; req #3186's two `swarm_sessions` attribution FKs are the proof the
+mechanism works — they failed this test until registered). A hand-counted
 security boundary drifts silently — `test_every_cross_tenant_fk_column_is_registered`
 re-derives it on every run, so a new FK column fails the build instead.
 

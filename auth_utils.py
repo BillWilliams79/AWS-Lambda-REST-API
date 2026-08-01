@@ -437,8 +437,8 @@ UNSCOPED_TABLES = frozenset()
 #
 # COLUMNS DELIBERATELY NOT HERE. `creator_fk` itself (forced from the token, and
 # the only FK on these tables that targets `profiles`), and any FK whose target
-# is NOT creator-scoped — there is nobody to steal from. As of migration 076
-# there are no such columns: all 36 non-`creator_fk` FKs on the 38
+# is NOT creator-scoped — there is nobody to steal from. As of migration
+# 20260801020944 there are no such columns: all 38 non-`creator_fk` FKs on the 38
 # creator-scoped tables target creator-scoped tables.
 #
 # ADDING A COLUMN. You do not — `test_every_cross_tenant_fk_column_is_registered`
@@ -514,6 +514,8 @@ CREATOR_TABLE_REFERENCES = {
     ),
     'swarm_sessions': (
         ('machine_fk', 'machines'),                          # RESTRICT
+        ('pipeline_fk', 'pipelines'),                        # SET NULL  (req #3186)
+        ('epic_fk', 'epics'),                                # SET NULL  (req #3186)
     ),
     'swarm_starts': (
         ('machine_fk', 'machines'),                          # RESTRICT
