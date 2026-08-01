@@ -104,18 +104,19 @@ empty.
 
 ## Outbound references — owning a row is not owning what it points at (req #3125)
 
-`CREATOR_TABLE_REFERENCES` is the fourth registry: **36 columns across 25
+`CREATOR_TABLE_REFERENCES` is the fourth registry: **38 columns across 25
 tables** — every `*_fk` on a `creator_fk`-bearing table whose target is also
-creator-scoped.
+creator-scoped. (36 at req #3125; req #3186 added `swarm_sessions.pipeline_fk`
+and `.epic_fk`. Both numbers are DERIVED — see the closing note of this section.)
 
 **The attack does not defeat `creator_fk` scoping, it rides on it.** The attacker
 POSTs a row of their OWN, so the token-forced `creator_fk` is theirs and every
 check above passes; the row merely names a **victim's** parent in a `*_fk`
-nobody was looking at. Where the FK is `ON DELETE RESTRICT` (14 of the 36) that
+nobody was looking at. Where the FK is `ON DELETE RESTRICT` (14 of the 38) that
 is a **grief-lock**: `DELETE /darwin/test_plans?id=<the victim's own>` answers 409
 naming `fk_test_runs_plan`, held by a `test_runs` row scoped to the attacker —
 invisible to the victim's GET, unaddressable by their PUT, untouchable by their
-DELETE. **No self-service recovery exists.** The other 22 (CASCADE / SET NULL) are
+DELETE. **No self-service recovery exists.** The other 24 (CASCADE / SET NULL) are
 cross-tenant attachment: the attacker's row living inside the victim's tree.
 
 Shape differs from `JUNCTION_OWNERSHIP` in two ways, both deliberate:
