@@ -104,10 +104,12 @@ empty.
 
 ## Outbound references — owning a row is not owning what it points at (req #3125)
 
-`CREATOR_TABLE_REFERENCES` is the fourth registry: **38 columns across 25
+`CREATOR_TABLE_REFERENCES` is the fourth registry: **41 columns across 26
 tables** — every `*_fk` on a `creator_fk`-bearing table whose target is also
 creator-scoped. (36 at req #3125; req #3186 added `swarm_sessions.pipeline_fk`
-and `.epic_fk`. Both numbers are DERIVED — see the closing note of this section.)
+and `.epic_fk`; req #3224 added `orchestration_claims.pipeline_fk`, `.epic_fk`
+and `.machine_fk`. Every number is DERIVED — see the closing note of this
+section.)
 
 **The attack does not defeat `creator_fk` scoping, it rides on it.** The attacker
 POSTs a row of their OWN, so the token-forced `creator_fk` is theirs and every
