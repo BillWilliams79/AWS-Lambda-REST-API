@@ -240,6 +240,15 @@ CREATOR_FK_TABLES = frozenset({
     # somebody else's live reservation — which is not a leak but a way to make
     # two orchestrators believe they both hold a scope.
     'orchestration_claims',
+    # Req #3337 — Pipeline 2.0 plan layer (migration 20260808115509). The
+    # parallel-era images of epics/pipelines/pipeline_steps: each carries a NOT
+    # NULL creator_fk, so membership here is what makes the generic passthrough
+    # work at all, exactly as for the #3111 three above.
+    #
+    # pipeline2_step_requirements and pipeline2_step_deps stay OUT: neither has
+    # a creator_fk. They inherit ownership from their step, in JUNCTION_OWNERSHIP
+    # below.
+    'pipeline2_pipelines', 'pipeline2_epics', 'pipeline2_steps',
 })
 
 PROFILE_TABLE = 'profiles'
@@ -305,6 +314,20 @@ JUNCTION_OWNERSHIP = {
     },
     'pipeline_step_requirements': {
         'scope': ('step_fk', 'pipeline_steps'),
+        'verify': (('requirement_fk', 'requirements'),),
+    },
+
+    # Pipeline 2.0 plan layer (req #3337, migration 20260808115509). Identical
+    # shape to the 1.0 pair above and for identical reasons. `dep_step_fk` needs
+    # `verify` because it is ON DELETE RESTRICT: a cross-tenant edge would make
+    # somebody else's step undeletable, a denial of service rather than merely a
+    # leak.
+    'pipeline2_step_deps': {
+        'scope': ('step_fk', 'pipeline2_steps'),
+        'verify': (('dep_step_fk', 'pipeline2_steps'),),
+    },
+    'pipeline2_step_requirements': {
+        'scope': ('step_fk', 'pipeline2_steps'),
         'verify': (('requirement_fk', 'requirements'),),
     },
 
@@ -447,7 +470,7 @@ UNSCOPED_TABLES = frozenset()
 # COLUMNS DELIBERATELY NOT HERE. `creator_fk` itself (forced from the token, and
 # the only FK on these tables that targets `profiles`), and any FK whose target
 # is NOT creator-scoped — there is nobody to steal from. As of migration
-# 20260801150404 there are no such columns: all 41 non-`creator_fk` FKs on the 39
+# 20260808115509 there are no such columns: all 45 non-`creator_fk` FKs on the 42
 # creator-scoped tables target creator-scoped tables.
 #
 # ADDING A COLUMN. You do not — `test_every_cross_tenant_fk_column_is_registered`
@@ -513,6 +536,16 @@ CREATOR_TABLE_REFERENCES = {
     ),
     'pipeline_steps': (
         ('pipeline_fk', 'pipelines'),                        # CASCADE
+    ),
+    'pipeline2_epics': (                                     # req #3337
+        ('pipeline_fk', 'pipeline2_pipelines'),              # CASCADE
+        ('category_fk', 'categories'),                       # RESTRICT
+    ),
+    'pipeline2_pipelines': (                                 # req #3337
+        ('machine_fk', 'machines'),                          # RESTRICT
+    ),
+    'pipeline2_steps': (                                     # req #3337
+        ('epic_fk', 'pipeline2_epics'),                      # CASCADE
     ),
     'pipelines': (
         ('machine_fk', 'machines'),                          # RESTRICT

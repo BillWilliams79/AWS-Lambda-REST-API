@@ -90,12 +90,16 @@ def test_schema_parse_found_the_tables(schema):
     assert schema['requirements']['has_creator_fk']
 
 
+# COVERS: SCH-014
 def test_every_unscoped_table_is_registered(schema):
     """Every table without creator_fk must be in JUNCTION_OWNERSHIP.
 
     THE invariant of req #3122. `profiles` is scoped by `id` and is the one
     permitted special case; `UNSCOPED_TABLES` is the written-down escape hatch and
     is empty. Anything else absent from both is unscoped on GET/PUT/DELETE/POST.
+    Derived from schema.sql, so it fails helpfully if pipeline2_step_deps or
+    pipeline2_step_requirements (neither carries creator_fk) is missing from
+    JUNCTION_OWNERSHIP.
     """
     unscoped = {name for name, info in schema.items()
                 if not info['has_creator_fk'] and name != PROFILE_TABLE}
