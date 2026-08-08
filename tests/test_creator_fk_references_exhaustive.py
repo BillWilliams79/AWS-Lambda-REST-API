@@ -83,6 +83,11 @@ def _required_columns(table, seed):
         'orchestration_claims': {},
         'pipeline_steps': {'title': f'{seed}-step'},
         'pipelines': {'title': f'{seed}-pipeline'},
+        # Req #3337. Like `epics`/`pipelines` above, the only NOT NULL,
+        # no-default, non-reference column each carries is `title`.
+        'pipeline2_pipelines': {'title': f'{seed}-p2pipeline'},
+        'pipeline2_epics': {'title': f'{seed}-p2epic'},
+        'pipeline2_steps': {'title': f'{seed}-p2step'},
         'recurring_tasks': {'description': f'{seed}-rt', 'recurrence': 'daily',
                             'anchor_date': '2026-07-27'},
         'requirements': {'title': f'{seed}-req', 'ai_model': 'opus',
@@ -106,17 +111,20 @@ def seed_int(seed):
     return abs(hash(seed)) % 100000 + 1
 
 
+# COVERS: SCH-016
 def test_the_matrix_is_the_whole_registry():
     """Guard the guard: a generation bug would make every case below vacuous."""
     assert len(TRIPLES) == sum(len(v) for v in CREATOR_TABLE_REFERENCES.values())
     # 36 at req #3125, 38 at #3186 (which added the two `swarm_sessions`
     # attribution FKs and left this literal at 36 — it has been failing since),
-    # 41 at #3224's three `orchestration_claims` columns.
-    assert len(TRIPLES) == 41, f'expected 41 registered columns, generated {len(TRIPLES)}'
-    assert len(PARENTS) == 22, PARENTS
+    # 41 at #3224's three `orchestration_claims` columns, 45 at #3337's four
+    # Pipeline 2.0 plan-layer columns.
+    assert len(TRIPLES) == 45, f'expected 45 registered columns, generated {len(TRIPLES)}'
+    assert len(PARENTS) == 24, PARENTS
     assert ('test_runs', 'test_plan_fk', 'test_plans') in TRIPLES
 
 
+# COVERS: SCH-016
 def test_every_table_in_the_registry_has_a_body_template():
     """A new registered table must fail HERE, not as a confusing KeyError inside
     a parametrized case where it would look like an authorization result."""
@@ -140,6 +148,7 @@ PURGE_ORDER = (
     'agent_telemetry_row_docs', 'agent_telemetry_rows', 'agent_telemetry_runs',
     'customer_releases', 'dev_servers', 'swarm_undos',
     'pipeline_steps', 'pipelines',
+    'pipeline2_steps', 'pipeline2_epics', 'pipeline2_pipelines',
     'test_results', 'test_runs', 'test_plans', 'test_cases',
     'requirements', 'features', 'epics',
     'tasks', 'recurring_tasks', 'areas', 'domains',
@@ -179,7 +188,7 @@ def _make_invoke(sub):
 
 
 def _build_graph(invoke, seed):
-    """One owned row in each of the 22 parent tables, created THROUGH the gateway.
+    """One owned row in each of the 24 parent tables, created THROUGH the gateway.
 
     Doubling as the owner-side regression proof: every one of these POSTs now
     runs the ownership guard, so a rule that over-refuses fails here before any
@@ -209,6 +218,7 @@ def _build_graph(invoke, seed):
     post('swarm_starts', req('swarm_starts'))
     post('pipelines', req('pipelines'))
     post('agent_telemetry_runs', req('agent_telemetry_runs'))
+    post('pipeline2_pipelines', req('pipeline2_pipelines'))
 
     # One level down.
     post('categories', dict(req('categories'), project_fk=ids['projects']))
@@ -223,11 +233,15 @@ def _build_graph(invoke, seed):
     post('test_cases', dict(req('test_cases'), category_fk=ids['categories']))
     post('recurring_tasks', dict(req('recurring_tasks'), area_fk=ids['areas']))
     post('builds', dict(req('builds'), branch_fk=ids['branches']))
+    post('pipeline2_epics', dict(req('pipeline2_epics'),
+                                 pipeline_fk=ids['pipeline2_pipelines'],
+                                 category_fk=ids['categories']))
 
     # Three.
     post('features', dict(req('features'), category_fk=ids['categories']))
     post('requirements', dict(req('requirements'), category_fk=ids['categories']))
     post('test_runs', dict(req('test_runs'), test_plan_fk=ids['test_plans']))
+    post('pipeline2_steps', dict(req('pipeline2_steps'), epic_fk=ids['pipeline2_epics']))
 
     missing = [p for p in PARENTS if p not in ids]
     assert not missing, f'{seed} graph is missing parent rows for {missing}'
@@ -326,10 +340,13 @@ def _value(conn, table, row_id, column):
 # POST — every column
 # ---------------------------------------------------------------------------
 
+# COVERS: SCH-017
 @pytest.mark.parametrize('triple', TRIPLES, ids=[_tid(t) for t in TRIPLES])
 def test_post_naming_a_victim_parent_is_refused(triple, victim_graph,
                                                 attacker_graph, db_connection):
-    """36 cases. The attacker's own, otherwise-valid row, aimed at the victim.
+    """45 cases (four of them #3337's, against a victim-owned
+    pipeline2_pipelines -> pipeline2_epics chain built by `_build_graph`). The
+    attacker's own, otherwise-valid row, aimed at the victim.
 
     `creator_fk` is forced from the attacker's token, so nothing else in the
     gateway objects — this is the whole vulnerability in one request.
@@ -354,11 +371,12 @@ def test_post_naming_a_victim_parent_is_refused(triple, victim_graph,
 # PUT — every column
 # ---------------------------------------------------------------------------
 
+# COVERS: SCH-017
 @pytest.mark.parametrize('triple', TRIPLES, ids=[_tid(t) for t in TRIPLES])
 def test_put_repointing_at_a_victim_parent_is_refused(triple, victim_graph,
                                                       attacker_graph,
                                                       db_connection):
-    """36 more. The row is genuinely the attacker's, so the `creator_fk = %s`
+    """45 more. The row is genuinely the attacker's, so the `creator_fk = %s`
     predicate passes and only the SET clause is hostile — the door that stays
     open if POST alone is guarded."""
     table, column, parent = triple

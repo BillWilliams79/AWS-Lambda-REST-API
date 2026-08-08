@@ -153,11 +153,15 @@ def test_the_schema_parse_actually_found_foreign_keys(schema, creator_scoped):
     assert ('test_plan_fk', 'test_plans', 'RESTRICT') in schema['test_runs']['fks']
 
 
+# COVERS: SCH-013
 def test_the_ddl_and_the_registry_agree_on_which_tables_carry_creator_fk(creator_scoped):
     """`CREATOR_FK_TABLES` is the input to the derivation, so it must be right.
 
     Already covered from the darwin-mcp side; asserted here because every test
-    below reads it as the definition of "creator-scoped".
+    below reads it as the definition of "creator-scoped". Derived from
+    schema.sql, so it fails helpfully if pipeline2_pipelines/_epics/_steps are
+    missing, or if either pipeline2_ edge table (no creator_fk) is wrongly
+    present.
     """
     assert creator_scoped == set(CREATOR_FK_TABLES), {
         'in schema.sql only': sorted(creator_scoped - CREATOR_FK_TABLES),
@@ -169,12 +173,15 @@ def test_the_ddl_and_the_registry_agree_on_which_tables_carry_creator_fk(creator
 # Completeness — the test that stops the next grief-lock
 # ---------------------------------------------------------------------------
 
+# COVERS: SCH-015
 def test_every_cross_tenant_fk_column_is_registered(schema, creator_scoped):
     """THE invariant of req #3125, re-derived from the DDL on every run.
 
     An unregistered column is one POST away from pinning a victim's row forever.
     The previous audit of this exact class hand-counted eleven columns; the DDL
-    says thirty-six. This is why the list is derived and not reviewed.
+    says thirty-six — now forty-five, with #3337's four pipeline2_epics/
+    pipeline2_pipelines/pipeline2_steps columns. This is why the list is
+    derived and not reviewed.
     """
     expected = set(_cross_tenant_fk_columns(schema, creator_scoped))
     missing = sorted(expected - set(_registered()) - set(UNCHECKED_CREATOR_REFERENCES))
