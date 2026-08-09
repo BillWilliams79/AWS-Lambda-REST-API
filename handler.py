@@ -13,6 +13,19 @@ from rest_post import rest_post
 from rest_delete import rest_delete
 from auth_utils import (get_authenticated_user, CREATOR_FK_TABLES,
                         JUNCTION_OWNERSHIP, PROFILE_TABLE)
+import pipeline2_compose
+
+# req #3367 — the ONE non-generic route (remediation B, composing form).
+# `pipeline2_compose` / `pipeline2_compose_epic` are not real tables; they are
+# reserved route names dispatched to `pipeline2_compose.py` BEFORE the generic
+# `{database}/{table}` gateway ever sees them. GET only, `id` as a query
+# string parameter — same grammar as every other single-row lookup
+# (`GET /darwin/pipeline2_compose?id=5`), so the existing darwin-mcp REST
+# client needs no new URL-building code, only a new response-shape method.
+PIPELINE2_COMPOSE_ROUTES = {
+    'pipeline2_compose': pipeline2_compose.compose_pipeline2,
+    'pipeline2_compose_epic': pipeline2_compose.compose_pipeline2_epic,
+}
 
 
 #
@@ -29,6 +42,21 @@ db_names = set(os.environ['db_name'].split(','))
 print('RestApi-MySql-Lambda init code executing.')
 
 SAFE_NAME_RE = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
+
+# The same integer grammar auth_utils._reference_value enforces for a body-
+# supplied id — MySQL's, not Python's (req #3122's canonicalization rule).
+# QSP values arrive as strings, so this is the ONE place that grammar needs
+# restating for a query-string id rather than a body field.
+_ID_QSP_RE = re.compile(r'^[+-]?[0-9]+$')
+
+
+def _parse_id_qsp(event):
+    """The `id` query-string parameter as an int, or None if absent/invalid."""
+    qsp = event.get('queryStringParameters') or {}
+    raw = qsp.get('id')
+    if raw is None or not _ID_QSP_RE.match(raw.strip()):
+        return None
+    return int(raw.strip())
 
 def parse_path(path):
 
@@ -117,6 +145,12 @@ def rest_api_from_table(event, db_info):
     # Extract authenticated user from Cognito authorizer claims
     authenticated_user = get_authenticated_user(event)
 
+    # req #3367 — the composing route, dispatched BEFORE the generic gateway
+    # (these are not real tables, so DESC/CRUD below would only ever fail).
+    if table in PIPELINE2_COMPOSE_ROUTES:
+        return _rest_pipeline2_compose(table, conn, event, http_method,
+                                       authenticated_user)
+
     # Block unauthenticated access to user-scoped tables.
     #
     # JUNCTION_OWNERSHIP tables join in (req #3122). Their scoping is derived
@@ -160,3 +194,37 @@ def rest_api_from_table(event, db_info):
 
         # DELETE Method
         return rest_delete(delete_method, conn, database, table, body, authenticated_user)
+
+
+def _rest_pipeline2_compose(table, conn, event, http_method, authenticated_user):
+    """req #3367 — GET-only, `id` as a query-string parameter, same shape as
+    every other single-row lookup. Not a real table, so PUT/POST/DELETE and a
+    missing/malformed `id` are refused here rather than reaching pymysql."""
+    if http_method != get_method:
+        return compose_rest_response(
+            400, '', f"{table} is a read-only composed route; {http_method} not allowed")
+
+    # Same gate the generic CREATOR_FK_TABLES check gives every other
+    # user-scoped table — this route names none of the real table names that
+    # check matches on, so it needs its own.
+    if authenticated_user is None:
+        print(f'Auth: unauthenticated request to composed route {table}')
+        return compose_rest_response(403, '', 'FORBIDDEN')
+
+    row_id = _parse_id_qsp(event)
+    if row_id is None:
+        return compose_rest_response(400, '', f"{table}: a valid integer 'id' query "
+                                     "parameter is required")
+
+    try:
+        composed = PIPELINE2_COMPOSE_ROUTES[table](conn, row_id, authenticated_user)
+    except ValueError as e:
+        # A data-integrity issue (epic names a pipeline_fk that does not
+        # resolve for this creator) — real but not the caller's fault to fix
+        # by retrying, so 500 rather than 400/404.
+        print(f"{table} data integrity error: {e}")
+        return compose_rest_response(500, '', str(e))
+
+    if composed is None:
+        return compose_rest_response(404, '', 'NOT FOUND')
+    return compose_rest_response(200, composed)
