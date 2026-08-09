@@ -564,6 +564,15 @@ CREATOR_TABLE_REFERENCES = {
         ('pipeline_fk', 'pipelines'),                        # SET NULL  (req #3186)
         ('epic_fk', 'epics'),                                # SET NULL  (req #3186)
     ),
+    'swarm_completes': (
+        # req #3202, migration 20260809002208. The one envelope context column
+        # this table lacked — req #2943 registered `machine_fk` on
+        # swarm_sessions and swarm_starts, req #3098 on agent_telemetry_runs,
+        # and swarm_completes was skipped by both. Registered here on the same
+        # terms as its three siblings: RESTRICT, so an unchecked write would be
+        # a grief-lock on the victim's `machines` row.
+        ('machine_fk', 'machines'),                          # RESTRICT
+    ),
     'swarm_starts': (
         ('machine_fk', 'machines'),                          # RESTRICT
     ),
