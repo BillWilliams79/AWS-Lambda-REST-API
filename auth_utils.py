@@ -572,6 +572,8 @@ CREATOR_TABLE_REFERENCES = {
         ('machine_fk', 'machines'),                          # RESTRICT
         ('pipeline_fk', 'pipelines'),                        # SET NULL  (req #3186)
         ('epic_fk', 'epics'),                                # SET NULL  (req #3186)
+        ('pipeline2_fk', 'pipeline2_pipelines'),             # SET NULL  (req #3350)
+        ('epic2_fk', 'pipeline2_epics'),                     # SET NULL  (req #3350)
     ),
     'swarm_completes': (
         # req #3202, migration 20260809002208. The one envelope context column
