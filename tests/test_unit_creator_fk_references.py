@@ -236,6 +236,24 @@ def test_the_column_the_requirement_named_is_covered():
     assert ('test_plan_fk', 'test_plans') in creator_table_reference_columns('test_runs')
 
 
+# COVERS: ENG-034
+def test_orchestration_claims_pipeline2_columns_are_registered():
+    """`pipeline2_fk` / `epic2_fk` (req #3369, migration 20260809024954) — the
+    schema-shape half of "orchestration claims serve both eras". Without this
+    registration a 2.0 claim naming a foreign creator's `pipeline2_pipelines` /
+    `pipeline2_epics` row would be the exact grief-lock req #3125 exists to
+    close, on the table whose own job is refusing exactly this kind of
+    cross-tenant collision. `test_every_cross_tenant_fk_column_is_registered`
+    already re-derives this from `schema.sql` on every run and would fail the
+    build without it; this test names the specific columns so the failure this
+    requirement was filed for stays pinned even if the general derivation ever
+    changed shape.
+    """
+    covered = creator_table_reference_columns('orchestration_claims')
+    assert ('pipeline2_fk', 'pipeline2_pipelines') in covered
+    assert ('epic2_fk', 'pipeline2_epics') in covered
+
+
 def test_unchecked_creator_references_is_a_written_down_exemption_set():
     """Empty, and every entry that ever appears must name something real.
 
