@@ -4,7 +4,7 @@ from rest_api_utils import (compose_rest_response, compose_conflict_response,
                             error_detail, integrity_errno, parent_reference_guard)
 from classifier import varDump, pretty_print_sql
 from auth_utils import (CREATOR_FK_TABLES, PROFILE_TABLE, check_body_keys,
-                        force_column)
+                        check_enum_blanks, force_column)
 
 def rest_post(post_method, conn, database, table, body, authenticated_user=None):
 
@@ -22,6 +22,15 @@ def rest_post(post_method, conn, database, table, body, authenticated_user=None)
     # every check saw no reference at all. Held to a plain identifier here so the
     # set of columns checked IS the set of columns written.
     refusal = check_body_keys(table, [body])
+    if refusal is not None:
+        return compose_rest_response(refusal[0], '', refusal[1])
+
+    # req #3432 — a NOT NULL column with a bounded value domain, named by the body
+    # but supplied blank. `''` is a legal VARCHAR, so MySQL stores it silently and
+    # every reader that switches on the enum then matches no branch. Refused
+    # AFTER `check_body_keys`, which is what guarantees the key this reads is the
+    # column that would be written.
+    refusal = check_enum_blanks(table, [body])
     if refusal is not None:
         return compose_rest_response(refusal[0], '', refusal[1])
 
@@ -258,6 +267,13 @@ def _rest_post_bulk(post_method, conn, table, body_list, authenticated_user):
 
     # req #3125 — see the single-row path. Same reason, every item.
     refusal = check_body_keys(table, body_list)
+    if refusal is not None:
+        return compose_rest_response(refusal[0], '', refusal[1])
+
+    # req #3432 — every item, not a sample. The statement below is ONE
+    # multi-value INSERT that lands or rolls back as a unit, so one blank enum
+    # anywhere in the batch has to refuse the whole batch.
+    refusal = check_enum_blanks(table, body_list)
     if refusal is not None:
         return compose_rest_response(refusal[0], '', refusal[1])
 

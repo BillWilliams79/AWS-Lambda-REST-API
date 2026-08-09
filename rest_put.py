@@ -4,7 +4,8 @@ from rest_api_utils import (compose_rest_response, compose_conflict_response,
                             error_detail, integrity_errno, parent_reference_guard)
 from classifier import varDump, pretty_print_sql
 from auth_utils import (CREATOR_FK_TABLES, PROFILE_TABLE, body_column,
-                        check_body_keys, force_column, junction_scope_clause)
+                        check_body_keys, check_enum_blanks, force_column,
+                        junction_scope_clause)
 
 def rest_put(put_method, conn, database, table, body_list, authenticated_user=None):
 
@@ -19,6 +20,15 @@ def rest_put(put_method, conn, database, table, body_list, authenticated_user=No
     # would check `test_plan_fk` and the statement would apply `TEST_PLAN_FK`.
     # Both are refused here, before anything reads a key.
     refusal = check_body_keys(table, body_list)
+    if refusal is not None:
+        return compose_rest_response(refusal[0], '', refusal[1])
+
+    # req #3432 — a NOT NULL column with a bounded value domain, named by the body
+    # but supplied blank. PUT needs this as much as POST and arguably more: an
+    # UPDATE has no "column default" to fall back on, so a blank here does not
+    # merely create a bad row, it OVERWRITES a good value with one that matches no
+    # branch in any reader. An absent key still means unchanged.
+    refusal = check_enum_blanks(table, body_list)
     if refusal is not None:
         return compose_rest_response(refusal[0], '', refusal[1])
 
