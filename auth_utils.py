@@ -21,6 +21,11 @@ A fourth registry, `CREATOR_TABLE_REFERENCES`, answers the separate question
 "WHOSE ROW DOES THIS ROW POINT AT" for the tables in the first group. Scoping a
 row to its creator says nothing about the rows it REFERENCES, and every one of
 the three answers above is silent on that — which is the whole vulnerability.
+
+A fifth registry, `ENUM_COLUMNS` (req #3432), is not about authorization at all
+and lives here because this is where the gateway's per-column knowledge lives. It
+answers "IS THE EMPTY STRING A LEGITIMATE VALUE FOR THIS COLUMN" for every NOT
+NULL column with a bounded value domain, and the answer is always no.
 """
 
 import re
@@ -620,6 +625,190 @@ CREATOR_TABLE_REFERENCES = {
 # would refuse something legitimate. A pointer to a row the caller does not own,
 # on a column the database enforces, is not that.
 UNCHECKED_CREATOR_REFERENCES = frozenset()
+
+
+# ---------------------------------------------------------------------------
+# Bounded value domains — a NOT NULL enum must never be written BLANK (req #3432)
+# ---------------------------------------------------------------------------
+#
+# The fifth registry, and the only one here that is not about authorization. It
+# answers "IS THE EMPTY STRING A LEGITIMATE VALUE FOR THIS COLUMN", which for a
+# column whose value set is `haiku|sonnet|opus|fable` is always no.
+#
+# WHY THE GATEWAY HAS TO ANSWER IT. `''` is a perfectly legal VARCHAR value and
+# nothing in the schema forbids it, so MySQL stores it silently and every reader
+# that switches on the enum then matches no branch. Measured in production
+# 2026-08-09: 18 `requirements` rows carried `ai_model=''` and/or `effort=''`,
+# and `/swarm-start` reads those two columns straight into the launch command —
+# an affected requirement launches as `claude --model '' --effort ''`.
+#
+# THE MECHANISM THAT PRODUCED THEM IS NOT THIS ONE, AND THAT IS DELIBERATE. Those
+# rows came from OMISSION: this RDS instance runs a non-strict `sql_mode`
+# (`NO_ENGINE_SUBSTITUTION`, verified), so a NOT NULL column with no `DEFAULT`
+# that the INSERT does not name gets the implicit empty-string fill. Req #3434
+# closes that by giving the two columns a `DEFAULT` — an omitted key must keep
+# resolving to the column default, which is why an ABSENT key is untouched here.
+# This registry closes the other door: a caller that sends the key with nothing
+# in it. No such caller was found in the codebase when this was written, and that
+# is exactly why it belongs at the gateway rather than at a caller — the gateway
+# is the single DB gateway (CLAUDE.md), so it is the only place that covers the
+# writer nobody has written yet.
+#
+# ONLY BLANK IS REFUSED, NOT THE DOMAIN. The allowed values are deliberately NOT
+# stored here. A value list this file did not enforce would be dead data that
+# drifts from the application that does enforce it (darwin-mcp validates every
+# one of these on the way in); a value list this file DID enforce would refuse a
+# new enum member the day it ships in code and before it is copied here. Blank is
+# the one value that is wrong under every version of every domain.
+#
+# THE SET IS DERIVED, NEVER HAND-COUNTED — same discipline as
+# `CREATOR_TABLE_REFERENCES`. `tests/test_unit_enum_blank.py` re-derives the
+# CANDIDATES from `schema.sql` (NOT NULL, and either a real `ENUM(...)` or a
+# CHAR/VARCHAR no wider than 32) and fails unless every one is classified either
+# here or in `FREE_TEXT_NOT_NULL_COLUMNS` below. A new enum column fails the
+# build until it is registered.
+#
+# THAT WIDTH RULE IS A FILTER, NOT A PROOF, and saying so is the honest version
+# of the guarantee. It sweeps the shapes an enum is USUALLY written in; a bounded
+# domain declared wider is real and simply will not be swept, so it is registered
+# BY HAND and the test only checks it exists. Two are, today —
+# `swarm_completes.skill_name` VARCHAR(64) (`VALID_COMPLETE_SKILL_NAMES`, two
+# members) and `user_integrations.provider` VARCHAR(50) (`'strava'`) — and both
+# accepted `''` silently until they were listed here. Raising the bound instead
+# would drag in every VARCHAR(64) name and `creator_fk` itself, trading a
+# reviewable exemption list for an unreviewable one. NOT NULL `TINYINT` flags
+# (`requirements.tracking`, `closed`, `active`) are outside this registry
+# altogether: `''` coerces to `0` there, which is a real member of the domain.
+ENUM_COLUMNS = {
+    'acceptance_tests': frozenset({'acceptance_test_status'}),
+    'agent_telemetry_rows': frozenset({'role', 'session_kind'}),
+    'agent_telemetry_runs': frozenset({'ai_model', 'effort'}),
+    'agents': frozenset({'effort'}),
+    'architecture_documents': frozenset({'doc_type'}),
+    'areas': frozenset({'sort_mode'}),
+    'branches': frozenset({'branch_type'}),
+    'build_projects': frozenset({'project_status'}),
+    'categories': frozenset({'sort_mode'}),
+    'epics': frozenset({'epic_status'}),
+    'features': frozenset({'feature_status'}),
+    'machines': frozenset({'platform', 'arch'}),
+    'map_runs': frozenset({'source'}),
+    'pipeline2_epics': frozenset({'epic_status'}),
+    'pipeline2_pipelines': frozenset({'pipeline_status', 'execution_mode'}),
+    'pipeline2_steps': frozenset({'run'}),
+    'pipeline_steps': frozenset({'run'}),
+    'pipelines': frozenset({'pipeline_status', 'execution_mode'}),
+    'profiles': frozenset({'theme_mode'}),
+    'recurring_tasks': frozenset({'recurrence', 'insert_position'}),
+    'requirements': frozenset({'requirement_status', 'coordination_type',
+                               'ai_model', 'effort'}),
+    # `skill_name` is VARCHAR(64) — WIDER than the sweep, registered by hand.
+    'swarm_completes': frozenset({'status', 'ai_model', 'effort', 'skill_name'}),
+    'swarm_sessions': frozenset({'swarm_status', 'ai_model', 'effort'}),
+    'swarm_starts': frozenset({'ai_model', 'effort'}),
+    'test_cases': frozenset({'test_type'}),
+    'test_results': frozenset({'result_status'}),
+    'test_runs': frozenset({'run_status'}),
+    # VARCHAR(50), also wider than the sweep. One member, `'strava'`.
+    'user_integrations': frozenset({'provider'}),
+}
+
+# The written-down exemption set, and the same call as `UNSCOPED_TABLES` /
+# `UNCHECKED_CREATOR_REFERENCES`: a NOT NULL narrow column left out of the
+# registry above has to be left out ON PURPOSE and in writing, because omission
+# and exemption are indistinguishable in a hand-written list.
+#
+# Unlike those two this one is NOT empty, and cannot be — the candidate rule is
+# structural (narrow + NOT NULL) and real free-text columns match it. Each entry
+# is a column whose value the USER or an IMPORT supplies, where the gateway has
+# no domain to police and refusing a blank would be refusing something the app
+# legitimately writes:
+#
+#   domains.domain_name / areas.area_name / map_views.name
+#       user-typed names. Darwin's "type into the blank row" pattern POSTs a
+#       template whose name field starts empty, and `areas.area_name` holds a
+#       single-space row in production today.
+#   map_runs.activity_name
+#       the activity label as the IMPORT found it (Cyclemeter / Strava / KML).
+#       Darwin does not define this value set — `RouteCard.jsx` seeds its own
+#       state from `run.activity_name || ''` — so it is not a bounded domain.
+#   agents.ai_model
+#       the RESOLVED model id (`opus[1m]` in production), which the schema
+#       comment explicitly marks as NOT the haiku|sonnet|opus|fable family enum.
+#       `agents.effort` IS that family and is registered above.
+FREE_TEXT_NOT_NULL_COLUMNS = {
+    'agents': frozenset({'ai_model'}),
+    'areas': frozenset({'area_name'}),
+    'domains': frozenset({'domain_name'}),
+    'map_runs': frozenset({'activity_name'}),
+    'map_views': frozenset({'name'}),
+}
+
+
+def _is_blank(value):
+    """True when `value` would land in a NOT NULL enum column as no value at all.
+
+    Four shapes, all of which mean the caller named the column and supplied
+    nothing usable:
+
+      ''        the empty string — legal VARCHAR, illegal enum member
+      '   '     whitespace only; no enum value in this schema is whitespace
+      None      JSON null. MySQL answers 1048 on a single-row write, so this is
+                a 500 today; a 400 naming the column is the truthful status for
+                a request that was malformed before it reached the database.
+      'NULL'    the gateway's clear-to-NULL sentinel (`rest_post`/`rest_put`
+                translate it to None a few lines after this check), so it is the
+                same request as the line above wearing the API's own spelling.
+
+    A non-string is left alone. `0` and `False` are not blanks — they are wrong
+    values, which is the domain question this guard deliberately does not ask.
+    """
+    if value is None or value == 'NULL':
+        return True
+    return isinstance(value, str) and value.strip() == ''
+
+
+def check_enum_blanks(table, bodies):
+    """`(status, message)` when a write supplies a NOT NULL enum BLANK, else None.
+
+    Read with `body_column()`, not `body.get()`. MySQL matches a column name
+    case-insensitively, so `{"AI_MODEL": ""}` writes `requirements.ai_model` while
+    an exact-string lookup sees nothing — the req #3125 rule, that anything this
+    gateway both CHECKS and WRITES must be read by the check exactly as the writer
+    writes it. `check_body_keys` runs first on every path that calls this, so the
+    key charset is already a plain identifier and at most one spelling can match.
+
+    An ABSENT key is allowed and that is the whole partial-write contract: on a
+    POST it means "use the column default" (req #3434 gives `requirements.ai_model`
+    and `.effort` one) and on a PUT it means "unchanged". Only a key the caller
+    actually sent is inspected.
+    """
+    columns = ENUM_COLUMNS.get(table)
+    if not columns:
+        return None
+    for body in bodies:
+        if not isinstance(body, dict):
+            return (400, 'BAD REQUEST')
+        for column in sorted(columns):
+            present, value = body_column(body, column)
+            if present and _is_blank(value):
+                # Two different outcomes were being averted, so say which one.
+                # A message that calls `None` "a legal VARCHAR stored silently"
+                # sends whoever reads it in CloudWatch looking for a row that
+                # does not exist — MySQL answers 1048 for that shape.
+                if value is None or value == 'NULL':
+                    because = ("SQL NULL is not writable to a NOT NULL column at "
+                               "all, so this would have been a MySQL 1048 reported "
+                               "as an opaque 500")
+                else:
+                    because = ("the empty string is a legal VARCHAR and would be "
+                               "stored silently under this instance's non-strict "
+                               "sql_mode, matching no branch in any reader")
+                print(f"Auth: {table} write supplying a blank value for the NOT "
+                      f"NULL column {column} ({value!r}) — {because} (req #3432). "
+                      "Omit the column to take its default, or send a real value.")
+                return (400, 'BAD REQUEST')
+    return None
 
 
 def junction_parent_columns(table):

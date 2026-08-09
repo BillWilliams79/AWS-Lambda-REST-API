@@ -28,7 +28,9 @@ AWS Lambda function serving a REST API backed by MySQL (RDS) via API Gateway pro
 
 `auth_utils.py` answers *who owns this row* for the whole gateway (req #3122),
 and separately *who owns the rows it references* (req #3125). The second is not
-implied by the first — see § Outbound references below.
+implied by the first — see § Outbound references below. A fifth registry in the
+same file answers a different question entirely — *may this column be written
+blank* — and is documented under § Bounded value domains (req #3432).
 
 | Registry | Applies when | Predicate injected |
 |---|---|---|
@@ -188,6 +190,69 @@ fails the build until registered. `UNCHECKED_CREATOR_REFERENCES` is the
 written-down exemption set and is empty. Cross-tenant coverage is
 `tests/test_creator_fk_references.py` (21 tests; 16 fail without the fix, the
 other 5 being victim-side regression tests that must pass either way).
+
+## Bounded value domains — a NOT NULL enum is never written BLANK (req #3432)
+
+`ENUM_COLUMNS` is the fifth registry in `auth_utils.py` and the only one that is not
+about authorization. It answers *is the empty string a legitimate value for this
+column*, and for a column whose value set is `haiku|sonnet|opus|fable` the answer is
+always no. `check_enum_blanks()` refuses a write that NAMES such a column and supplies
+`''`, whitespace, JSON `null`, or the `"NULL"` clear-sentinel — **400**, before any
+statement runs, on `rest_post` (single + bulk) and `rest_put`. Not on `rest_delete`:
+there a body key is a WHERE filter, and `ai_model=''` is a legitimate query.
+
+**`''` is a legal VARCHAR, which is the whole problem.** Nothing in the schema forbids
+it, this RDS instance runs a non-strict `sql_mode` (`NO_ENGINE_SUBSTITUTION`), and every
+reader that switches on the enum then matches no branch. Measured in production
+2026-08-09: 18 `requirements` rows carried `ai_model=''` and/or `effort=''`, and
+`/swarm-start` reads those two columns straight into the launch command — an affected
+requirement launches as `claude --model '' --effort ''`.
+
+**The mechanism that produced those rows is the OTHER one, deliberately.** They came
+from OMISSION — `requirements.ai_model` and `.effort` are the only enum columns in the
+schema with no column `DEFAULT`, so an INSERT that does not name them gets MySQL's
+implicit empty-string fill. Req #3434 closes that by giving both a `DEFAULT`, which is
+why **an absent key is untouched here**: on a POST it means "take the column default",
+on a PUT "unchanged". This registry closes the door #3434 does not — a caller that sends
+the key with nothing in it. No such caller existed in the codebase when this was written;
+it lives at the gateway precisely because the gateway is the single DB gateway and is the
+only place that covers the writer nobody has written yet.
+
+**Only blank is refused, never the domain.** The allowed values are deliberately not
+stored: a value list this file did not enforce would drift from darwin-mcp, which does
+enforce them, and a value list it DID enforce would refuse a new enum member the day it
+ships in code and before it is copied here. Blank is the one value that is wrong under
+every version of every domain.
+
+**Keys are read with `body_column()`**, so `{"AI_MODEL": ""}` is caught — the § *A body's
+KEYS are SQL identifiers* rule, which had already defeated two other registries.
+`check_body_keys` runs first on every path, so at most one spelling can match.
+
+**The candidates are DERIVED, the classification is written down.**
+`tests/test_unit_enum_blank.py` re-parses `schema.sql` for every NOT NULL column that is
+a real `ENUM(...)` or a CHAR/VARCHAR no wider than 32 — 46 columns today — and fails
+unless each is in `ENUM_COLUMNS` or `FREE_TEXT_NOT_NULL_COLUMNS` (41 + 5). A new enum
+column fails the build until registered.
+
+**That width rule is a FILTER, NOT A PROOF, and the difference is load-bearing.** It
+sweeps the shapes an enum is usually written in; a bounded domain declared wider is real
+and simply will not be swept. Two are — `swarm_completes.skill_name` VARCHAR(64)
+(`VALID_COMPLETE_SKILL_NAMES`, two members) and `user_integrations.provider` VARCHAR(50)
+(`'strava'`) — both accepted `''` silently until they were **registered by hand**, which
+brings `ENUM_COLUMNS` to **43 columns across 28 tables**. The test asks a different
+question of those: they are checked to EXIST in the DDL, not to have been swept. Raising
+the bound instead would drag in every VARCHAR(64) name and `creator_fk` itself, trading a
+reviewable exemption list for an unreviewable one. NOT NULL `TINYINT` flags are outside
+the registry altogether — `''` coerces to `0` there, a real member of the domain.
+
+Unlike `UNSCOPED_TABLES` and
+`UNCHECKED_CREATOR_REFERENCES`, the exemption set here is **not empty and cannot be** —
+the candidate rule is structural, so genuine free-text columns match it:
+`domains.domain_name`, `areas.area_name`, `map_views.name` (user-typed, and Darwin's
+"type into the blank row" pattern POSTs them empty), `map_runs.activity_name` (whatever
+the Cyclemeter/Strava/KML import found), `agents.ai_model` (the RESOLVED model id
+`opus[1m]`, which the schema comment marks as explicitly NOT the family enum — while
+`agents.effort` IS that family and is registered).
 
 ## Error Status Contract
 
