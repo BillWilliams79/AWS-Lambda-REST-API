@@ -15,6 +15,8 @@ nothing if the parent is itself unscoped, or if the column named does not exist,
 so both are checked against the DDL rather than trusted.
 
 Everything here runs without a database or `exports.sh`.
+
+# COVERS: SCH-032
 """
 import os
 import re

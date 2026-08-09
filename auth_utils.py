@@ -353,6 +353,13 @@ JUNCTION_OWNERSHIP = {
         'scope': ('feature_fk', 'features'),
         'verify': (('test_case_fk', 'test_cases'),),
     },
+    # Pipeline 2.0 Feature retirement — test cases re-home onto Requirement
+    # (req #3352, migration 20260809002149). Stands beside `feature_test_cases`
+    # above, not in its place, until req #3334's eradication sequencing.
+    'requirement_test_cases': {
+        'scope': ('requirement_fk', 'requirements'),
+        'verify': (('test_case_fk', 'test_cases'),),
+    },
     'test_plan_cases': {
         'scope': ('test_plan_fk', 'test_plans'),
         'verify': (('test_case_fk', 'test_cases'),),

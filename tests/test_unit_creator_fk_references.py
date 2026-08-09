@@ -24,6 +24,8 @@ security boundary drifts silently — `test_every_cross_tenant_fk_column_is_regi
 re-derives it on every run, so a new FK column fails the build instead.
 
 Everything here runs without a database or `exports.sh`.
+
+# COVERS: SCH-032
 """
 import os
 import re
