@@ -540,6 +540,8 @@ CREATOR_TABLE_REFERENCES = {
         ('pipeline_fk', 'pipelines'),                        # CASCADE
         ('epic_fk', 'epics'),                                # CASCADE
         ('machine_fk', 'machines'),                          # RESTRICT
+        ('pipeline2_fk', 'pipeline2_pipelines'),             # CASCADE, req #3369
+        ('epic2_fk', 'pipeline2_epics'),                     # CASCADE, req #3369
     ),
     'pipeline_steps': (
         ('pipeline_fk', 'pipelines'),                        # CASCADE
