@@ -98,6 +98,11 @@ def _required_columns(table, seed):
         'swarm_sessions': {'task_name': f'{seed}-sess'},
         'swarm_starts': {'arguments': f'{seed}-args'},
         'swarm_undos': {'reason': f'{seed}-reason'},
+        # Req #3202. The only NOT NULL, no-default, non-reference column;
+        # `machine_fk` is nullable (see the schema comment — no backfill was
+        # possible for this one), so the reference the test adds is optional
+        # in the schema but still exercised here like every other column.
+        'swarm_completes': {'skill_name': f'{seed}-skill'},
         'tasks': {'priority': '0', 'done': '0', 'description': f'{seed}-task'},
         'test_cases': {'title': f'{seed}-case', 'steps': 's', 'expected': 'e'},
         'test_plans': {'title': f'{seed}-plan'},
@@ -118,8 +123,16 @@ def test_the_matrix_is_the_whole_registry():
     # 36 at req #3125, 38 at #3186 (which added the two `swarm_sessions`
     # attribution FKs and left this literal at 36 — it has been failing since),
     # 41 at #3224's three `orchestration_claims` columns, 45 at #3337's four
-    # Pipeline 2.0 plan-layer columns.
-    assert len(TRIPLES) == 45, f'expected 45 registered columns, generated {len(TRIPLES)}'
+    # Pipeline 2.0 plan-layer columns. Found already red at 48 when #3350
+    # landed (this file had drifted, undetected because nobody re-ran it): 47
+    # from req #3369's two `orchestration_claims.pipeline2_fk`/`.epic2_fk`, 48
+    # from req #3202's one `swarm_completes.machine_fk` — neither accompanied
+    # by an update here, and `swarm_completes` had no body template at all
+    # (see `_required_columns`). #3350 fixes both gaps AND adds its own two
+    # `swarm_sessions` 2.0 attribution siblings (pipeline2_fk/epic2_fk — no
+    # new parent tables, both already built for #3337's own
+    # pipeline2_epics/pipeline2_steps entries), landing on 50.
+    assert len(TRIPLES) == 50, f'expected 50 registered columns, generated {len(TRIPLES)}'
     assert len(PARENTS) == 24, PARENTS
     assert ('test_runs', 'test_plan_fk', 'test_plans') in TRIPLES
 
@@ -146,7 +159,13 @@ def test_every_table_in_the_registry_has_a_body_template():
 # deleting builds first is safe because branches.parent_build_fk is SET NULL.
 PURGE_ORDER = (
     'agent_telemetry_row_docs', 'agent_telemetry_rows', 'agent_telemetry_runs',
-    'customer_releases', 'dev_servers', 'swarm_undos',
+    'customer_releases', 'dev_servers', 'swarm_undos', 'swarm_completes',
+    # req #3224/#3369. `machine_fk` is RESTRICT (like the five other tables
+    # noted below), so this must precede `machines`. Not a PARENT — nothing
+    # references `orchestration_claims` — so it needs no `_build_graph` entry,
+    # only this safety-net sweep for rows a test case creates and does not
+    # itself `_drop`.
+    'orchestration_claims',
     'pipeline_steps', 'pipelines',
     'pipeline2_steps', 'pipeline2_epics', 'pipeline2_pipelines',
     'test_results', 'test_runs', 'test_plans', 'test_cases',
@@ -344,9 +363,11 @@ def _value(conn, table, row_id, column):
 @pytest.mark.parametrize('triple', TRIPLES, ids=[_tid(t) for t in TRIPLES])
 def test_post_naming_a_victim_parent_is_refused(triple, victim_graph,
                                                 attacker_graph, db_connection):
-    """45 cases (four of them #3337's, against a victim-owned
-    pipeline2_pipelines -> pipeline2_epics chain built by `_build_graph`). The
-    attacker's own, otherwise-valid row, aimed at the victim.
+    """50 cases (four of them #3337's, two of them req #3369's, one req #3202's,
+    two more #3350's, against a
+    victim-owned pipeline2_pipelines -> pipeline2_epics chain built by
+    `_build_graph`). The attacker's own, otherwise-valid row, aimed at the
+    victim.
 
     `creator_fk` is forced from the attacker's token, so nothing else in the
     gateway objects — this is the whole vulnerability in one request.
@@ -376,7 +397,7 @@ def test_post_naming_a_victim_parent_is_refused(triple, victim_graph,
 def test_put_repointing_at_a_victim_parent_is_refused(triple, victim_graph,
                                                       attacker_graph,
                                                       db_connection):
-    """45 more. The row is genuinely the attacker's, so the `creator_fk = %s`
+    """50 more. The row is genuinely the attacker's, so the `creator_fk = %s`
     predicate passes and only the SET clause is hostile — the door that stays
     open if POST alone is guarded."""
     table, column, parent = triple
@@ -412,7 +433,7 @@ def test_put_repointing_at_a_victim_parent_is_refused(triple, victim_graph,
 @pytest.mark.parametrize('triple', TRIPLES, ids=[_tid(t) for t in TRIPLES])
 def test_no_divergent_spelling_of_a_victim_parent_lands_on_any_column(
         triple, victim_graph, attacker_graph, db_connection):
-    """The #3122 value-divergence payloads, applied to all 36 columns.
+    """The #3122 value-divergence payloads, applied to all 50 columns.
 
     Each is a spelling MySQL reads as the victim's id and Python does not. Any
     one accepted is the same cross-tenant write through a different door, so the
