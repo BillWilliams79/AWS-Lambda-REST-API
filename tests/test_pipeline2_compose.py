@@ -180,11 +180,17 @@ class TestWholePlanCompose:
         assert epic['description'] == 'build it'
 
     def test_requirements_are_the_light_projection(self, owner, plan):
+        # `started_at`/`completed_at` added by req #3381's code review
+        # (2026-08-09) — the browser's client-side time axis
+        # (pipelinePlanTime.js) reads them per-requirement and had no
+        # evidence at all without this widening. Still light: no
+        # `description`, no `feature_fk` (2.0 has no Feature).
         resp = _get(owner, 'pipeline2_compose', plan['pipeline'])
         body = json.loads(resp['body'])
         for row in body['requirements']:
             assert set(row) == {'id', 'title', 'requirement_status', 'coordination_type',
-                                'ai_model', 'effort', 'machine_fk', 'tracking'}
+                                'ai_model', 'effort', 'machine_fk', 'tracking',
+                                'started_at', 'completed_at'}
             assert 'description' not in row
             assert 'feature_fk' not in row
 

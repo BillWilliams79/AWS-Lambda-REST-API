@@ -245,7 +245,21 @@ _STEP_COLUMNS = ('id', 'epic_fk', 'title', 'run', 'not_before', 'notes',
 _LINK_COLUMNS = ('step_fk', 'requirement_fk')
 _DEP_COLUMNS = ('id', 'step_fk', 'dep_step_fk')
 _REQUIREMENT_COLUMNS = ('id', 'title', 'requirement_status', 'coordination_type',
-                        'ai_model', 'effort', 'machine_fk', 'tracking')
+                        'ai_model', 'effort', 'machine_fk', 'tracking',
+                        'started_at', 'completed_at')
+# `started_at`/`completed_at` added by req #3381's code review (2026-08-09),
+# widening the light projection req #3345 originally specified. Without them
+# the browser's `planTimeAxis` (Darwin/src/SwarmView/pipelines/
+# pipelinePlanTime.js, unchanged by req #3367/#3381 — it still runs
+# client-side, fed by this composed read) has no per-requirement start
+# evidence at all: measured against the live payload before this fix, EVERY
+# row's `requirementStart()` returned null, `stepStart()` collapsed to
+# UNKNOWN/FUTURE for all 64 steps, and the plan visualizer's time axis fell
+# back to two dead slots — the exact defect req #3201 was filed to remove,
+# regressed by omission rather than by intent. Two more DATETIME columns on
+# a read already fetching 101 rows costs no extra gateway round trip (the
+# read count this whole route exists to fix is unchanged) and ~4KB on a
+# payload well under the 3,000,000-byte budget.
 
 
 def _select(cursor, columns, table, where, params, order_by=None):
