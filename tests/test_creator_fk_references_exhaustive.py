@@ -3,8 +3,9 @@
 `test_creator_fk_references.py` covers the attack in depth on a handful of
 representative columns. This file covers it in BREADTH: the requirement asks for
 "cross-tenant test cases in the #3094/#3122 pattern **for every column, both
-verbs**", and that is 36 columns across 25 tables, so it is generated from the
-registry rather than hand-written 72 times.
+verbs**", and that is 47 columns across 29 tables (see
+`test_the_matrix_is_the_whole_registry` for the count's own history), so it is
+generated from the registry rather than hand-written 94 times.
 
 Generating from `CREATOR_TABLE_REFERENCES` is also the point. A hand-written list
 would drift from the registry exactly the way the registry would have drifted from
@@ -71,7 +72,6 @@ def _required_columns(table, seed):
         'dev_servers': {'port': 3000 + (seed_int(seed) % 8), 'pid': 999000,
                         'workspace_path': f'/tmp/{seed}'},
         'epics': {'title': f'{seed}-epic'},
-        'features': {'title': f'{seed}-feature', 'description': 'd'},
         'map_runs': {'run_id': seed_int(seed), 'activity_id': f'{seed}-act',
                      'activity_name': 'ride', 'start_time': '2026-07-27 00:00:00',
                      'run_time_sec': 1, 'distance_mi': 1},
@@ -131,9 +131,13 @@ def test_the_matrix_is_the_whole_registry():
     # (see `_required_columns`). #3350 fixes both gaps AND adds its own two
     # `swarm_sessions` 2.0 attribution siblings (pipeline2_fk/epic2_fk — no
     # new parent tables, both already built for #3337's own
-    # pipeline2_epics/pipeline2_steps entries), landing on 50.
-    assert len(TRIPLES) == 50, f'expected 50 registered columns, generated {len(TRIPLES)}'
-    assert len(PARENTS) == 24, PARENTS
+    # pipeline2_epics/pipeline2_steps entries), landing on 50. Req #3355 drops
+    # `features` — both its `requirements.feature_fk` column AND its own
+    # `('category_fk', 'categories')`/`('epic_fk', 'epics')` entry — taking
+    # TRIPLES to 47 and, since `features` was itself a PARENT of nothing else
+    # registered, PARENTS to 23.
+    assert len(TRIPLES) == 47, f'expected 47 registered columns, generated {len(TRIPLES)}'
+    assert len(PARENTS) == 23, PARENTS
     assert ('test_runs', 'test_plan_fk', 'test_plans') in TRIPLES
 
 
@@ -169,7 +173,7 @@ PURGE_ORDER = (
     'pipeline_steps', 'pipelines',
     'pipeline2_steps', 'pipeline2_epics', 'pipeline2_pipelines',
     'test_results', 'test_runs', 'test_plans', 'test_cases',
-    'requirements', 'features', 'epics',
+    'requirements', 'epics',
     'tasks', 'recurring_tasks', 'areas', 'domains',
     'builds', 'branches', 'build_projects', 'customers',
     'map_runs', 'map_routes',
@@ -207,7 +211,7 @@ def _make_invoke(sub):
 
 
 def _build_graph(invoke, seed):
-    """One owned row in each of the 24 parent tables, created THROUGH the gateway.
+    """One owned row in each of the 23 parent tables, created THROUGH the gateway.
 
     Doubling as the owner-side regression proof: every one of these POSTs now
     runs the ownership guard, so a rule that over-refuses fails here before any
@@ -257,7 +261,6 @@ def _build_graph(invoke, seed):
                                  category_fk=ids['categories']))
 
     # Three.
-    post('features', dict(req('features'), category_fk=ids['categories']))
     post('requirements', dict(req('requirements'), category_fk=ids['categories']))
     post('test_runs', dict(req('test_runs'), test_plan_fk=ids['test_plans']))
     post('pipeline2_steps', dict(req('pipeline2_steps'), epic_fk=ids['pipeline2_epics']))

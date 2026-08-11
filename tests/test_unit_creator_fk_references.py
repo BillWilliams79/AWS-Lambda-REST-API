@@ -16,10 +16,11 @@ from the row pinning them: there is no self-service recovery at all.
 **The registry must be COMPLETE, and it is DERIVED here rather than reviewed.**
 That is the load-bearing test in this file. The audit that filed req #3125
 reported "test_runs.test_plan_fk and ten sibling columns"; re-deriving the same
-rule from `schema.sql` gives **41 columns across 26 tables** (36 when #3125
+rule from `schema.sql` gives **47 columns across 29 tables** (36 when #3125
 shipped; req #3186's two `swarm_sessions` attribution FKs and req #3224's three
 `orchestration_claims` ones are the proof the mechanism works — they failed this
-test until registered). A hand-counted
+test until registered; req #3355 dropped `features`, taking a column and a
+table back off the count). A hand-counted
 security boundary drifts silently — `test_every_cross_tenant_fk_column_is_registered`
 re-derives it on every run, so a new FK column fails the build instead.
 
@@ -398,8 +399,7 @@ ROWS = {'test_plans': {1: 'victim', 2: 'stranger'},
         'areas': {20: 'victim', 21: 'stranger'},
         'recurring_tasks': {30: 'victim'},
         'projects': {40: 'victim'},
-        'machines': {50: 'victim', 51: 'stranger'},
-        'features': {60: 'victim'}}
+        'machines': {50: 'victim', 51: 'stranger'}}
 
 
 def _check(table, bodies, user='victim', require_scope=True, rows=None):
@@ -513,11 +513,11 @@ def test_lookups_are_grouped_per_parent_table_not_per_row():
 
 
 def test_a_table_with_several_parents_asks_each_one_once():
-    """`requirements` names four different parent tables in one body."""
+    """`requirements` names three different parent tables in one body."""
     verdict, cursor = _check('requirements', [{'project_fk': 40, 'category_fk': 10,
-                                               'machine_fk': 50, 'feature_fk': 60}])
+                                               'machine_fk': 50}])
     assert verdict is None
-    assert len(cursor.queries) == 4
+    assert len(cursor.queries) == 3
 
 
 def test_a_foreign_parent_in_any_position_is_refused():
