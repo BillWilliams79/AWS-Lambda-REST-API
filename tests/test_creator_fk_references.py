@@ -79,7 +79,6 @@ def _purge(conn, creator):
                     "DELETE FROM test_plans WHERE creator_fk = %s",
                     "DELETE FROM test_cases WHERE creator_fk = %s",
                     "DELETE FROM requirements WHERE creator_fk = %s",
-                    "DELETE FROM features WHERE creator_fk = %s",
                     "DELETE FROM tasks WHERE creator_fk = %s",
                     "DELETE FROM recurring_tasks WHERE creator_fk = %s",
                     "DELETE FROM areas WHERE creator_fk = %s",
@@ -98,7 +97,7 @@ def _purge(conn, creator):
 # ---------------------------------------------------------------------------
 
 def _build_graph(post, label):
-    """project -> category -> {test_plan -> test_run, test_case, feature}, + domain -> area.
+    """project -> category -> {test_plan -> test_run, test_case}, + domain -> area.
 
     Built through the REST API rather than raw SQL on purpose: it is
     simultaneously the regression guard that an OWNER can still create every one
@@ -132,12 +131,6 @@ def _build_graph(post, label):
     assert resp['statusCode'] == 200, f'{label} test_case POST: {resp}'
     ids['test_case'] = extract_id(resp)
 
-    resp = post('/darwin_dev/features', {'title': f'{label} feature',
-                                         'description': f'{label} feature',
-                                         'category_fk': ids['category']})
-    assert resp['statusCode'] == 200, f'{label} feature POST: {resp}'
-    ids['feature'] = extract_id(resp)
-
     resp = post('/darwin_dev/domains', {'domain_name': f'{label[:12]} dom',
                                         'closed': '0'})
     assert resp['statusCode'] == 200, f'{label} domain POST: {resp}'
@@ -169,7 +162,6 @@ def _purge_owned(conn, creator):
                     "DELETE FROM test_plans WHERE creator_fk = %s",
                     "DELETE FROM test_cases WHERE creator_fk = %s",
                     "DELETE FROM requirements WHERE creator_fk = %s",
-                    "DELETE FROM features WHERE creator_fk = %s",
                     "DELETE FROM categories WHERE creator_fk = %s",
                     "DELETE FROM projects WHERE creator_fk = %s"):
                 cur.execute(statement, (creator,))
@@ -258,8 +250,6 @@ def test_the_victim_can_still_delete_their_own_plan_after_a_refused_attack(
     ('test_plans', 'category_fk', 'category', {'title': 'stolen category plan'}),
     ('test_cases', 'category_fk', 'category', {'title': 'stolen category case',
                                                'steps': 's', 'expected': 'e'}),
-    ('features', 'category_fk', 'category', {'title': 'stolen feature',
-                                             'description': 'd'}),
     ('categories', 'project_fk', 'project', {'category_name': 'stolen project cat'}),
     ('areas', 'domain_fk', 'domain', {'area_name': 'stolen domain area',
                                       'closed': '0'}),
@@ -289,7 +279,8 @@ def test_post_naming_any_victim_parent_is_refused(intruder, victim, attacker,
 
 def test_a_multi_parent_write_is_refused_on_any_one_foreign_parent(
         intruder, victim, attacker, db_connection):
-    """`requirements` names four parents. Owning three of them is not enough."""
+    """`requirements` names three parents (project_fk, category_fk, machine_fk —
+    feature_fk dropped at req #3355). Owning some of them is not enough."""
     before = _count(db_connection, 'requirements', 'category_fk', victim['category'])
 
     resp = intruder('POST', '/darwin_dev/requirements',

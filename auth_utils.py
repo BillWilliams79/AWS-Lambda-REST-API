@@ -188,9 +188,11 @@ CREATOR_FK_TABLES = frozenset({
     'map_partners',
     'user_integrations',
     # Req #2380 — Swarm Features & Test Cases registry (migrations 042/043/044).
-    # Missing entries here are a silent security gap: unauthenticated writes
-    # to these tables would be accepted by the generic Lambda-Rest passthrough.
-    'features', 'test_cases', 'test_plans', 'test_runs', 'test_results',
+    # `features` left this set at req #3355 (Pipeline 2.0 Feature eradication,
+    # migration 20260811033413 — the table is dropped). Missing entries here
+    # are a silent security gap: unauthenticated writes to these tables would
+    # be accepted by the generic Lambda-Rest passthrough.
+    'test_cases', 'test_plans', 'test_runs', 'test_results',
     # Req #2422 — swarm_start log (migration 046). swarm_start_sessions is a
     # junction table with no creator_fk and stays out of this set.
     'swarm_starts',
@@ -353,14 +355,11 @@ JUNCTION_OWNERSHIP = {
         'verify': (('session_fk', 'swarm_sessions'),),
     },
 
-    # Features / test registry (req #2380, migrations 042-044).
-    'feature_test_cases': {
-        'scope': ('feature_fk', 'features'),
-        'verify': (('test_case_fk', 'test_cases'),),
-    },
     # Pipeline 2.0 Feature retirement — test cases re-home onto Requirement
-    # (req #3352, migration 20260809002149). Stands beside `feature_test_cases`
-    # above, not in its place, until req #3334's eradication sequencing.
+    # (req #3352, migration 20260809002149). `feature_test_cases` (req #2380,
+    # migrations 042-044), which this stood beside, was dropped at req #3355
+    # (migration 20260811033413) — the eradication sequencing this comment
+    # used to point at.
     'requirement_test_cases': {
         'scope': ('requirement_fk', 'requirements'),
         'verify': (('test_case_fk', 'test_cases'),),
@@ -534,10 +533,6 @@ CREATOR_TABLE_REFERENCES = {
     'epics': (
         ('category_fk', 'categories'),                       # RESTRICT
     ),
-    'features': (
-        ('category_fk', 'categories'),                       # RESTRICT
-        ('epic_fk', 'epics'),                                # SET NULL
-    ),
     'map_runs': (
         ('map_route_fk', 'map_routes'),                      # SET NULL
     ),
@@ -571,7 +566,8 @@ CREATOR_TABLE_REFERENCES = {
         ('project_fk', 'projects'),                          # SET NULL
         ('category_fk', 'categories'),                       # RESTRICT
         ('machine_fk', 'machines'),                          # RESTRICT
-        ('feature_fk', 'features'),                          # SET NULL
+        # ('feature_fk', 'features') dropped at req #3355 (migration
+        # 20260811033413) — the column no longer exists.
     ),
     'swarm_sessions': (
         ('machine_fk', 'machines'),                          # RESTRICT
@@ -690,7 +686,6 @@ ENUM_COLUMNS = {
     'build_projects': frozenset({'project_status'}),
     'categories': frozenset({'sort_mode'}),
     'epics': frozenset({'epic_status'}),
-    'features': frozenset({'feature_status'}),
     'machines': frozenset({'platform', 'arch'}),
     'map_runs': frozenset({'source'}),
     'pipeline2_epics': frozenset({'epic_status'}),
