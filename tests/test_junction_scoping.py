@@ -5,9 +5,27 @@ plant real rows for a victim, drive the gateway as a second authenticated user,
 and prove the answer is 404 or 403 — never data, and never a write that lands.
 
 Every one of these FAILED before req #3122. The gateway had no scoping for these
-tables at all, so `GET /darwin_dev/pipeline_step_deps` returned every user's
-dependency edges, `PUT`/`DELETE` by id rewrote or removed another user's gate, and
-`POST` injected one into their plan.
+tables at all, so an unfiltered `GET` on a step-dependency table returned every
+user's dependency edges, `PUT`/`DELETE` by id rewrote or removed another user's
+gate, and `POST` injected one into their plan.
+
+**Retargeted to the Pipeline 2.0 junctions by req #3356**, which dropped the 1.0
+plan layer this file was written against. The worked example moves from
+`pipeline_step_deps` / `pipeline_step_requirements` to `pipeline_step_deps` /
+`pipeline_step_requirements`; the rule under test, the attacks, and every
+assertion are unchanged. Deleting the file instead would have left the 2.0
+junctions with unit-tier registry checks and NO end-to-end cross-tenant coverage
+anywhere — the tier this file exists to be.
+
+Two 1.0-only shapes did not survive the move, both because 2.0 moved the time
+gate off the edge and onto `pipeline_steps.not_before`:
+`pipeline_step_deps.dep_step_fk` is NOT NULL, so there is no wall-clock gate row
+with a NULL verify column (that rule keeps its unit-tier case,
+`test_unit_junction_scoping.py::test_null_verify_columns_are_skipped_not_refused`),
+and there is no innocuous `time_at` column to mutate, so the PUT cases move the
+edge's own `dep_step_fk` between owned steps instead. Each plan therefore builds
+THREE steps rather than two, because `UNIQUE (step_fk, dep_step_fk)` means a case
+that creates a spare edge needs a target the fixture edge is not already using.
 
 The victim-side tests interleaved through the file matter as much as the attacker
 ones: a scoping rule that also breaks the owner is not a fix. Each attacker
@@ -55,26 +73,32 @@ def intruder(intruder_fk, db_connection):
     _purge(db_connection, intruder_fk)
 
 
-def _purge(conn, creator):
-    """Tear a creator's pipeline/requirement graph down in FK-safe order.
+def _teardown_plan(cur, creator):
+    """The plan half of a creator's teardown, in FK-safe order.
 
     Deps before steps (`dep_step_fk` is RESTRICT), links before requirements
-    (`requirement_fk` is RESTRICT) — the two-phase teardown migration 076
-    documents. Anything else and the DELETE fails on a constraint rather than
-    cleaning up.
+    (`requirement_fk` is RESTRICT), epics before categories
+    (`epics.category_fk` is RESTRICT). Anything else and the DELETE
+    fails on a constraint rather than cleaning up.
     """
+    cur.execute("DELETE FROM pipeline_step_deps WHERE step_fk IN "
+                "(SELECT id FROM pipeline_steps WHERE creator_fk = %s)", (creator,))
+    cur.execute("DELETE FROM pipeline_step_requirements WHERE step_fk IN "
+                "(SELECT id FROM pipeline_steps WHERE creator_fk = %s)", (creator,))
+    cur.execute("DELETE FROM pipeline_steps WHERE creator_fk = %s", (creator,))
+    cur.execute("DELETE FROM epics WHERE creator_fk = %s", (creator,))
+    cur.execute("DELETE FROM pipelines WHERE creator_fk = %s", (creator,))
+    cur.execute("DELETE FROM requirements WHERE creator_fk = %s", (creator,))
+    cur.execute("DELETE FROM categories WHERE creator_fk = %s", (creator,))
+    cur.execute("DELETE FROM projects WHERE creator_fk = %s", (creator,))
+
+
+def _purge(conn, creator):
+    """Tear a creator's plan/requirement graph down, then the profile itself."""
     import pymysql as _pymysql
     try:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM pipeline_step_deps WHERE step_fk IN "
-                        "(SELECT id FROM pipeline_steps WHERE creator_fk = %s)", (creator,))
-            cur.execute("DELETE FROM pipeline_step_requirements WHERE step_fk IN "
-                        "(SELECT id FROM pipeline_steps WHERE creator_fk = %s)", (creator,))
-            cur.execute("DELETE FROM pipeline_steps WHERE creator_fk = %s", (creator,))
-            cur.execute("DELETE FROM pipelines WHERE creator_fk = %s", (creator,))
-            cur.execute("DELETE FROM requirements WHERE creator_fk = %s", (creator,))
-            cur.execute("DELETE FROM categories WHERE creator_fk = %s", (creator,))
-            cur.execute("DELETE FROM projects WHERE creator_fk = %s", (creator,))
+            _teardown_plan(cur, creator)
             cur.execute("DELETE FROM profiles WHERE id = %s", (creator,))
         conn.commit()
     except _pymysql.MySQLError:
@@ -86,21 +110,43 @@ def _purge(conn, creator):
 # ---------------------------------------------------------------------------
 
 def _build_plan(post, label):
-    """pipeline -> 2 steps -> 1 dep edge -> project/category/requirement -> 1 link.
+    """project/category -> pipeline -> epic -> 3 steps -> 1 dep edge -> requirement -> 1 link.
 
     Built through the REST API rather than raw SQL on purpose: it is simultaneously
     the regression guard that an OWNER can still create every one of these rows.
+
+    THREE steps, not two: `pipeline_step_deps` is `UNIQUE (step_fk,
+    dep_step_fk)`, and several owner-side cases create a spare edge that must not
+    collide with the fixture's own. `step_c` is that spare target and carries no
+    edge of its own.
     """
     ids = {}
 
+    resp = post('/darwin_dev/projects', {'project_name': f'{label} project'})
+    assert resp['statusCode'] == 200
+    ids['project'] = extract_id(resp)
+
+    resp = post('/darwin_dev/categories', {'category_name': f'{label} category',
+                                           'project_fk': ids['project']})
+    assert resp['statusCode'] == 200
+    ids['category'] = extract_id(resp)
+
     resp = post('/darwin_dev/pipelines', {'title': f'{label} plan',
-                                          'pipeline_status': 'draft'})
+                                                    'pipeline_status': 'draft'})
     assert resp['statusCode'] == 200, f'{label} pipeline POST: {resp}'
     ids['pipeline'] = extract_id(resp)
 
-    for key in ('step_a', 'step_b'):
+    # 2.0 containment: a step belongs to an epic, and the epic to the plan. There
+    # is no `pipeline_fk` on a step — the plan is derived through the epic.
+    resp = post('/darwin_dev/epics',
+                {'pipeline_fk': ids['pipeline'], 'title': f'{label} epic',
+                 'category_fk': ids['category']})
+    assert resp['statusCode'] == 200, f'{label} epic POST: {resp}'
+    ids['epic'] = extract_id(resp)
+
+    for key in ('step_a', 'step_b', 'step_c'):
         resp = post('/darwin_dev/pipeline_steps',
-                    {'pipeline_fk': ids['pipeline'], 'title': f'{label} {key}',
+                    {'epic_fk': ids['epic'], 'title': f'{label} {key}',
                      'run': 'auto'})
         assert resp['statusCode'] == 200, f'{label} {key} POST: {resp}'
         ids[key] = extract_id(resp)
@@ -112,15 +158,6 @@ def _build_plan(post, label):
     assert resp['statusCode'] == 200, f'{label} dep POST: {resp}'
     ids['dep'] = extract_id(resp)
 
-    resp = post('/darwin_dev/projects', {'project_name': f'{label} project'})
-    assert resp['statusCode'] == 200
-    ids['project'] = extract_id(resp)
-
-    resp = post('/darwin_dev/categories', {'category_name': f'{label} category',
-                                           'project_fk': ids['project']})
-    assert resp['statusCode'] == 200
-    ids['category'] = extract_id(resp)
-
     resp = post('/darwin_dev/requirements',
                 {'title': f'{label} requirement', 'requirement_status': 'authoring',
                  'category_fk': ids['category'], 'coordination_type': 'implemented',
@@ -128,7 +165,8 @@ def _build_plan(post, label):
     assert resp['statusCode'] == 200
     ids['requirement'] = extract_id(resp)
 
-    # Composite-PK junction: 201 with no body (nothing to read back on).
+    # PK is `requirement_fk` alone and there is no `id` column, so `rest_post`
+    # skips the read-back: 201 with no body.
     resp = post('/darwin_dev/pipeline_step_requirements',
                 {'step_fk': ids['step_a'], 'requirement_fk': ids['requirement']})
     assert resp['statusCode'] in (200, 201), f'{label} link POST: {resp}'
@@ -142,15 +180,7 @@ def victim_plan(invoke, test_data, db_connection, creator_fk):
     import pymysql as _pymysql
     try:
         with db_connection.cursor() as cur:
-            cur.execute("DELETE FROM pipeline_step_deps WHERE step_fk IN "
-                        "(SELECT id FROM pipeline_steps WHERE creator_fk = %s)", (creator_fk,))
-            cur.execute("DELETE FROM pipeline_step_requirements WHERE step_fk IN "
-                        "(SELECT id FROM pipeline_steps WHERE creator_fk = %s)", (creator_fk,))
-            cur.execute("DELETE FROM pipeline_steps WHERE creator_fk = %s", (creator_fk,))
-            cur.execute("DELETE FROM pipelines WHERE creator_fk = %s", (creator_fk,))
-            cur.execute("DELETE FROM requirements WHERE creator_fk = %s", (creator_fk,))
-            cur.execute("DELETE FROM categories WHERE creator_fk = %s", (creator_fk,))
-            cur.execute("DELETE FROM projects WHERE creator_fk = %s", (creator_fk,))
+            _teardown_plan(cur, creator_fk)
         db_connection.commit()
     except _pymysql.MySQLError:
         db_connection.rollback()
@@ -250,26 +280,33 @@ def test_the_owner_can_still_read_their_own_requirement_links(invoke, victim_pla
     assert len(_rows(resp)) == 1
 
 
-def test_a_wall_clock_gate_row_survives_the_scoping(invoke, victim_plan, db_connection):
-    """`dep_step_fk` is NULL on a time gate; scoping must not filter those out.
+def test_every_edge_on_an_owned_step_is_returned_not_just_the_scope_column(
+        invoke, victim_plan, db_connection):
+    """`verify` columns are checked on INSERT only, never ANDed into a read.
 
-    This is why `verify` columns are checked on INSERT only and never ANDed into a
-    read predicate: `dep_step_fk IN (...)` would have hidden every wall-clock gate
-    in the plan, silently, and an ungated-looking step gets LAUNCHED.
+    The 1.0 form of this test planted a wall-clock gate row (`dep_step_fk` NULL,
+    `time_at` set) and proved the read did not filter it away — a
+    `dep_step_fk IN (...)` predicate would have hidden every time gate in the
+    plan, and an ungated-looking step gets LAUNCHED. 2.0 moved the time gate onto
+    `pipeline_steps.not_before`, so `dep_step_fk` is NOT NULL and there is no
+    such row to plant. What survives, and is asserted here, is the general
+    property that only the SCOPE column narrows a read: a second edge on the same
+    step comes back too.
     """
     resp = invoke('POST', '/darwin_dev/pipeline_step_deps',
-                  body={'step_fk': victim_plan['step_b'], 'dep_step_fk': 'NULL',
-                        'time_at': '2026-07-27 06:31:38'})
+                  body={'step_fk': victim_plan['step_b'],
+                        'dep_step_fk': victim_plan['step_c']})
     assert resp['statusCode'] == 200
-    time_dep = extract_id(resp)
+    extra = extract_id(resp)
     try:
         rows = _rows(invoke('GET', '/darwin_dev/pipeline_step_deps',
                             query={'step_fk': str(victim_plan['step_b'])}))
-        assert str(time_dep) in {str(row['id']) for row in rows}
-        assert any(row['dep_step_fk'] is None for row in rows)
+        returned = {str(row['id']) for row in rows}
+        assert str(extra) in returned
+        assert str(victim_plan['dep']) in returned
     finally:
         with db_connection.cursor() as cur:
-            cur.execute("DELETE FROM pipeline_step_deps WHERE id = %s", (time_dep,))
+            cur.execute("DELETE FROM pipeline_step_deps WHERE id = %s", (extra,))
         db_connection.commit()
 
 
@@ -286,39 +323,56 @@ def test_unauthenticated_access_to_a_junction_is_403(victim_plan):
 # PUT — the unscoped `else` branch of rest_put
 # ---------------------------------------------------------------------------
 
-def test_put_cannot_repoint_another_users_edge(intruder, victim_plan, db_connection):
+def test_put_cannot_repoint_another_users_edge(intruder, victim_plan,
+                                               intruder_plan, db_connection):
     """Re-pointing an edge silently rewires another user's execution order."""
     before = _dep_row(db_connection, victim_plan['dep'])
     resp = intruder('PUT', '/darwin_dev/pipeline_step_deps',
-                    body=[{'id': str(victim_plan['dep']), 'dep_step_fk': 'NULL'}])
+                    body=[{'id': str(victim_plan['dep']),
+                           'dep_step_fk': str(intruder_plan['step_c'])}])
     assert resp['statusCode'] == 204            # matched nothing
     assert _dep_row(db_connection, victim_plan['dep']) == before
 
 
 def test_bulk_put_mixing_own_and_foreign_edges_only_touches_own(
         intruder, victim_plan, intruder_plan, db_connection):
-    """The CASE-syntax path. A mixed batch must not carry the foreign row through."""
+    """The CASE-syntax path. A mixed batch must not carry the foreign row through.
+
+    Both rows name a step the INTRUDER owns, so the write guard has nothing to
+    refuse — the only thing that can keep the victim's row out of the statement is
+    the scoping predicate, which is exactly what is under test here.
+    """
     victim_before = _dep_row(db_connection, victim_plan['dep'])
     resp = intruder('PUT', '/darwin_dev/pipeline_step_deps', body=[
-        {'id': str(intruder_plan['dep']), 'time_at': '2026-07-27 01:02:03'},
-        {'id': str(victim_plan['dep']), 'time_at': '2026-07-27 01:02:03'},
+        {'id': str(intruder_plan['dep']),
+         'dep_step_fk': str(intruder_plan['step_c'])},
+        {'id': str(victim_plan['dep']),
+         'dep_step_fk': str(intruder_plan['step_c'])},
     ])
     assert resp['statusCode'] in (200, 204)
     assert _dep_row(db_connection, victim_plan['dep']) == victim_before
     with db_connection.cursor() as cur:
-        cur.execute("SELECT time_at FROM pipeline_step_deps WHERE id = %s",
+        cur.execute("SELECT dep_step_fk FROM pipeline_step_deps WHERE id = %s",
                     (intruder_plan['dep'],))
-        assert cur.fetchone()['time_at'] is not None     # the intruder's own row DID update
+        # the intruder's own row DID update
+        assert str(cur.fetchone()['dep_step_fk']) == str(intruder_plan['step_c'])
+        # put it back: later cases assert on this edge's shape
+        cur.execute("UPDATE pipeline_step_deps SET dep_step_fk = %s WHERE id = %s",
+                    (intruder_plan['step_a'], intruder_plan['dep']))
+    db_connection.commit()
 
 
 def test_the_owner_can_still_update_their_own_edge(invoke, victim_plan, db_connection):
     resp = invoke('PUT', '/darwin_dev/pipeline_step_deps',
                   body=[{'id': str(victim_plan['dep']),
-                         'time_at': '2026-07-27 02:03:04'}])
+                         'dep_step_fk': str(victim_plan['step_c'])}])
     assert resp['statusCode'] == 200
     with db_connection.cursor() as cur:
-        cur.execute("UPDATE pipeline_step_deps SET time_at = NULL WHERE id = %s",
+        cur.execute("SELECT dep_step_fk FROM pipeline_step_deps WHERE id = %s",
                     (victim_plan['dep'],))
+        assert str(cur.fetchone()['dep_step_fk']) == str(victim_plan['step_c'])
+        cur.execute("UPDATE pipeline_step_deps SET dep_step_fk = %s WHERE id = %s",
+                    (victim_plan['step_a'], victim_plan['dep']))
     db_connection.commit()
 
 
@@ -369,8 +423,8 @@ def test_bulk_delete_cannot_remove_another_users_edge(intruder, victim_plan,
 def test_the_owner_can_still_delete_their_own_edge(invoke, victim_plan, db_connection):
     """Create-and-remove, so the fixture's edge survives for the tests after this."""
     resp = invoke('POST', '/darwin_dev/pipeline_step_deps',
-                  body={'step_fk': victim_plan['step_a'], 'dep_step_fk': 'NULL',
-                        'time_at': '2026-07-27 03:04:05'})
+                  body={'step_fk': victim_plan['step_a'],
+                        'dep_step_fk': victim_plan['step_c']})
     assert resp['statusCode'] == 200
     throwaway = extract_id(resp)
     assert invoke('DELETE', '/darwin_dev/pipeline_step_deps',
@@ -444,10 +498,10 @@ def test_bulk_post_refuses_the_whole_batch_for_one_foreign_row(
                     "SELECT COUNT(*) AS n FROM pipeline_step_deps WHERE step_fk = %s",
                     (intruder_plan['step_a'],))
     resp = intruder('POST', '/darwin_dev/pipeline_step_deps', body=[
-        {'step_fk': str(intruder_plan['step_a']), 'dep_step_fk': None,
-         'time_at': '2026-07-27 04:05:06'},
-        {'step_fk': str(victim_plan['step_a']), 'dep_step_fk': None,
-         'time_at': '2026-07-27 04:05:06'},
+        {'step_fk': str(intruder_plan['step_a']),
+         'dep_step_fk': str(intruder_plan['step_c'])},
+        {'step_fk': str(victim_plan['step_a']),
+         'dep_step_fk': str(intruder_plan['step_c'])},
     ])
     assert resp['statusCode'] == 403
     assert _count(db_connection,
@@ -464,7 +518,8 @@ def test_post_without_the_scope_column_is_400(intruder, victim_plan):
 
 
 def test_a_nonexistent_step_is_still_the_foreign_key_409_not_a_403(intruder,
-                                                                   victim_plan):
+                                                                   victim_plan,
+                                                                   intruder_plan):
     """Absent and foreign are DIFFERENT answers, deliberately.
 
     403 is reserved for "this row belongs to somebody else". A step id that does
@@ -477,11 +532,13 @@ def test_a_nonexistent_step_is_still_the_foreign_key_409_not_a_403(intruder,
     owns", of a row that does not exist.
     """
     foreign = intruder('POST', '/darwin_dev/pipeline_step_deps',
-                       body={'step_fk': str(victim_plan['step_a'])})
+                       body={'step_fk': str(victim_plan['step_a']),
+                             'dep_step_fk': str(intruder_plan['step_c'])})
     assert foreign['statusCode'] == 403
 
     missing = intruder('POST', '/darwin_dev/pipeline_step_deps',
-                       body={'step_fk': '999999999'})
+                       body={'step_fk': '999999999',
+                             'dep_step_fk': str(intruder_plan['step_c'])})
     assert missing['statusCode'] == 409
     assert json.loads(missing['body'])['errno'] == 1452
 
@@ -586,7 +643,8 @@ def test_bulk_put_cannot_smuggle_a_foreign_parent_in_one_row(
         intruder, victim_plan, intruder_plan, db_connection):
     """One CASE statement covers every row, so one bad row refuses the batch."""
     resp = intruder('PUT', '/darwin_dev/pipeline_step_deps', body=[
-        {'id': str(intruder_plan['dep']), 'time_at': '2026-07-27 05:06:07'},
+        {'id': str(intruder_plan['dep']),
+         'dep_step_fk': str(intruder_plan['step_c'])},
         {'id': str(intruder_plan['dep']), 'step_fk': str(victim_plan['step_a'])},
     ])
     assert resp['statusCode'] == 403
@@ -600,8 +658,8 @@ def test_the_owner_can_still_move_their_own_edge_between_their_own_steps(
         invoke, victim_plan, db_connection):
     """Rewriting the scope column is legitimate — within your own rows."""
     resp = invoke('POST', '/darwin_dev/pipeline_step_deps',
-                  body={'step_fk': victim_plan['step_a'], 'dep_step_fk': 'NULL',
-                        'time_at': '2026-07-27 07:08:09'})
+                  body={'step_fk': victim_plan['step_a'],
+                        'dep_step_fk': victim_plan['step_c']})
     assert resp['statusCode'] == 200
     moved = extract_id(resp)
     try:

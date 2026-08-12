@@ -99,8 +99,8 @@ def test_every_unscoped_table_is_registered(schema):
     THE invariant of req #3122. `profiles` is scoped by `id` and is the one
     permitted special case; `UNSCOPED_TABLES` is the written-down escape hatch and
     is empty. Anything else absent from both is unscoped on GET/PUT/DELETE/POST.
-    Derived from schema.sql, so it fails helpfully if pipeline2_step_deps or
-    pipeline2_step_requirements (neither carries creator_fk) is missing from
+    Derived from schema.sql, so it fails helpfully if pipeline_step_deps or
+    pipeline_step_requirements (neither carries creator_fk) is missing from
     JUNCTION_OWNERSHIP.
     """
     unscoped = {name for name, info in schema.items()
@@ -305,7 +305,7 @@ def test_allows_a_write_whose_parents_are_all_owned():
     cursor = FakeCursor(ROWS)
     assert check_junction_parent_ownership(
         cursor, 'pipeline_step_deps',
-        [{'step_fk': 1, 'dep_step_fk': 2, 'time_at': None}], 'victim') is None
+        [{'step_fk': 1, 'dep_step_fk': 2}], 'victim') is None
 
 
 def test_refuses_a_foreign_scope_parent():
@@ -356,11 +356,20 @@ def test_one_foreign_id_refuses_even_when_the_others_are_absent():
 
 
 def test_null_verify_columns_are_skipped_not_refused():
-    """A wall-clock gate row carries `dep_step_fk: None` and is perfectly legal."""
+    """A NULL verify column names no row, so there is nothing to own.
+
+    The guard's answer must be "not my refusal to make" — whether the column is
+    nullable is the DATABASE's question, and a NOT NULL one answers it with 1048.
+    Turning an absent reference into a 403 would blame the caller's identity for
+    a value that names nobody. (Until req #3356 the live example was 1.0's
+    wall-clock gate row, which legitimately carried `dep_step_fk: None`;
+    `pipeline_step_deps.dep_step_fk` is NOT NULL, and the guard's behaviour on a
+    NULL is unchanged and still the one under test.)
+    """
     cursor = FakeCursor(ROWS)
     assert check_junction_parent_ownership(
         cursor, 'pipeline_step_deps',
-        [{'step_fk': 1, 'dep_step_fk': None, 'time_at': '2026-07-27 06:31:38'}],
+        [{'step_fk': 1, 'dep_step_fk': None}],
         'victim') is None
 
 
@@ -539,7 +548,7 @@ def test_put_omitting_the_scope_column_is_not_a_400():
     """
     cursor = FakeCursor(ROWS)
     assert check_junction_parent_ownership(
-        cursor, 'pipeline_step_deps', [{'time_at': '2026-07-27 00:00:00'}],
+        cursor, 'pipeline_step_deps', [{'id': 7}],
         'victim', require_scope=False) is None
 
 

@@ -16,15 +16,15 @@ from auth_utils import (get_authenticated_user, CREATOR_FK_TABLES,
 import pipeline2_compose
 
 # req #3367 — the ONE non-generic route (remediation B, composing form).
-# `pipeline2_compose` / `pipeline2_compose_epic` are not real tables; they are
+# `pipeline_compose` / `pipeline_compose_epic` are not real tables; they are
 # reserved route names dispatched to `pipeline2_compose.py` BEFORE the generic
 # `{database}/{table}` gateway ever sees them. GET only, `id` as a query
 # string parameter — same grammar as every other single-row lookup
-# (`GET /darwin/pipeline2_compose?id=5`), so the existing darwin-mcp REST
+# (`GET /darwin/pipeline_compose?id=5`), so the existing darwin-mcp REST
 # client needs no new URL-building code, only a new response-shape method.
-PIPELINE2_COMPOSE_ROUTES = {
-    'pipeline2_compose': pipeline2_compose.compose_pipeline2,
-    'pipeline2_compose_epic': pipeline2_compose.compose_pipeline2_epic,
+PIPELINE_COMPOSE_ROUTES = {
+    'pipeline_compose': pipeline2_compose.compose_pipeline2,
+    'pipeline_compose_epic': pipeline2_compose.compose_pipeline2_epic,
 }
 
 
@@ -147,8 +147,8 @@ def rest_api_from_table(event, db_info):
 
     # req #3367 — the composing route, dispatched BEFORE the generic gateway
     # (these are not real tables, so DESC/CRUD below would only ever fail).
-    if table in PIPELINE2_COMPOSE_ROUTES:
-        return _rest_pipeline2_compose(table, conn, event, http_method,
+    if table in PIPELINE_COMPOSE_ROUTES:
+        return _rest_pipeline_compose(table, conn, event, http_method,
                                        authenticated_user)
 
     # Block unauthenticated access to user-scoped tables.
@@ -196,7 +196,7 @@ def rest_api_from_table(event, db_info):
         return rest_delete(delete_method, conn, database, table, body, authenticated_user)
 
 
-def _rest_pipeline2_compose(table, conn, event, http_method, authenticated_user):
+def _rest_pipeline_compose(table, conn, event, http_method, authenticated_user):
     """req #3367 — GET-only, `id` as a query-string parameter, same shape as
     every other single-row lookup. Not a real table, so PUT/POST/DELETE and a
     missing/malformed `id` are refused here rather than reaching pymysql."""
@@ -217,7 +217,7 @@ def _rest_pipeline2_compose(table, conn, event, http_method, authenticated_user)
                                      "parameter is required")
 
     try:
-        composed = PIPELINE2_COMPOSE_ROUTES[table](conn, row_id, authenticated_user)
+        composed = PIPELINE_COMPOSE_ROUTES[table](conn, row_id, authenticated_user)
     except ValueError as e:
         # A data-integrity issue (epic names a pipeline_fk that does not
         # resolve for this creator) — real but not the caller's fault to fix

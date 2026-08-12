@@ -23,12 +23,12 @@ exception must never take the real rows down with it, so it degrades to a
 WITHHELD stub exactly as darwin-mcp's `_derive` guard did.
 
 Scoping mirrors what the generic gateway already does for every read of a
-`CREATOR_FK_TABLES` table (`rest_get_table.py`): every `pipeline2_pipelines` /
-`pipeline2_epics` / `pipeline2_steps` / `requirements` SELECT carries
+`CREATOR_FK_TABLES` table (`rest_get_table.py`): every `pipelines` /
+`epics` / `pipeline_steps` / `requirements` SELECT carries
 `creator_fk = %s` explicitly, not merely inherited through containment — the
 same defense-in-depth the generic gateway gave for free, replicated by hand
-because this route bypasses it. `pipeline2_step_requirements` and
-`pipeline2_step_deps` carry no `creator_fk` (JUNCTION_OWNERSHIP, req #3122) —
+because this route bypasses it. `pipeline_step_requirements` and
+`pipeline_step_deps` carry no `creator_fk` (JUNCTION_OWNERSHIP, req #3122) —
 scoped by narrowing to the already-scoped `step_fk` ids fetched above them,
 exactly as the daemon's own composed read did.
 """
@@ -283,14 +283,14 @@ def compose_pipeline2(conn, pipeline_id, authenticated_user):
     """THE whole-plan composed render. Returns None when not found (or not
     owned by `authenticated_user`) — the caller answers 404."""
     with conn.cursor(pymysql.cursors.DictCursor) as cursor:
-        pipelines = _select(cursor, _PIPELINE_COLUMNS, 'pipeline2_pipelines',
+        pipelines = _select(cursor, _PIPELINE_COLUMNS, 'pipelines',
                             'id = %s AND creator_fk = %s',
                             (pipeline_id, authenticated_user))               # read 1
         if not pipelines:
             return None
         pipeline = pipelines[0]
 
-        epics = _select(cursor, _EPIC_COLUMNS, 'pipeline2_epics',
+        epics = _select(cursor, _EPIC_COLUMNS, 'epics',
                         'pipeline_fk = %s AND creator_fk = %s',
                         (pipeline_id, authenticated_user), order_by='id ASC')  # read 2
 
@@ -298,7 +298,7 @@ def compose_pipeline2(conn, pipeline_id, authenticated_user):
         if epics:
             epic_ids = sorted(e['id'] for e in epics)
             steps = _select(
-                cursor, _STEP_COLUMNS, 'pipeline2_steps',
+                cursor, _STEP_COLUMNS, 'pipeline_steps',
                 f'epic_fk IN {_in_clause(len(epic_ids))} AND creator_fk = %s',
                 tuple(epic_ids) + (authenticated_user,), order_by='id ASC')    # read 3
         pipeline['step_count'] = len(steps)
@@ -307,10 +307,10 @@ def compose_pipeline2(conn, pipeline_id, authenticated_user):
         if steps:
             step_ids = sorted(s['id'] for s in steps)
             in_clause = _in_clause(len(step_ids))
-            links = _select(cursor, _LINK_COLUMNS, 'pipeline2_step_requirements',
+            links = _select(cursor, _LINK_COLUMNS, 'pipeline_step_requirements',
                             f'step_fk IN {in_clause}', tuple(step_ids),
                             order_by='step_fk ASC, requirement_fk ASC')       # read 4
-            deps = _select(cursor, _DEP_COLUMNS, 'pipeline2_step_deps',
+            deps = _select(cursor, _DEP_COLUMNS, 'pipeline_step_deps',
                            f'step_fk IN {in_clause}', tuple(step_ids),
                            order_by='step_fk ASC, id ASC')                    # read 5
 
@@ -343,14 +343,14 @@ def compose_pipeline2_epic(conn, epic_id, authenticated_user):
     row are both required (two independent pause scopes). Returns None when
     not found / not owned."""
     with conn.cursor(pymysql.cursors.DictCursor) as cursor:
-        epics = _select(cursor, _EPIC_COLUMNS, 'pipeline2_epics',
+        epics = _select(cursor, _EPIC_COLUMNS, 'epics',
                         'id = %s AND creator_fk = %s',
                         (epic_id, authenticated_user))                        # read 1
         if not epics:
             return None
         epic = epics[0]
 
-        pipelines = _select(cursor, _PIPELINE_COLUMNS, 'pipeline2_pipelines',
+        pipelines = _select(cursor, _PIPELINE_COLUMNS, 'pipelines',
                             'id = %s AND creator_fk = %s',
                             (epic['pipeline_fk'], authenticated_user))        # read 2
         if not pipelines:
@@ -360,7 +360,7 @@ def compose_pipeline2_epic(conn, epic_id, authenticated_user):
                 "creator. Data integrity issue — report it.")
         pipeline = pipelines[0]
 
-        steps = _select(cursor, _STEP_COLUMNS, 'pipeline2_steps',
+        steps = _select(cursor, _STEP_COLUMNS, 'pipeline_steps',
                         'epic_fk = %s AND creator_fk = %s',
                         (epic_id, authenticated_user), order_by='id ASC')     # read 3
         epic['step_count'] = len(steps)
@@ -369,10 +369,10 @@ def compose_pipeline2_epic(conn, epic_id, authenticated_user):
         if steps:
             step_ids = sorted(s['id'] for s in steps)
             in_clause = _in_clause(len(step_ids))
-            links = _select(cursor, _LINK_COLUMNS, 'pipeline2_step_requirements',
+            links = _select(cursor, _LINK_COLUMNS, 'pipeline_step_requirements',
                             f'step_fk IN {in_clause}', tuple(step_ids),
                             order_by='step_fk ASC, requirement_fk ASC')       # read 4
-            deps = _select(cursor, _DEP_COLUMNS, 'pipeline2_step_deps',
+            deps = _select(cursor, _DEP_COLUMNS, 'pipeline_step_deps',
                            f'step_fk IN {in_clause}', tuple(step_ids),
                            order_by='step_fk ASC, id ASC')                    # read 5
 

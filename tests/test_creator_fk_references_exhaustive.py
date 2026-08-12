@@ -3,9 +3,9 @@
 `test_creator_fk_references.py` covers the attack in depth on a handful of
 representative columns. This file covers it in BREADTH: the requirement asks for
 "cross-tenant test cases in the #3094/#3122 pattern **for every column, both
-verbs**", and that is 47 columns across 29 tables (see
+verbs**", and that is 40 columns across 26 tables (see
 `test_the_matrix_is_the_whole_registry` for the count's own history), so it is
-generated from the registry rather than hand-written 94 times.
+generated from the registry rather than hand-written 80 times.
 
 Generating from `CREATOR_TABLE_REFERENCES` is also the point. A hand-written list
 would drift from the registry exactly the way the registry would have drifted from
@@ -71,23 +71,20 @@ def _required_columns(table, seed):
         'customer_releases': {},
         'dev_servers': {'port': 3000 + (seed_int(seed) % 8), 'pid': 999000,
                         'workspace_path': f'/tmp/{seed}'},
-        'epics': {'title': f'{seed}-epic'},
         'map_runs': {'run_id': seed_int(seed), 'activity_id': f'{seed}-act',
                      'activity_name': 'ride', 'start_time': '2026-07-27 00:00:00',
                      'run_time_sec': 1, 'distance_mi': 1},
         # Req #3224. NO required non-reference columns: `polls` and `claimed_at`
-        # carry DEFAULTs, `epic_key` is GENERATED, and `creator_fk` is forced
+        # carry DEFAULTs, `epic2_key` is GENERATED, and `creator_fk` is forced
         # from the token — so the body is exactly the three references the test
-        # adds. Its UNIQUE (pipeline_fk, epic_key) is why `_drop` matters here,
+        # adds. Its UNIQUE (pipeline2_fk, epic2_key) is why `_drop` matters here,
         # like the three tables named in that function.
         'orchestration_claims': {},
-        'pipeline_steps': {'title': f'{seed}-step'},
-        'pipelines': {'title': f'{seed}-pipeline'},
-        # Req #3337. Like `epics`/`pipelines` above, the only NOT NULL,
-        # no-default, non-reference column each carries is `title`.
-        'pipeline2_pipelines': {'title': f'{seed}-p2pipeline'},
-        'pipeline2_epics': {'title': f'{seed}-p2epic'},
-        'pipeline2_steps': {'title': f'{seed}-p2step'},
+        # Req #3337. The only NOT NULL, no-default, non-reference column each of
+        # the three carries is `title`.
+        'pipelines': {'title': f'{seed}-p2pipeline'},
+        'epics': {'title': f'{seed}-p2epic'},
+        'pipeline_steps': {'title': f'{seed}-p2step'},
         'recurring_tasks': {'description': f'{seed}-rt', 'recurrence': 'daily',
                             'anchor_date': '2026-07-27'},
         'requirements': {'title': f'{seed}-req', 'ai_model': 'opus',
@@ -136,8 +133,15 @@ def test_the_matrix_is_the_whole_registry():
     # `('category_fk', 'categories')`/`('epic_fk', 'epics')` entry — taking
     # TRIPLES to 47 and, since `features` was itself a PARENT of nothing else
     # registered, PARENTS to 23.
-    assert len(TRIPLES) == 47, f'expected 47 registered columns, generated {len(TRIPLES)}'
-    assert len(PARENTS) == 23, PARENTS
+    #
+    # Req #3356 drops the whole 1.0 plan layer (migration 20260812175325): the
+    # `epics`, `pipelines` and `pipeline_steps` registry entries go with their
+    # tables (-3 columns), and so do 1.0's two `swarm_sessions` and two
+    # `orchestration_claims` attribution columns (-4) — TRIPLES 47 -> 40.
+    # `epics` and `pipelines` were PARENTS of nothing but each other and those
+    # attribution columns, so PARENTS 23 -> 21.
+    assert len(TRIPLES) == 40, f'expected 40 registered columns, generated {len(TRIPLES)}'
+    assert len(PARENTS) == 21, PARENTS
     assert ('test_runs', 'test_plan_fk', 'test_plans') in TRIPLES
 
 
@@ -170,10 +174,9 @@ PURGE_ORDER = (
     # only this safety-net sweep for rows a test case creates and does not
     # itself `_drop`.
     'orchestration_claims',
-    'pipeline_steps', 'pipelines',
-    'pipeline2_steps', 'pipeline2_epics', 'pipeline2_pipelines',
+    'pipeline_steps', 'epics', 'pipelines',
     'test_results', 'test_runs', 'test_plans', 'test_cases',
-    'requirements', 'epics',
+    'requirements',
     'tasks', 'recurring_tasks', 'areas', 'domains',
     'builds', 'branches', 'build_projects', 'customers',
     'map_runs', 'map_routes',
@@ -211,7 +214,7 @@ def _make_invoke(sub):
 
 
 def _build_graph(invoke, seed):
-    """One owned row in each of the 23 parent tables, created THROUGH the gateway.
+    """One owned row in each of the 21 parent tables, created THROUGH the gateway.
 
     Doubling as the owner-side regression proof: every one of these POSTs now
     runs the ownership guard, so a rule that over-refuses fails here before any
@@ -239,9 +242,8 @@ def _build_graph(invoke, seed):
     post('build_projects', req('build_projects'))
     post('swarm_sessions', req('swarm_sessions'))
     post('swarm_starts', req('swarm_starts'))
-    post('pipelines', req('pipelines'))
     post('agent_telemetry_runs', req('agent_telemetry_runs'))
-    post('pipeline2_pipelines', req('pipeline2_pipelines'))
+    post('pipelines', req('pipelines'))
 
     # One level down.
     post('categories', dict(req('categories'), project_fk=ids['projects']))
@@ -251,19 +253,18 @@ def _build_graph(invoke, seed):
                                       run_fk=ids['agent_telemetry_runs']))
 
     # Two levels down.
-    post('epics', dict(req('epics'), category_fk=ids['categories']))
     post('test_plans', dict(req('test_plans'), category_fk=ids['categories']))
     post('test_cases', dict(req('test_cases'), category_fk=ids['categories']))
     post('recurring_tasks', dict(req('recurring_tasks'), area_fk=ids['areas']))
     post('builds', dict(req('builds'), branch_fk=ids['branches']))
-    post('pipeline2_epics', dict(req('pipeline2_epics'),
-                                 pipeline_fk=ids['pipeline2_pipelines'],
+    post('epics', dict(req('epics'),
+                                 pipeline_fk=ids['pipelines'],
                                  category_fk=ids['categories']))
 
     # Three.
     post('requirements', dict(req('requirements'), category_fk=ids['categories']))
     post('test_runs', dict(req('test_runs'), test_plan_fk=ids['test_plans']))
-    post('pipeline2_steps', dict(req('pipeline2_steps'), epic_fk=ids['pipeline2_epics']))
+    post('pipeline_steps', dict(req('pipeline_steps'), epic_fk=ids['epics']))
 
     missing = [p for p in PARENTS if p not in ids]
     assert not missing, f'{seed} graph is missing parent rows for {missing}'
@@ -366,7 +367,7 @@ def _value(conn, table, row_id, column):
 @pytest.mark.parametrize('triple', TRIPLES, ids=[_tid(t) for t in TRIPLES])
 def test_post_naming_a_victim_parent_is_refused(triple, victim_graph,
                                                 attacker_graph, db_connection):
-    """50 cases (four of them #3337's, two of them req #3369's, one req #3202's,
+    """40 cases (four of them #3337's, two of them req #3369's, one req #3202's,
     two more #3350's, against a
     victim-owned pipeline2_pipelines -> pipeline2_epics chain built by
     `_build_graph`). The attacker's own, otherwise-valid row, aimed at the
@@ -436,7 +437,7 @@ def test_put_repointing_at_a_victim_parent_is_refused(triple, victim_graph,
 @pytest.mark.parametrize('triple', TRIPLES, ids=[_tid(t) for t in TRIPLES])
 def test_no_divergent_spelling_of_a_victim_parent_lands_on_any_column(
         triple, victim_graph, attacker_graph, db_connection):
-    """The #3122 value-divergence payloads, applied to all 50 columns.
+    """The #3122 value-divergence payloads, applied to all 40 columns.
 
     Each is a spelling MySQL reads as the victim's id and Python does not. Any
     one accepted is the same cross-tenant write through a different door, so the

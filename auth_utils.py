@@ -225,37 +225,30 @@ CREATOR_FK_TABLES = frozenset({
     # Req #3096 — per-document actual-token rows (migration 074). Carries
     # creator_fk like its parent row; scope generic passthrough the same way.
     'agent_telemetry_row_docs',
-    # Req #3111 — Swarm Orchestration foundation (migration 076). epics,
-    # pipelines and pipeline_steps each carry a NOT NULL creator_fk, so
-    # membership here is not optional hardening — it is what makes the generic
-    # passthrough work at all: rest_post injects creator_fk only for tables in
-    # this set, so an unregistered table's INSERT fails outright (the column has
-    # no default), and its GET would return every user's rows unscoped.
-    #
-    # pipeline_step_requirements and pipeline_step_deps stay OUT: neither has a
-    # creator_fk. They inherit ownership from their step, the same call made for
-    # every other junction (swarm_start_sessions, agent_documents, ...) — and
-    # since req #3122 that inheritance is ENFORCED, in JUNCTION_OWNERSHIP below,
-    # rather than merely asserted in a migration comment.
-    'epics', 'pipelines', 'pipeline_steps',
+    # Req #3111's `epics` / `pipelines` / `pipeline_steps` were registered here
+    # and were REMOVED at req #3356 (migration 20260812175325) along with the
+    # rest of the 1.0 plan layer. Their parallel-era successors are the three
+    # `pipeline2_*` tables below, registered on identical terms.
     # Req #3224 — the durable orchestration reservation (migration
     # 20260801150404). Carries a NOT NULL creator_fk, so membership here is what
-    # makes the generic passthrough work at all, exactly as for the #3111 three
-    # above. It is also the security-relevant half of a COORDINATION table: an
-    # unscoped LIST read would publish which machine and terminal every user is
-    # orchestrating from, and an unscoped DELETE would let anyone release
+    # makes the generic passthrough work at all: rest_post injects creator_fk
+    # only for tables in this set, so an unregistered table's INSERT fails
+    # outright (the column has no default), and its GET would return every user's
+    # rows unscoped. It is also the security-relevant half of a COORDINATION
+    # table: an unscoped LIST read publishes which machine and terminal every
+    # user is orchestrating from, and an unscoped DELETE would let anyone release
     # somebody else's live reservation — which is not a leak but a way to make
     # two orchestrators believe they both hold a scope.
     'orchestration_claims',
-    # Req #3337 — Pipeline 2.0 plan layer (migration 20260808115509). The
-    # parallel-era images of epics/pipelines/pipeline_steps: each carries a NOT
-    # NULL creator_fk, so membership here is what makes the generic passthrough
-    # work at all, exactly as for the #3111 three above.
+    # Req #3337 — Pipeline 2.0 plan layer (migration 20260808115509). The plan,
+    # its epics and its steps each carry a NOT NULL creator_fk, so membership
+    # here is what makes the generic passthrough work at all, exactly as for
+    # `orchestration_claims` above.
     #
-    # pipeline2_step_requirements and pipeline2_step_deps stay OUT: neither has
+    # pipeline_step_requirements and pipeline_step_deps stay OUT: neither has
     # a creator_fk. They inherit ownership from their step, in JUNCTION_OWNERSHIP
     # below.
-    'pipeline2_pipelines', 'pipeline2_epics', 'pipeline2_steps',
+    'pipelines', 'epics', 'pipeline_steps',
 })
 
 PROFILE_TABLE = 'profiles'
@@ -272,6 +265,8 @@ PROFILE_TABLE = 'profiles'
 # with another user's `id` fell into the unscoped `else` branch of rest_put /
 # rest_delete and rewrote or deleted that user's gate; `POST` with a foreign
 # `step_fk` injected a gate into their plan. Same shape on the other twelve.
+# (`pipeline_step_deps` and the rest of the 1.0 plan layer were dropped at
+# req #3356; the measurement is history and the rule it established is not.)
 #
 # NOT "the first junction with a surrogate id". Req #3111 flagged
 # `pipeline_step_deps` as the first junction whose rows are individually
@@ -310,31 +305,20 @@ PROFILE_TABLE = 'profiles'
 # for the one place that rule bites.
 
 JUNCTION_OWNERSHIP = {
-    # Swarm Orchestration (req #3111 migration 076; MCP surface req #3113).
-    # An edge and a requirement link both belong to their STEP.
+    # Pipeline 2.0 plan layer (req #3337, migration 20260808115509). An edge and
+    # a requirement link both belong to their STEP. `dep_step_fk` needs `verify`
+    # because it is ON DELETE RESTRICT: a cross-tenant edge would make somebody
+    # else's step undeletable, a denial of service rather than merely a leak.
+    #
+    # The 1.0 pair `pipeline_step_deps` / `pipeline_step_requirements` sat here
+    # on identical terms — they were req #3122's worked example — until
+    # req #3356 (migration 20260812175325) dropped the whole 1.0 plan layer.
     'pipeline_step_deps': {
         'scope': ('step_fk', 'pipeline_steps'),
-        # A cross-tenant edge is not just a leak: `dep_step_fk` is ON DELETE
-        # RESTRICT, so an edge pointing at somebody else's step would make THEIR
-        # step undeletable — a denial of service on another user's plan edit.
         'verify': (('dep_step_fk', 'pipeline_steps'),),
     },
     'pipeline_step_requirements': {
         'scope': ('step_fk', 'pipeline_steps'),
-        'verify': (('requirement_fk', 'requirements'),),
-    },
-
-    # Pipeline 2.0 plan layer (req #3337, migration 20260808115509). Identical
-    # shape to the 1.0 pair above and for identical reasons. `dep_step_fk` needs
-    # `verify` because it is ON DELETE RESTRICT: a cross-tenant edge would make
-    # somebody else's step undeletable, a denial of service rather than merely a
-    # leak.
-    'pipeline2_step_deps': {
-        'scope': ('step_fk', 'pipeline2_steps'),
-        'verify': (('dep_step_fk', 'pipeline2_steps'),),
-    },
-    'pipeline2_step_requirements': {
-        'scope': ('step_fk', 'pipeline2_steps'),
         'verify': (('requirement_fk', 'requirements'),),
     },
 
@@ -443,10 +427,10 @@ UNSCOPED_TABLES = frozenset()
 # target. Two consequences, and the second is the one that has no recovery:
 #
 #   * ATTACHMENT. The attacker's row is now a child of the victim's row. On the
-#     22 columns below that are CASCADE or SET NULL, that is the whole of it: a
+#     25 columns below that are CASCADE or SET NULL, that is the whole of it: a
 #     cross-tenant write, the same refusal req #3122 makes for junctions.
 #
-#   * GRIEF-LOCK. On the 14 columns that are ON DELETE RESTRICT, the victim can
+#   * GRIEF-LOCK. On the 15 columns that are ON DELETE RESTRICT, the victim can
 #     no longer delete their own parent. `DELETE /darwin/test_plans?id=<mine>`
 #     answers 409 naming `fk_test_runs_plan` — a constraint held by a `test_runs`
 #     row the victim cannot see (it is scoped to the attacker), cannot list, and
@@ -481,7 +465,7 @@ UNSCOPED_TABLES = frozenset()
 # COLUMNS DELIBERATELY NOT HERE. `creator_fk` itself (forced from the token, and
 # the only FK on these tables that targets `profiles`), and any FK whose target
 # is NOT creator-scoped — there is nobody to steal from. As of migration
-# 20260808115509 there are no such columns: all 45 non-`creator_fk` FKs on the 42
+# 20260812175325 there are no such columns: all 40 non-`creator_fk` FKs on the 38
 # creator-scoped tables target creator-scoped tables.
 #
 # ADDING A COLUMN. You do not — `test_every_cross_tenant_fk_column_is_registered`
@@ -530,34 +514,26 @@ CREATOR_TABLE_REFERENCES = {
         ('session_fk', 'swarm_sessions'),                    # SET NULL
         ('machine_fk', 'machines'),                          # RESTRICT
     ),
-    'epics': (
-        ('category_fk', 'categories'),                       # RESTRICT
-    ),
     'map_runs': (
         ('map_route_fk', 'map_routes'),                      # SET NULL
     ),
     'orchestration_claims': (                                # req #3224
-        ('pipeline_fk', 'pipelines'),                        # CASCADE
-        ('epic_fk', 'epics'),                                # CASCADE
+        # The 1.0 scope pair (`pipeline_fk` -> `pipelines`, `epic_fk` ->
+        # `epics`) was dropped with the rest of the 1.0 plan layer at req #3356
+        # (migration 20260812175325).
         ('machine_fk', 'machines'),                          # RESTRICT
-        ('pipeline2_fk', 'pipeline2_pipelines'),             # CASCADE, req #3369
-        ('epic2_fk', 'pipeline2_epics'),                     # CASCADE, req #3369
+        ('pipeline_fk', 'pipelines'),             # CASCADE, req #3369
+        ('epic_fk', 'epics'),                     # CASCADE, req #3369
     ),
-    'pipeline_steps': (
-        ('pipeline_fk', 'pipelines'),                        # CASCADE
-    ),
-    'pipeline2_epics': (                                     # req #3337
-        ('pipeline_fk', 'pipeline2_pipelines'),              # CASCADE
+    'epics': (                                     # req #3337
+        ('pipeline_fk', 'pipelines'),              # CASCADE
         ('category_fk', 'categories'),                       # RESTRICT
     ),
-    'pipeline2_pipelines': (                                 # req #3337
+    'pipelines': (                                 # req #3337
         ('machine_fk', 'machines'),                          # RESTRICT
     ),
-    'pipeline2_steps': (                                     # req #3337
-        ('epic_fk', 'pipeline2_epics'),                      # CASCADE
-    ),
-    'pipelines': (
-        ('machine_fk', 'machines'),                          # RESTRICT
+    'pipeline_steps': (                                     # req #3337
+        ('epic_fk', 'epics'),                      # CASCADE
     ),
     'recurring_tasks': (
         ('area_fk', 'areas'),                                # CASCADE
@@ -571,10 +547,11 @@ CREATOR_TABLE_REFERENCES = {
     ),
     'swarm_sessions': (
         ('machine_fk', 'machines'),                          # RESTRICT
-        ('pipeline_fk', 'pipelines'),                        # SET NULL  (req #3186)
-        ('epic_fk', 'epics'),                                # SET NULL  (req #3186)
-        ('pipeline2_fk', 'pipeline2_pipelines'),             # SET NULL  (req #3350)
-        ('epic2_fk', 'pipeline2_epics'),                     # SET NULL  (req #3350)
+        # req #3186's 1.0 attribution pair (`pipeline_fk`, `epic_fk`) was
+        # dropped at req #3356 (migration 20260812175325); the 2.0 pair below
+        # is the surviving attribution.
+        ('pipeline_fk', 'pipelines'),             # SET NULL  (req #3350)
+        ('epic_fk', 'epics'),                     # SET NULL  (req #3350)
     ),
     'swarm_completes': (
         # req #3202, migration 20260809002208. The one envelope context column
@@ -685,14 +662,11 @@ ENUM_COLUMNS = {
     'branches': frozenset({'branch_type'}),
     'build_projects': frozenset({'project_status'}),
     'categories': frozenset({'sort_mode'}),
-    'epics': frozenset({'epic_status'}),
     'machines': frozenset({'platform', 'arch'}),
     'map_runs': frozenset({'source'}),
-    'pipeline2_epics': frozenset({'epic_status'}),
-    'pipeline2_pipelines': frozenset({'pipeline_status', 'execution_mode'}),
-    'pipeline2_steps': frozenset({'run'}),
-    'pipeline_steps': frozenset({'run'}),
+    'epics': frozenset({'epic_status'}),
     'pipelines': frozenset({'pipeline_status', 'execution_mode'}),
+    'pipeline_steps': frozenset({'run'}),
     'profiles': frozenset({'theme_mode'}),
     'recurring_tasks': frozenset({'recurrence', 'insert_position'}),
     'requirements': frozenset({'requirement_status', 'coordination_type',

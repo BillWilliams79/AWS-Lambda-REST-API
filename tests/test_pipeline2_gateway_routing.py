@@ -1,4 +1,5 @@
-"""Pipeline 2.0 API Gateway routing — Lambda-side half (req #3338).
+"""Pipeline plan-layer API Gateway routing — Lambda-side half (req #3338,
+table names updated req #3356).
 
 # COVERS: SCH-023
 
@@ -9,7 +10,10 @@ ways:
 
 - **The Lambda-side half — asserted HERE.** `lambda_handler` correctly parses
   the path, applies `auth_utils` registration, and executes a real SQL query
-  for each of the five `pipeline2_*` tables, proving no application-level
+  for each of the five plan-layer tables (`pipelines`, `epics`,
+  `pipeline_steps`, `pipeline_step_requirements`, `pipeline_step_deps` —
+  named `pipeline2_*` until req #3356 dropped the first generation and
+  renamed these into the freed plain names), proving no application-level
   obstacle (missing registration, an invalid table-name regex match, a
   connection failure) would make a route fail even once the AWS wiring is in
   place. Exercised via `/darwin_dev/*` only, matching this suite's existing
@@ -44,27 +48,35 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from auth_utils import CREATOR_FK_TABLES, JUNCTION_OWNERSHIP
 
-# Derived, not hand-counted (house style — see test_unit_creator_fk_references.py's
-# own rationale for the same choice): the five pipeline2_* tables are exactly
-# those two registries already name. A sixth pipeline2_* table registered in
-# either registry is picked up here automatically; one registered in neither
-# would still be missed, but that is auth_utils's own registration gap to
-# catch (test_unit_creator_fk_references.py / test_unit_junction_scoping.py),
-# not this file's.
-PIPELINE2_TABLES = sorted(
-    {t for t in CREATOR_FK_TABLES if t.startswith('pipeline2_')}
-    | {t for t in JUNCTION_OWNERSHIP if t.startswith('pipeline2_')}
+# NAMED, not derived by prefix — req #3356 deliberately removed the
+# `pipeline2_` era marker these table names carried, so there is no longer
+# a name pattern that distinguishes the five plan-layer tables from any
+# other creator_fk/junction table in the registries. A prefix-derivation
+# here would either match nothing (as it did for one session between the
+# rename landing and this fix) or, worse, match some unrelated table that
+# happens to share a prefix. The registration gap this file's derivation
+# used to catch for free is still caught — just by
+# test_unit_creator_fk_references.py / test_unit_junction_scoping.py, which
+# check each of these five names individually against schema.sql.
+PIPELINE_PLAN_LAYER_TABLES = (
+    'epics', 'pipelines', 'pipeline_steps',
+    'pipeline_step_requirements', 'pipeline_step_deps',
 )
 
 
-def test_pipeline2_table_count_is_five():
-    """Sanity check on the derivation above, so a registry regression fails
-    loud here rather than silently shrinking the parametrized set below."""
-    assert len(PIPELINE2_TABLES) == 5, PIPELINE2_TABLES
+def test_pipeline_plan_layer_table_count_is_five():
+    """Sanity check on the constant above, so a hand-edit that drops or
+    duplicates an entry fails loud here rather than silently shrinking the
+    parametrized set below."""
+    assert len(PIPELINE_PLAN_LAYER_TABLES) == 5, PIPELINE_PLAN_LAYER_TABLES
+    assert len(set(PIPELINE_PLAN_LAYER_TABLES)) == 5, 'duplicate entry'
+    for _t in PIPELINE_PLAN_LAYER_TABLES:
+        assert _t in CREATOR_FK_TABLES or _t in JUNCTION_OWNERSHIP, (
+            f'{_t} named here but not registered in either auth_utils.py registry')
 
 
 class TestFiveTablesAnswer:
-    """SCH-023 (Lambda-side half): every pipeline2_* table is reachable
+    """SCH-023 (Lambda-side half): every plan-layer table is reachable
     end-to-end through `lambda_handler` — path parsing, `auth_utils`
     registration, and a real SQL query against `darwin_dev`, for all five.
 
@@ -75,7 +87,7 @@ class TestFiveTablesAnswer:
     """
 
     @pytest.mark.integration
-    @pytest.mark.parametrize('table', PIPELINE2_TABLES)
+    @pytest.mark.parametrize('table', PIPELINE_PLAN_LAYER_TABLES)
     def test_get_answers_without_error(self, invoke, table):
         response = invoke('GET', f'/darwin_dev/{table}')
         assert response['statusCode'] in (200, 404), (

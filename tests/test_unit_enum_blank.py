@@ -97,11 +97,11 @@ def _parse_columns(path):
     hand, so "does this registered column exist?" has to be asked against the
     wider set or the hand registration would read as a typo.
 
-    Comments are stripped FIRST. `pipelines.execution_mode` declares its type on
-    one line and `NOT NULL DEFAULT 'parallel'` on the next with a `--` comment
-    between them, so a line-at-a-time parse that respected comments would read
-    the column as nullable and drop the schema's only two real `ENUM(...)`
-    columns without saying so.
+    Comments are stripped FIRST. `pipeline2_pipelines.execution_mode` declares
+    its type on one line and `NOT NULL DEFAULT 'parallel'` on the next with a
+    `--` comment between them, so a line-at-a-time parse that respected comments
+    would read the column as nullable and drop the schema's only real `ENUM(...)`
+    column without saying so.
     """
     candidates, all_text = {}, {}
     table = None

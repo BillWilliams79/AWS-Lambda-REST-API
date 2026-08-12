@@ -16,11 +16,13 @@ from the row pinning them: there is no self-service recovery at all.
 **The registry must be COMPLETE, and it is DERIVED here rather than reviewed.**
 That is the load-bearing test in this file. The audit that filed req #3125
 reported "test_runs.test_plan_fk and ten sibling columns"; re-deriving the same
-rule from `schema.sql` gives **47 columns across 29 tables** (36 when #3125
+rule from `schema.sql` gives **40 columns across 26 tables** (36 when #3125
 shipped; req #3186's two `swarm_sessions` attribution FKs and req #3224's three
 `orchestration_claims` ones are the proof the mechanism works — they failed this
-test until registered; req #3355 dropped `features`, taking a column and a
-table back off the count). A hand-counted
+test until registered; req #3355 dropped `features`, and req #3356 dropped the
+whole 1.0 plan layer, taking `epics`, `pipelines` and `pipeline_steps` off the
+table count along with 1.0's two `swarm_sessions` and two `orchestration_claims`
+attribution columns). A hand-counted
 security boundary drifts silently — `test_every_cross_tenant_fk_column_is_registered`
 re-derives it on every run, so a new FK column fails the build instead.
 
@@ -182,9 +184,10 @@ def test_every_cross_tenant_fk_column_is_registered(schema, creator_scoped):
 
     An unregistered column is one POST away from pinning a victim's row forever.
     The previous audit of this exact class hand-counted eleven columns; the DDL
-    says thirty-six — now forty-five, with #3337's four pipeline2_epics/
-    pipeline2_pipelines/pipeline2_steps columns. This is why the list is
-    derived and not reviewed.
+    said thirty-six then, forty-seven at its widest (#3337's four pipeline2_*
+    columns and #3369's two included), and forty since req #3356 dropped the
+    1.0 plan layer. This is why the list is derived and not reviewed: not one of
+    those numbers was ever hand-maintained correctly.
     """
     expected = set(_cross_tenant_fk_columns(schema, creator_scoped))
     missing = sorted(expected - set(_registered()) - set(UNCHECKED_CREATOR_REFERENCES))
@@ -251,8 +254,8 @@ def test_orchestration_claims_pipeline2_columns_are_registered():
     changed shape.
     """
     covered = creator_table_reference_columns('orchestration_claims')
-    assert ('pipeline2_fk', 'pipeline2_pipelines') in covered
-    assert ('epic2_fk', 'pipeline2_epics') in covered
+    assert ('pipeline_fk', 'pipelines') in covered
+    assert ('epic_fk', 'epics') in covered
 
 
 def test_unchecked_creator_references_is_a_written_down_exemption_set():
@@ -361,7 +364,7 @@ def test_the_two_registries_never_name_the_same_table():
 def test_referenced_parent_columns_dispatches_to_both_registries():
     assert referenced_parent_columns('test_runs') == [('test_plan_fk', 'test_plans')]
     assert referenced_parent_columns('pipeline_step_deps')[0] == ('step_fk',
-                                                                  'pipeline_steps')
+                                                                   'pipeline_steps')
     assert referenced_parent_columns('profiles') == []
     assert referenced_parent_columns('not_a_table') == []
 
