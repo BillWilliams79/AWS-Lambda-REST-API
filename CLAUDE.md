@@ -106,7 +106,7 @@ empty.
 
 ## Outbound references — owning a row is not owning what it points at (req #3125)
 
-`CREATOR_TABLE_REFERENCES` is the fourth registry: **47 columns across 29
+`CREATOR_TABLE_REFERENCES` is the fourth registry: **40 columns across 26
 tables** — every `*_fk` on a `creator_fk`-bearing table whose target is also
 creator-scoped. (36 at req #3125; req #3186 added `swarm_sessions.pipeline_fk`
 and `.epic_fk`; req #3224 added `orchestration_claims.pipeline_fk`, `.epic_fk`
@@ -114,17 +114,20 @@ and `.machine_fk`; req #3337 added four Pipeline 2.0 plan-layer columns;
 req #3369 added `orchestration_claims.pipeline2_fk` and `.epic2_fk`; req #3202
 added `swarm_completes.machine_fk`; req #3350 added `swarm_sessions.pipeline2_fk`
 and `.epic2_fk`; req #3355 dropped the `features` entry (`category_fk`,
-`epic_fk`) and `requirements.feature_fk`, migration 20260811033413. Every
+`epic_fk`) and `requirements.feature_fk`, migration 20260811033413; req #3356
+dropped the whole 1.0 plan layer, migration 20260812175325 — the `epics`,
+`pipelines` and `pipeline_steps` entries with their tables, plus 1.0's two
+`swarm_sessions` and two `orchestration_claims` attribution columns. Every
 number is DERIVED — see the closing note of this section.)
 
 **The attack does not defeat `creator_fk` scoping, it rides on it.** The attacker
 POSTs a row of their OWN, so the token-forced `creator_fk` is theirs and every
 check above passes; the row merely names a **victim's** parent in a `*_fk`
-nobody was looking at. Where the FK is `ON DELETE RESTRICT` (14 of the 38) that
+nobody was looking at. Where the FK is `ON DELETE RESTRICT` (15 of the 40) that
 is a **grief-lock**: `DELETE /darwin/test_plans?id=<the victim's own>` answers 409
 naming `fk_test_runs_plan`, held by a `test_runs` row scoped to the attacker —
 invisible to the victim's GET, unaddressable by their PUT, untouchable by their
-DELETE. **No self-service recovery exists.** The other 24 (CASCADE / SET NULL) are
+DELETE. **No self-service recovery exists.** The other 25 (CASCADE / SET NULL) are
 cross-tenant attachment: the attacker's row living inside the victim's tree.
 
 Shape differs from `JUNCTION_OWNERSHIP` in two ways, both deliberate:
@@ -231,9 +234,10 @@ KEYS are SQL identifiers* rule, which had already defeated two other registries.
 
 **The candidates are DERIVED, the classification is written down.**
 `tests/test_unit_enum_blank.py` re-parses `schema.sql` for every NOT NULL column that is
-a real `ENUM(...)` or a CHAR/VARCHAR no wider than 32 — 45 columns today (req #3355
-dropped `features.feature_status`) — and fails
-unless each is in `ENUM_COLUMNS` or `FREE_TEXT_NOT_NULL_COLUMNS` (40 + 5). A new enum
+a real `ENUM(...)` or a CHAR/VARCHAR no wider than 32 — 41 columns today (req #3355
+dropped `features.feature_status`; req #3356 dropped `epics.epic_status`,
+`pipelines.pipeline_status`/`.execution_mode` and `pipeline_steps.run`) — and fails
+unless each is in `ENUM_COLUMNS` or `FREE_TEXT_NOT_NULL_COLUMNS` (36 + 5). A new enum
 column fails the build until registered.
 
 **That width rule is a FILTER, NOT A PROOF, and the difference is load-bearing.** It
@@ -241,7 +245,7 @@ sweeps the shapes an enum is usually written in; a bounded domain declared wider
 and simply will not be swept. Two are — `swarm_completes.skill_name` VARCHAR(64)
 (`VALID_COMPLETE_SKILL_NAMES`, two members) and `user_integrations.provider` VARCHAR(50)
 (`'strava'`) — both accepted `''` silently until they were **registered by hand**, which
-brings `ENUM_COLUMNS` to **42 columns across 27 tables**. The test asks a different
+brings `ENUM_COLUMNS` to **38 columns across 24 tables**. The test asks a different
 question of those: they are checked to EXIST in the DDL, not to have been swept. Raising
 the bound instead would drag in every VARCHAR(64) name and `creator_fk` itself, trading a
 reviewable exemption list for an unreviewable one. NOT NULL `TINYINT` flags are outside

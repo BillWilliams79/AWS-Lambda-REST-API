@@ -97,11 +97,11 @@ def _parse_columns(path):
     hand, so "does this registered column exist?" has to be asked against the
     wider set or the hand registration would read as a typo.
 
-    Comments are stripped FIRST. `pipelines.execution_mode` declares its type on
-    one line and `NOT NULL DEFAULT 'parallel'` on the next with a `--` comment
-    between them, so a line-at-a-time parse that respected comments would read
-    the column as nullable and drop the schema's only two real `ENUM(...)`
-    columns without saying so.
+    Comments are stripped FIRST. `pipeline2_pipelines.execution_mode` declares
+    its type on one line and `NOT NULL DEFAULT 'parallel'` on the next with a
+    `--` comment between them, so a line-at-a-time parse that respected comments
+    would read the column as nullable and drop the schema's only real `ENUM(...)`
+    column without saying so.
     """
     candidates, all_text = {}, {}
     table = None
@@ -182,7 +182,7 @@ def test_schema_parse_found_the_columns(candidates, all_text_columns):
     # the two-line real ENUM whose NOT NULL sits under a comment.
     assert 'ai_model' in candidates['requirements']
     assert 'effort' in candidates['requirements']
-    assert 'execution_mode' in candidates['pipelines']
+    assert 'execution_mode' in candidates['pipeline2_pipelines']
     # The wider set is a superset and reaches past NARROW.
     assert _pairs(candidates) <= _pairs(all_text_columns)
     assert 'skill_name' in all_text_columns['swarm_completes']
