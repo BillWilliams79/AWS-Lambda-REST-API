@@ -245,10 +245,10 @@ CREATOR_FK_TABLES = frozenset({
     # here is what makes the generic passthrough work at all, exactly as for
     # `orchestration_claims` above.
     #
-    # pipeline2_step_requirements and pipeline2_step_deps stay OUT: neither has
+    # pipeline_step_requirements and pipeline_step_deps stay OUT: neither has
     # a creator_fk. They inherit ownership from their step, in JUNCTION_OWNERSHIP
     # below.
-    'pipeline2_pipelines', 'pipeline2_epics', 'pipeline2_steps',
+    'pipelines', 'epics', 'pipeline_steps',
 })
 
 PROFILE_TABLE = 'profiles'
@@ -291,7 +291,7 @@ PROFILE_TABLE = 'profiles'
 # BELONGS TO, not the one it points at. It becomes a predicate on every read,
 # update and delete:
 #
-#     step_fk IN (SELECT id FROM pipeline2_steps WHERE creator_fk = %s)
+#     step_fk IN (SELECT id FROM pipeline_steps WHERE creator_fk = %s)
 #
 # `verify` names the OTHER parent references, checked on INSERT only. A write is
 # refused when any of them names a row the caller does not own, which is what
@@ -313,12 +313,12 @@ JUNCTION_OWNERSHIP = {
     # The 1.0 pair `pipeline_step_deps` / `pipeline_step_requirements` sat here
     # on identical terms — they were req #3122's worked example — until
     # req #3356 (migration 20260812175325) dropped the whole 1.0 plan layer.
-    'pipeline2_step_deps': {
-        'scope': ('step_fk', 'pipeline2_steps'),
-        'verify': (('dep_step_fk', 'pipeline2_steps'),),
+    'pipeline_step_deps': {
+        'scope': ('step_fk', 'pipeline_steps'),
+        'verify': (('dep_step_fk', 'pipeline_steps'),),
     },
-    'pipeline2_step_requirements': {
-        'scope': ('step_fk', 'pipeline2_steps'),
+    'pipeline_step_requirements': {
+        'scope': ('step_fk', 'pipeline_steps'),
         'verify': (('requirement_fk', 'requirements'),),
     },
 
@@ -522,18 +522,18 @@ CREATOR_TABLE_REFERENCES = {
         # `epics`) was dropped with the rest of the 1.0 plan layer at req #3356
         # (migration 20260812175325).
         ('machine_fk', 'machines'),                          # RESTRICT
-        ('pipeline2_fk', 'pipeline2_pipelines'),             # CASCADE, req #3369
-        ('epic2_fk', 'pipeline2_epics'),                     # CASCADE, req #3369
+        ('pipeline_fk', 'pipelines'),             # CASCADE, req #3369
+        ('epic_fk', 'epics'),                     # CASCADE, req #3369
     ),
-    'pipeline2_epics': (                                     # req #3337
-        ('pipeline_fk', 'pipeline2_pipelines'),              # CASCADE
+    'epics': (                                     # req #3337
+        ('pipeline_fk', 'pipelines'),              # CASCADE
         ('category_fk', 'categories'),                       # RESTRICT
     ),
-    'pipeline2_pipelines': (                                 # req #3337
+    'pipelines': (                                 # req #3337
         ('machine_fk', 'machines'),                          # RESTRICT
     ),
-    'pipeline2_steps': (                                     # req #3337
-        ('epic_fk', 'pipeline2_epics'),                      # CASCADE
+    'pipeline_steps': (                                     # req #3337
+        ('epic_fk', 'epics'),                      # CASCADE
     ),
     'recurring_tasks': (
         ('area_fk', 'areas'),                                # CASCADE
@@ -550,8 +550,8 @@ CREATOR_TABLE_REFERENCES = {
         # req #3186's 1.0 attribution pair (`pipeline_fk`, `epic_fk`) was
         # dropped at req #3356 (migration 20260812175325); the 2.0 pair below
         # is the surviving attribution.
-        ('pipeline2_fk', 'pipeline2_pipelines'),             # SET NULL  (req #3350)
-        ('epic2_fk', 'pipeline2_epics'),                     # SET NULL  (req #3350)
+        ('pipeline_fk', 'pipelines'),             # SET NULL  (req #3350)
+        ('epic_fk', 'epics'),                     # SET NULL  (req #3350)
     ),
     'swarm_completes': (
         # req #3202, migration 20260809002208. The one envelope context column
@@ -664,9 +664,9 @@ ENUM_COLUMNS = {
     'categories': frozenset({'sort_mode'}),
     'machines': frozenset({'platform', 'arch'}),
     'map_runs': frozenset({'source'}),
-    'pipeline2_epics': frozenset({'epic_status'}),
-    'pipeline2_pipelines': frozenset({'pipeline_status', 'execution_mode'}),
-    'pipeline2_steps': frozenset({'run'}),
+    'epics': frozenset({'epic_status'}),
+    'pipelines': frozenset({'pipeline_status', 'execution_mode'}),
+    'pipeline_steps': frozenset({'run'}),
     'profiles': frozenset({'theme_mode'}),
     'recurring_tasks': frozenset({'recurrence', 'insert_position'}),
     'requirements': frozenset({'requirement_status', 'coordination_type',
@@ -832,7 +832,7 @@ def junction_scope_clause(table):
     Returns a fragment carrying exactly ONE `%s` placeholder, which the caller
     binds to the authenticated user::
 
-        step_fk IN (SELECT id FROM pipeline2_steps WHERE creator_fk = %s)
+        step_fk IN (SELECT id FROM pipeline_steps WHERE creator_fk = %s)
 
     Table and column names come from the hard-coded registry above, never from a
     request, so the interpolation here introduces no injection surface. The
