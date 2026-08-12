@@ -82,9 +82,9 @@ def _required_columns(table, seed):
         'orchestration_claims': {},
         # Req #3337. The only NOT NULL, no-default, non-reference column each of
         # the three carries is `title`.
-        'pipeline2_pipelines': {'title': f'{seed}-p2pipeline'},
-        'pipeline2_epics': {'title': f'{seed}-p2epic'},
-        'pipeline2_steps': {'title': f'{seed}-p2step'},
+        'pipelines': {'title': f'{seed}-p2pipeline'},
+        'epics': {'title': f'{seed}-p2epic'},
+        'pipeline_steps': {'title': f'{seed}-p2step'},
         'recurring_tasks': {'description': f'{seed}-rt', 'recurrence': 'daily',
                             'anchor_date': '2026-07-27'},
         'requirements': {'title': f'{seed}-req', 'ai_model': 'opus',
@@ -174,7 +174,7 @@ PURGE_ORDER = (
     # only this safety-net sweep for rows a test case creates and does not
     # itself `_drop`.
     'orchestration_claims',
-    'pipeline2_steps', 'pipeline2_epics', 'pipeline2_pipelines',
+    'pipeline_steps', 'epics', 'pipelines',
     'test_results', 'test_runs', 'test_plans', 'test_cases',
     'requirements',
     'tasks', 'recurring_tasks', 'areas', 'domains',
@@ -243,7 +243,7 @@ def _build_graph(invoke, seed):
     post('swarm_sessions', req('swarm_sessions'))
     post('swarm_starts', req('swarm_starts'))
     post('agent_telemetry_runs', req('agent_telemetry_runs'))
-    post('pipeline2_pipelines', req('pipeline2_pipelines'))
+    post('pipelines', req('pipelines'))
 
     # One level down.
     post('categories', dict(req('categories'), project_fk=ids['projects']))
@@ -257,14 +257,14 @@ def _build_graph(invoke, seed):
     post('test_cases', dict(req('test_cases'), category_fk=ids['categories']))
     post('recurring_tasks', dict(req('recurring_tasks'), area_fk=ids['areas']))
     post('builds', dict(req('builds'), branch_fk=ids['branches']))
-    post('pipeline2_epics', dict(req('pipeline2_epics'),
-                                 pipeline_fk=ids['pipeline2_pipelines'],
+    post('epics', dict(req('epics'),
+                                 pipeline_fk=ids['pipelines'],
                                  category_fk=ids['categories']))
 
     # Three.
     post('requirements', dict(req('requirements'), category_fk=ids['categories']))
     post('test_runs', dict(req('test_runs'), test_plan_fk=ids['test_plans']))
-    post('pipeline2_steps', dict(req('pipeline2_steps'), epic_fk=ids['pipeline2_epics']))
+    post('pipeline_steps', dict(req('pipeline_steps'), epic_fk=ids['epics']))
 
     missing = [p for p in PARENTS if p not in ids]
     assert not missing, f'{seed} graph is missing parent rows for {missing}'

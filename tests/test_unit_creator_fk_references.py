@@ -254,8 +254,8 @@ def test_orchestration_claims_pipeline2_columns_are_registered():
     changed shape.
     """
     covered = creator_table_reference_columns('orchestration_claims')
-    assert ('pipeline2_fk', 'pipeline2_pipelines') in covered
-    assert ('epic2_fk', 'pipeline2_epics') in covered
+    assert ('pipeline_fk', 'pipelines') in covered
+    assert ('epic_fk', 'epics') in covered
 
 
 def test_unchecked_creator_references_is_a_written_down_exemption_set():
@@ -363,8 +363,8 @@ def test_the_two_registries_never_name_the_same_table():
 
 def test_referenced_parent_columns_dispatches_to_both_registries():
     assert referenced_parent_columns('test_runs') == [('test_plan_fk', 'test_plans')]
-    assert referenced_parent_columns('pipeline2_step_deps')[0] == ('step_fk',
-                                                                   'pipeline2_steps')
+    assert referenced_parent_columns('pipeline_step_deps')[0] == ('step_fk',
+                                                                   'pipeline_steps')
     assert referenced_parent_columns('profiles') == []
     assert referenced_parent_columns('not_a_table') == []
 

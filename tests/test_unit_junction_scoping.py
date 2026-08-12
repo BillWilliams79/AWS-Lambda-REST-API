@@ -88,7 +88,7 @@ def schema():
 def test_schema_parse_found_the_tables(schema):
     """Guard the guard: an empty parse would make every test below vacuous."""
     assert len(schema) > 40, f'parsed only {len(schema)} tables from schema.sql'
-    assert schema['pipeline2_step_deps']['columns'] >= {'id', 'step_fk', 'dep_step_fk'}
+    assert schema['pipeline_step_deps']['columns'] >= {'id', 'step_fk', 'dep_step_fk'}
     assert schema['requirements']['has_creator_fk']
 
 
@@ -99,8 +99,8 @@ def test_every_unscoped_table_is_registered(schema):
     THE invariant of req #3122. `profiles` is scoped by `id` and is the one
     permitted special case; `UNSCOPED_TABLES` is the written-down escape hatch and
     is empty. Anything else absent from both is unscoped on GET/PUT/DELETE/POST.
-    Derived from schema.sql, so it fails helpfully if pipeline2_step_deps or
-    pipeline2_step_requirements (neither carries creator_fk) is missing from
+    Derived from schema.sql, so it fails helpfully if pipeline_step_deps or
+    pipeline_step_requirements (neither carries creator_fk) is missing from
     JUNCTION_OWNERSHIP.
     """
     unscoped = {name for name, info in schema.items()
@@ -136,8 +136,8 @@ def test_every_registered_table_exists_in_the_schema(schema):
 def test_every_parent_is_itself_creator_scoped():
     """Deriving through an unscoped parent would prove nothing.
 
-    `step_fk IN (SELECT id FROM pipeline2_steps WHERE creator_fk = %s)` is only an
-    authorization check because `pipeline2_steps` HAS a creator_fk. Point a rule at
+    `step_fk IN (SELECT id FROM pipeline_steps WHERE creator_fk = %s)` is only an
+    authorization check because `pipeline_steps` HAS a creator_fk. Point a rule at
     a table that does not and the subquery silently authorizes everybody.
     """
     for table in JUNCTION_OWNERSHIP:
@@ -212,8 +212,8 @@ def test_scope_clause_is_none_for_unregistered_tables():
 
 
 def test_scope_clause_shape():
-    assert (junction_scope_clause('pipeline2_step_deps')
-            == 'step_fk IN (SELECT id FROM pipeline2_steps WHERE creator_fk = %s)')
+    assert (junction_scope_clause('pipeline_step_deps')
+            == 'step_fk IN (SELECT id FROM pipeline_steps WHERE creator_fk = %s)')
 
 
 # ---------------------------------------------------------------------------
@@ -297,21 +297,21 @@ class FakeCursor:
 
 # Steps 1 and 2 and requirement 10 are the victim's; 3 and 11 belong to somebody
 # else; anything else does not exist.
-ROWS = {'pipeline2_steps': {1: 'victim', 2: 'victim', 3: 'stranger'},
+ROWS = {'pipeline_steps': {1: 'victim', 2: 'victim', 3: 'stranger'},
         'requirements': {10: 'victim', 11: 'stranger'}}
 
 
 def test_allows_a_write_whose_parents_are_all_owned():
     cursor = FakeCursor(ROWS)
     assert check_junction_parent_ownership(
-        cursor, 'pipeline2_step_deps',
+        cursor, 'pipeline_step_deps',
         [{'step_fk': 1, 'dep_step_fk': 2}], 'victim') is None
 
 
 def test_refuses_a_foreign_scope_parent():
     cursor = FakeCursor(ROWS)
     assert check_junction_parent_ownership(
-        cursor, 'pipeline2_step_deps', [{'step_fk': 3}], 'victim') == (403, 'FORBIDDEN')
+        cursor, 'pipeline_step_deps', [{'step_fk': 3}], 'victim') == (403, 'FORBIDDEN')
 
 
 def test_refuses_a_foreign_verify_parent_on_an_owned_row():
@@ -323,7 +323,7 @@ def test_refuses_a_foreign_verify_parent_on_an_owned_row():
     """
     cursor = FakeCursor(ROWS)
     assert check_junction_parent_ownership(
-        cursor, 'pipeline2_step_deps',
+        cursor, 'pipeline_step_deps',
         [{'step_fk': 1, 'dep_step_fk': 3}], 'victim') == (403, 'FORBIDDEN')
 
 
@@ -340,17 +340,17 @@ def test_a_nonexistent_parent_is_left_to_the_foreign_key_not_refused_here():
     """
     cursor = FakeCursor(ROWS)
     assert check_junction_parent_ownership(
-        cursor, 'pipeline2_step_deps',
+        cursor, 'pipeline_step_deps',
         [{'step_fk': 1, 'dep_step_fk': 999999}], 'victim') is None
     assert check_junction_parent_ownership(
-        cursor, 'pipeline2_step_deps', [{'step_fk': 999999}], 'victim') is None
+        cursor, 'pipeline_step_deps', [{'step_fk': 999999}], 'victim') is None
 
 
 def test_one_foreign_id_refuses_even_when_the_others_are_absent():
     """A missing id must not launder a foreign one sharing the same query."""
     cursor = FakeCursor(ROWS)
     assert check_junction_parent_ownership(
-        cursor, 'pipeline2_step_requirements',
+        cursor, 'pipeline_step_requirements',
         [{'step_fk': 1, 'requirement_fk': 999999},
          {'step_fk': 1, 'requirement_fk': 11}], 'victim') == (403, 'FORBIDDEN')
 
@@ -363,12 +363,12 @@ def test_null_verify_columns_are_skipped_not_refused():
     Turning an absent reference into a 403 would blame the caller's identity for
     a value that names nobody. (Until req #3356 the live example was 1.0's
     wall-clock gate row, which legitimately carried `dep_step_fk: None`;
-    `pipeline2_step_deps.dep_step_fk` is NOT NULL, and the guard's behaviour on a
+    `pipeline_step_deps.dep_step_fk` is NOT NULL, and the guard's behaviour on a
     NULL is unchanged and still the one under test.)
     """
     cursor = FakeCursor(ROWS)
     assert check_junction_parent_ownership(
-        cursor, 'pipeline2_step_deps',
+        cursor, 'pipeline_step_deps',
         [{'step_fk': 1, 'dep_step_fk': None}],
         'victim') is None
 
@@ -382,14 +382,14 @@ def test_a_missing_scope_column_is_400_not_403():
     """
     cursor = FakeCursor(ROWS)
     assert check_junction_parent_ownership(
-        cursor, 'pipeline2_step_deps', [{'dep_step_fk': 1}], 'victim') == (400, 'BAD REQUEST')
+        cursor, 'pipeline_step_deps', [{'dep_step_fk': 1}], 'victim') == (400, 'BAD REQUEST')
 
 
 def test_a_null_scope_column_is_400():
     cursor = FakeCursor(ROWS)
     for empty in (None, 'NULL'):
         assert check_junction_parent_ownership(
-            cursor, 'pipeline2_step_deps', [{'step_fk': empty}], 'victim') \
+            cursor, 'pipeline_step_deps', [{'step_fk': empty}], 'victim') \
             == (400, 'BAD REQUEST')
 
 
@@ -402,7 +402,7 @@ def test_an_empty_string_scope_column_is_CHECKED_as_row_zero_not_treated_as_null
     a value the statement writes completely unchecked — the same
     check-says-one-thing-writer-does-another shape as the `'9825_0'` bug.
 
-    Answer moves from 400 to whatever row 0 turns out to be. Here `pipeline2_steps`
+    Answer moves from 400 to whatever row 0 turns out to be. Here `pipeline_steps`
     has no row 0, so it falls through to the FK as a 409/1452 — still a refusal,
     now for the true reason. On `priority_card_order`, which declares NO foreign
     key, this is the difference between refusing and writing a permanently
@@ -410,7 +410,7 @@ def test_an_empty_string_scope_column_is_CHECKED_as_row_zero_not_treated_as_null
     """
     cursor = FakeCursor(ROWS)
     assert check_junction_parent_ownership(
-        cursor, 'pipeline2_step_deps', [{'step_fk': ''}], 'victim') is None
+        cursor, 'pipeline_step_deps', [{'step_fk': ''}], 'victim') is None
     assert cursor.queries[0][1] == ('0',), 'row 0 was not the id looked up'
 
 
@@ -445,7 +445,7 @@ def test_a_single_foreign_row_refuses_the_whole_batch():
     bodies = [{'step_fk': 1, 'requirement_fk': 10},
               {'step_fk': 3, 'requirement_fk': 10}]
     assert check_junction_parent_ownership(
-        cursor, 'pipeline2_step_requirements', bodies, 'victim') == (403, 'FORBIDDEN')
+        cursor, 'pipeline_step_requirements', bodies, 'victim') == (403, 'FORBIDDEN')
 
 
 def test_mixed_int_and_str_ids_collapse_to_one():
@@ -454,7 +454,7 @@ def test_mixed_int_and_str_ids_collapse_to_one():
     bodies = [{'step_fk': 1, 'requirement_fk': 10},
               {'step_fk': '1', 'requirement_fk': '10'}]
     assert check_junction_parent_ownership(
-        cursor, 'pipeline2_step_requirements', bodies, 'victim') is None
+        cursor, 'pipeline_step_requirements', bodies, 'victim') is None
     for _, params in cursor.queries:
         assert len(params) == 1
 
@@ -475,14 +475,14 @@ def test_no_authenticated_user_skips_the_check():
     """
     cursor = FakeCursor(ROWS)
     assert check_junction_parent_ownership(
-        cursor, 'pipeline2_step_deps', [{'step_fk': 1}], None) is None
+        cursor, 'pipeline_step_deps', [{'step_fk': 1}], None) is None
     assert cursor.queries == []
 
 
 def test_a_non_dict_body_is_rejected_rather_than_crashing():
     cursor = FakeCursor(ROWS)
     assert check_junction_parent_ownership(
-        cursor, 'pipeline2_step_deps', ['not-a-dict'], 'victim') == (400, 'BAD REQUEST')
+        cursor, 'pipeline_step_deps', ['not-a-dict'], 'victim') == (400, 'BAD REQUEST')
 
 
 def test_the_write_guard_opens_no_cursor_when_it_does_not_apply():
@@ -516,7 +516,7 @@ def test_the_write_guard_opens_no_cursor_when_it_does_not_apply():
         require_scope=False) is None
     # No identity — nothing to derive an answer from.
     assert parent_reference_guard(
-        ExplodingConn(), 'pipeline2_step_deps', [{'step_fk': 1}], None, 'POST') is None
+        ExplodingConn(), 'pipeline_step_deps', [{'step_fk': 1}], None, 'POST') is None
     # In neither registry.
     assert parent_reference_guard(
         ExplodingConn(), 'profiles', [{'name': 'x'}], 'victim', 'PUT') is None
@@ -548,7 +548,7 @@ def test_put_omitting_the_scope_column_is_not_a_400():
     """
     cursor = FakeCursor(ROWS)
     assert check_junction_parent_ownership(
-        cursor, 'pipeline2_step_deps', [{'id': 7}],
+        cursor, 'pipeline_step_deps', [{'id': 7}],
         'victim', require_scope=False) is None
 
 
@@ -558,7 +558,7 @@ def test_put_still_refuses_a_foreign_scope_column_when_it_IS_present():
     parent BEFORE the statement."""
     cursor = FakeCursor(ROWS)
     assert check_junction_parent_ownership(
-        cursor, 'pipeline2_step_deps', [{'step_fk': 3}], 'victim',
+        cursor, 'pipeline_step_deps', [{'step_fk': 3}], 'victim',
         require_scope=False) == (403, 'FORBIDDEN')
 
 
@@ -632,26 +632,26 @@ TRUNCATING_VARIANTS = ['9825.000', '9825abc', '9825 rows',
 
 @pytest.mark.parametrize('variant', COERCION_VARIANTS)
 def test_a_foreign_parent_is_refused_in_every_numeric_form(variant):
-    cursor = FakeCursor({'pipeline2_steps': {9825: 'stranger'}})
+    cursor = FakeCursor({'pipeline_steps': {9825: 'stranger'}})
     assert check_junction_parent_ownership(
-        cursor, 'pipeline2_step_deps', [{'step_fk': variant}],
+        cursor, 'pipeline_step_deps', [{'step_fk': variant}],
         'victim') == (403, 'FORBIDDEN')
 
 
 @pytest.mark.parametrize('variant', COERCION_VARIANTS)
 def test_a_foreign_verify_target_is_refused_in_every_numeric_form(variant):
-    cursor = FakeCursor({'pipeline2_steps': {1: 'victim', 9825: 'stranger'}})
+    cursor = FakeCursor({'pipeline_steps': {1: 'victim', 9825: 'stranger'}})
     assert check_junction_parent_ownership(
-        cursor, 'pipeline2_step_deps', [{'step_fk': 1, 'dep_step_fk': variant}],
+        cursor, 'pipeline_step_deps', [{'step_fk': 1, 'dep_step_fk': variant}],
         'victim') == (403, 'FORBIDDEN')
 
 
 @pytest.mark.parametrize('variant', COERCION_VARIANTS)
 def test_the_same_forms_are_refused_on_a_put(variant):
     """The PUT guard shares the check, so it shares the bypass if one exists."""
-    cursor = FakeCursor({'pipeline2_steps': {9825: 'stranger'}})
+    cursor = FakeCursor({'pipeline_steps': {9825: 'stranger'}})
     assert check_junction_parent_ownership(
-        cursor, 'pipeline2_step_deps', [{'step_fk': variant}], 'victim',
+        cursor, 'pipeline_step_deps', [{'step_fk': variant}], 'victim',
         require_scope=False) == (403, 'FORBIDDEN')
 
 
@@ -662,9 +662,9 @@ def test_an_OWNED_parent_is_still_allowed_in_every_numeric_form(variant):
     The same keying bug ran backwards on `fk_enforced: False` — an owned domain
     sent as a float was logged as "does not exist" and refused.
     """
-    cursor = FakeCursor({'pipeline2_steps': {9825: 'victim'}})
+    cursor = FakeCursor({'pipeline_steps': {9825: 'victim'}})
     assert check_junction_parent_ownership(
-        cursor, 'pipeline2_step_deps', [{'step_fk': variant}], 'victim') is None
+        cursor, 'pipeline_step_deps', [{'step_fk': variant}], 'victim') is None
 
 
 @pytest.mark.parametrize('variant', COERCION_VARIANTS)
@@ -677,9 +677,9 @@ def test_priority_card_order_accepts_an_owned_domain_in_every_numeric_form(varia
 
 def test_a_non_integer_parent_reference_is_400_not_a_silent_truncation():
     """`'9825abc'` truncates to 9825 under this instance's non-strict sql_mode."""
-    cursor = FakeCursor({'pipeline2_steps': {9825: 'stranger'}})
+    cursor = FakeCursor({'pipeline_steps': {9825: 'stranger'}})
     assert check_junction_parent_ownership(
-        cursor, 'pipeline2_step_deps', [{'step_fk': '9825abc'}],
+        cursor, 'pipeline_step_deps', [{'step_fk': '9825abc'}],
         'victim') == (400, 'BAD REQUEST')
     assert cursor.queries == []
 
@@ -714,9 +714,9 @@ def test_forms_only_mysql_would_read_as_an_id_are_refused_before_any_lookup(vari
     `'9825abc'` truncates to 9825 silently. Refusing at the door means the
     ownership check never has to reason about a value two layers disagree on.
     """
-    cursor = FakeCursor({'pipeline2_steps': {9825: 'stranger'}})
+    cursor = FakeCursor({'pipeline_steps': {9825: 'stranger'}})
     assert check_junction_parent_ownership(
-        cursor, 'pipeline2_step_deps', [{'step_fk': variant}],
+        cursor, 'pipeline_step_deps', [{'step_fk': variant}],
         'victim') == (400, 'BAD REQUEST')
     assert cursor.queries == []
 

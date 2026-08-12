@@ -1,7 +1,7 @@
 """The Pipeline 2.0 composing route — integration tier (req #3367).
 
-`GET /darwin_dev/pipeline2_compose?id=<pipeline_id>` and
-`GET /darwin_dev/pipeline2_compose_epic?id=<epic_id>` — the ONE non-generic
+`GET /darwin_dev/pipeline_compose?id=<pipeline_id>` and
+`GET /darwin_dev/pipeline_compose_epic?id=<epic_id>` — the ONE non-generic
 route this requirement adds. Everything here is driven through
 `lambda_handler` exactly like the generic gateway's own tests, proving the
 route end to end: auth, scoping, shape, derivation, and the budget ladder.
@@ -55,13 +55,13 @@ def _purge(conn, creator):
     import pymysql as _pymysql
     try:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM pipeline2_step_deps WHERE step_fk IN "
-                        "(SELECT id FROM pipeline2_steps WHERE creator_fk = %s)", (creator,))
-            cur.execute("DELETE FROM pipeline2_step_requirements WHERE step_fk IN "
-                        "(SELECT id FROM pipeline2_steps WHERE creator_fk = %s)", (creator,))
-            cur.execute("DELETE FROM pipeline2_steps WHERE creator_fk = %s", (creator,))
-            cur.execute("DELETE FROM pipeline2_epics WHERE creator_fk = %s", (creator,))
-            cur.execute("DELETE FROM pipeline2_pipelines WHERE creator_fk = %s", (creator,))
+            cur.execute("DELETE FROM pipeline_step_deps WHERE step_fk IN "
+                        "(SELECT id FROM pipeline_steps WHERE creator_fk = %s)", (creator,))
+            cur.execute("DELETE FROM pipeline_step_requirements WHERE step_fk IN "
+                        "(SELECT id FROM pipeline_steps WHERE creator_fk = %s)", (creator,))
+            cur.execute("DELETE FROM pipeline_steps WHERE creator_fk = %s", (creator,))
+            cur.execute("DELETE FROM epics WHERE creator_fk = %s", (creator,))
+            cur.execute("DELETE FROM pipelines WHERE creator_fk = %s", (creator,))
             cur.execute("DELETE FROM requirements WHERE creator_fk = %s", (creator,))
             cur.execute("DELETE FROM categories WHERE creator_fk = %s", (creator,))
             cur.execute("DELETE FROM projects WHERE creator_fk = %s", (creator,))
@@ -104,13 +104,13 @@ def plan(owner):
     assert resp['statusCode'] == 200, resp
     ids['category'] = int(extract_id(resp))
 
-    resp = owner('POST', '/darwin_dev/pipeline2_pipelines', body={
+    resp = owner('POST', '/darwin_dev/pipelines', body={
         'title': 'p2compose plan', 'description': 'the goal',
         'pipeline_status': 'active', 'execution_mode': 'parallel'})
     assert resp['statusCode'] == 200, resp
     ids['pipeline'] = int(extract_id(resp))
 
-    resp = owner('POST', '/darwin_dev/pipeline2_epics', body={
+    resp = owner('POST', '/darwin_dev/epics', body={
         'pipeline_fk': ids['pipeline'], 'title': 'p2compose epic',
         'description': 'build it', 'epic_status': 'active',
         'category_fk': ids['category'], 'sort_order': 'NULL', 'closed': '0'})
@@ -129,20 +129,20 @@ def plan(owner):
     for key, title, run in (('step_a', 'read service', 'auto'),
                             ('step_b', 'tools', 'auto'),
                             ('step_gate', 'gate', 'manual')):
-        resp = owner('POST', '/darwin_dev/pipeline2_steps', body={
+        resp = owner('POST', '/darwin_dev/pipeline_steps', body={
             'epic_fk': ids['epic'], 'title': title, 'run': run})
         assert resp['statusCode'] == 200, resp
         ids[key] = int(extract_id(resp))
 
-    resp = owner('POST', '/darwin_dev/pipeline2_step_requirements',
+    resp = owner('POST', '/darwin_dev/pipeline_step_requirements',
                 body={'step_fk': ids['step_a'], 'requirement_fk': ids['req_a']})
     assert resp['statusCode'] in (200, 201), resp
-    resp = owner('POST', '/darwin_dev/pipeline2_step_requirements',
+    resp = owner('POST', '/darwin_dev/pipeline_step_requirements',
                 body={'step_fk': ids['step_b'], 'requirement_fk': ids['req_b']})
     assert resp['statusCode'] in (200, 201), resp
 
     for dep in (ids['step_a'], ids['step_b']):
-        resp = owner('POST', '/darwin_dev/pipeline2_step_deps',
+        resp = owner('POST', '/darwin_dev/pipeline_step_deps',
                     body={'step_fk': ids['step_gate'], 'dep_step_fk': dep})
         assert resp['statusCode'] == 200, resp
 
@@ -159,7 +159,7 @@ def _get(invoke, table, row_id):
 
 class TestWholePlanCompose:
     def test_carries_the_whole_plan(self, owner, plan):
-        resp = _get(owner, 'pipeline2_compose', plan['pipeline'])
+        resp = _get(owner, 'pipeline_compose', plan['pipeline'])
         assert resp['statusCode'] == 200, resp
         body = json.loads(resp['body'])
 
@@ -185,7 +185,7 @@ class TestWholePlanCompose:
         # (pipelinePlanTime.js) reads them per-requirement and had no
         # evidence at all without this widening. Still light: no
         # `description`, no `feature_fk` (2.0 has no Feature).
-        resp = _get(owner, 'pipeline2_compose', plan['pipeline'])
+        resp = _get(owner, 'pipeline_compose', plan['pipeline'])
         body = json.loads(resp['body'])
         for row in body['requirements']:
             assert set(row) == {'id', 'title', 'requirement_status', 'coordination_type',
@@ -195,7 +195,7 @@ class TestWholePlanCompose:
             assert 'feature_fk' not in row
 
     def test_steps_have_no_state_column_and_epic_fk_not_pipeline_fk(self, owner, plan):
-        resp = _get(owner, 'pipeline2_compose', plan['pipeline'])
+        resp = _get(owner, 'pipeline_compose', plan['pipeline'])
         body = json.loads(resp['body'])
         for step in body['steps']:
             assert 'state' not in step and 'status' not in step
@@ -203,7 +203,7 @@ class TestWholePlanCompose:
             assert step['epic_fk'] == plan['epic']
 
     def test_derived_is_a_real_answer(self, owner, plan):
-        resp = _get(owner, 'pipeline2_compose', plan['pipeline'])
+        resp = _get(owner, 'pipeline_compose', plan['pipeline'])
         body = json.loads(resp['body'])
         derived = body['derived']
         assert 'withheld' not in derived
@@ -216,7 +216,7 @@ class TestWholePlanCompose:
         assert by_id[plan['step_gate']] == 'pending'
 
     def test_missing_pipeline_is_404(self, owner):
-        resp = _get(owner, 'pipeline2_compose', 999999999)
+        resp = _get(owner, 'pipeline_compose', 999999999)
         assert resp['statusCode'] == 404, resp
         assert resp['body'] == '"NOT FOUND"'
 
@@ -231,15 +231,15 @@ class TestWholePlanCompose:
         and the corpus existed to catch it when they did. Proving two calls
         to the one remaining producer return identical bytes is what "one
         derivation, in one place" cashes out to once B is chosen."""
-        first = _get(owner, 'pipeline2_compose', plan['pipeline'])
-        second = _get(owner, 'pipeline2_compose', plan['pipeline'])
+        first = _get(owner, 'pipeline_compose', plan['pipeline'])
+        second = _get(owner, 'pipeline_compose', plan['pipeline'])
         assert first['body'] == second['body']
         assert json.loads(first['body'])['derived'] == json.loads(second['body'])['derived']
 
 
 class TestEpicScopedCompose:
     def test_carries_one_epic(self, owner, plan):
-        resp = _get(owner, 'pipeline2_compose_epic', plan['epic'])
+        resp = _get(owner, 'pipeline_compose_epic', plan['epic'])
         assert resp['statusCode'] == 200, resp
         body = json.loads(resp['body'])
         assert len(body['epics']) == 1
@@ -248,7 +248,7 @@ class TestEpicScopedCompose:
         assert body['pipeline']['id'] == plan['pipeline']
 
     def test_missing_epic_is_404(self, owner):
-        resp = _get(owner, 'pipeline2_compose_epic', 999999999)
+        resp = _get(owner, 'pipeline_compose_epic', 999999999)
         assert resp['statusCode'] == 404, resp
 
 
@@ -260,7 +260,7 @@ class TestScoping:
     def test_unauthenticated_is_403(self, plan):
         from handler import lambda_handler
         resp = lambda_handler({
-            'httpMethod': 'GET', 'path': '/darwin_dev/pipeline2_compose',
+            'httpMethod': 'GET', 'path': '/darwin_dev/pipeline_compose',
             'queryStringParameters': {'id': str(plan['pipeline'])},
             'body': None, 'requestContext': {},
         }, {})
@@ -268,19 +268,19 @@ class TestScoping:
         assert resp['body'] == '"FORBIDDEN"'
 
     def test_another_creator_cannot_read_the_plan(self, other, plan):
-        resp = _get(other, 'pipeline2_compose', plan['pipeline'])
+        resp = _get(other, 'pipeline_compose', plan['pipeline'])
         assert resp['statusCode'] == 404, resp
 
     def test_another_creator_cannot_read_the_epic(self, other, plan):
-        resp = _get(other, 'pipeline2_compose_epic', plan['epic'])
+        resp = _get(other, 'pipeline_compose_epic', plan['epic'])
         assert resp['statusCode'] == 404, resp
 
     def test_missing_id_is_400(self, owner):
-        resp = owner('GET', '/darwin_dev/pipeline2_compose', query=None)
+        resp = owner('GET', '/darwin_dev/pipeline_compose', query=None)
         assert resp['statusCode'] == 400, resp
 
     def test_non_get_is_400(self, owner, plan):
-        resp = owner('POST', '/darwin_dev/pipeline2_compose', body={'id': plan['pipeline']})
+        resp = owner('POST', '/darwin_dev/pipeline_compose', body={'id': plan['pipeline']})
         assert resp['statusCode'] == 400, resp
 
 
@@ -300,23 +300,23 @@ def two_epic_plan(owner):
                 body={'category_name': 'p2compose 2-epic category', 'project_fk': ids['project']})
     ids['category'] = int(extract_id(resp))
 
-    resp = owner('POST', '/darwin_dev/pipeline2_pipelines', body={
+    resp = owner('POST', '/darwin_dev/pipelines', body={
         'title': 'p2compose two epics', 'pipeline_status': 'active',
         'execution_mode': 'parallel'})
     ids['pipeline'] = int(extract_id(resp))
 
     for key, title, order in (('epic_a', 'epic A', '1'), ('epic_b', 'epic B', '2')):
-        resp = owner('POST', '/darwin_dev/pipeline2_epics', body={
+        resp = owner('POST', '/darwin_dev/epics', body={
             'pipeline_fk': ids['pipeline'], 'title': title, 'epic_status': 'active',
             'category_fk': ids['category'], 'sort_order': order, 'closed': '0'})
         assert resp['statusCode'] == 200, resp
         ids[key] = int(extract_id(resp))
 
-    resp = owner('POST', '/darwin_dev/pipeline2_steps',
+    resp = owner('POST', '/darwin_dev/pipeline_steps',
                 body={'epic_fk': ids['epic_a'], 'title': 'A step', 'run': 'auto',
                       'completed_at': '2026-08-01 00:00:00'})
     ids['step_a'] = int(extract_id(resp))
-    resp = owner('POST', '/darwin_dev/pipeline2_steps',
+    resp = owner('POST', '/darwin_dev/pipeline_steps',
                 body={'epic_fk': ids['epic_b'], 'title': 'B step', 'run': 'auto'})
     ids['step_b'] = int(extract_id(resp))
 
@@ -325,15 +325,15 @@ def two_epic_plan(owner):
         'category_fk': ids['category'], 'coordination_type': 'deployed',
         'ai_model': 'sonnet', 'effort': 'high'})
     ids['req'] = int(extract_id(resp))
-    owner('POST', '/darwin_dev/pipeline2_step_requirements',
+    owner('POST', '/darwin_dev/pipeline_step_requirements',
          body={'step_fk': ids['step_b'], 'requirement_fk': ids['req']})
-    owner('POST', '/darwin_dev/pipeline2_step_deps',
+    owner('POST', '/darwin_dev/pipeline_step_deps',
          body={'step_fk': ids['step_b'], 'dep_step_fk': ids['step_a']})
     return ids
 
 
 def test_epic_scoped_reports_out_of_scope_never_dangling(owner, two_epic_plan):
-    resp = _get(owner, 'pipeline2_compose_epic', two_epic_plan['epic_b'])
+    resp = _get(owner, 'pipeline_compose_epic', two_epic_plan['epic_b'])
     body = json.loads(resp['body'])
     derived = body['derived']
     assert derived['out_of_scope_dep_ids'] == [two_epic_plan['step_a']]
@@ -341,7 +341,7 @@ def test_epic_scoped_reports_out_of_scope_never_dangling(owner, two_epic_plan):
 
 
 def test_whole_plan_sees_the_same_edge_as_an_ordinary_satisfied_gate(owner, two_epic_plan):
-    resp = _get(owner, 'pipeline2_compose', two_epic_plan['pipeline'])
+    resp = _get(owner, 'pipeline_compose', two_epic_plan['pipeline'])
     body = json.loads(resp['body'])
     derived = body['derived']
     assert derived['out_of_scope_dep_ids'] == []

@@ -182,7 +182,7 @@ def test_schema_parse_found_the_columns(candidates, all_text_columns):
     # the two-line real ENUM whose NOT NULL sits under a comment.
     assert 'ai_model' in candidates['requirements']
     assert 'effort' in candidates['requirements']
-    assert 'execution_mode' in candidates['pipeline2_pipelines']
+    assert 'execution_mode' in candidates['pipelines']
     # The wider set is a superset and reaches past NARROW.
     assert _pairs(candidates) <= _pairs(all_text_columns)
     assert 'skill_name' in all_text_columns['swarm_completes']
