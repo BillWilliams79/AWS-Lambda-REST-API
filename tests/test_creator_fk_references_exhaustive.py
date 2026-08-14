@@ -129,9 +129,9 @@ def test_the_matrix_is_the_whole_registry():
     # `swarm_sessions` 2.0 attribution siblings (pipeline2_fk/epic2_fk — no
     # new parent tables, both already built for #3337's own
     # pipeline2_epics/pipeline2_steps entries), landing on 50. Req #3355 drops
-    # `features` — both its `requirements.feature_fk` column AND its own
-    # `('category_fk', 'categories')`/`('epic_fk', 'epics')` entry — taking
-    # TRIPLES to 47 and, since `features` was itself a PARENT of nothing else
+    # the retired middle tier — both the requirement's reference column AND its
+    # own `('category_fk', 'categories')`/`('epic_fk', 'epics')` entry — taking
+    # TRIPLES to 47 and, since that tier was itself a PARENT of nothing else
     # registered, PARENTS to 23.
     #
     # Req #3356 drops the whole 1.0 plan layer (migration 20260812175325): the

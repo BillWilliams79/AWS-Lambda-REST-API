@@ -19,7 +19,7 @@ reported "test_runs.test_plan_fk and ten sibling columns"; re-deriving the same
 rule from `schema.sql` gives **40 columns across 26 tables** (36 when #3125
 shipped; req #3186's two `swarm_sessions` attribution FKs and req #3224's three
 `orchestration_claims` ones are the proof the mechanism works — they failed this
-test until registered; req #3355 dropped `features`, and req #3356 dropped the
+test until registered; req #3355 dropped the retired middle tier, and req #3356 dropped the
 whole 1.0 plan layer, taking `epics`, `pipelines` and `pipeline_steps` off the
 table count along with 1.0's two `swarm_sessions` and two `orchestration_claims`
 attribution columns). A hand-counted

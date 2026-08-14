@@ -113,8 +113,9 @@ and `.epic_fk`; req #3224 added `orchestration_claims.pipeline_fk`, `.epic_fk`
 and `.machine_fk`; req #3337 added four Pipeline 2.0 plan-layer columns;
 req #3369 added `orchestration_claims.pipeline2_fk` and `.epic2_fk`; req #3202
 added `swarm_completes.machine_fk`; req #3350 added `swarm_sessions.pipeline2_fk`
-and `.epic2_fk`; req #3355 dropped the `features` entry (`category_fk`,
-`epic_fk`) and `requirements.feature_fk`, migration 20260811033413; req #3356
+and `.epic2_fk`; req #3355 dropped the retired middle tier's entry
+(`category_fk`, `epic_fk`) and the requirement's reference to it, migration
+20260811033413; req #3356
 dropped the whole 1.0 plan layer, migration 20260812175325 — the `epics`,
 `pipelines` and `pipeline_steps` entries with their tables, plus 1.0's two
 `swarm_sessions` and two `orchestration_claims` attribution columns. Every
@@ -235,7 +236,7 @@ KEYS are SQL identifiers* rule, which had already defeated two other registries.
 **The candidates are DERIVED, the classification is written down.**
 `tests/test_unit_enum_blank.py` re-parses `schema.sql` for every NOT NULL column that is
 a real `ENUM(...)` or a CHAR/VARCHAR no wider than 32 — 41 columns today (req #3355
-dropped `features.feature_status`; req #3356 dropped `epics.epic_status`,
+dropped the retired middle tier's status column; req #3356 dropped `epics.epic_status`,
 `pipelines.pipeline_status`/`.execution_mode` and `pipeline_steps.run`) — and fails
 unless each is in `ENUM_COLUMNS` or `FREE_TEXT_NOT_NULL_COLUMNS` (36 + 5). A new enum
 column fails the build until registered.
