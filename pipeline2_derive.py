@@ -158,6 +158,25 @@ indistinguishable stall.
    field asserting it is absent from a derived row, the tree-walk order
    including the amended three-step case, and `requirement_counts` grouping
    by the seated epic.
+
+## Added after the fact: TOP-UP ELIGIBILITY (req #3507, 2026-08-14)
+
+`eligibility` answers ONE question — may this step BEGIN — and its
+pending-only first test is correct for that question and is unchanged. What
+it is not is the whole launch predicate: a step that has already started can
+still GAIN launch-ready work, and nothing here said so, so the engine (whose
+launch loop is gated on `eligible` before it ever reaches req #3195's
+new-ids-only diff) never evaluated it. Measured on plan 7 step 310:
+requirement #3506, linked after a sibling had put the step into `running`,
+sat `swarm_ready` and launch-ready for over 24 h with zero engine edges
+naming it.
+
+`top_up_eligibility` is the second question, asked of a `running` step, and
+`top_up_eligible` / `top_up_step_ids` carry the answer on the payload beside
+`eligible` / `eligible_step_ids`. The two predicates are DISJOINT by
+construction (they test different states), so nothing that reads only
+`eligible` changes behaviour, and the shared gate half lives in one place
+(`_gates_open`) so they cannot drift on the half they agree about.
 """
 
 import re
@@ -169,6 +188,7 @@ __all__ = [
     'PAUSED_STATUS', 'MODE_PARALLEL', 'MODE_SERIAL',
     'is_tracking_requirement', 'derive_step_state',
     'build_plan_rows', 'display_order', 'verify_order', 'eligibility',
+    'top_up_eligibility',
     'pause_state', 'serial_state', 'requirement_counts', 'derive_plan2',
 ]
 
@@ -801,22 +821,26 @@ def verify_order(rows, epic_scoped=False):
 # Eligibility (DRV-005/006) — a plain per-step predicate, no batch term
 # ---------------------------------------------------------------------------
 
-def eligibility(row, by_id, now=None):
-    """A pending row is eligible when every dependency is `done` AND its own
-    `not_before` (if any) has passed relative to the caller-supplied `now` —
-    this module never reads the clock itself (`derive_plan2` is the one
-    caller, and it is told `now` by ITS caller for the same reason
-    `pipeline_derive.eligibility` documents: a stale clock must be visible as
-    stale, not invisible).
+def _gates_open(row, by_id, now):
+    """THE GATE HALF of the launch predicate, shared by both callers below:
+    every dependency `done`, and this row's own `not_before` (if any) passed
+    relative to the caller-supplied `now`. This module never reads the clock
+    itself (`derive_plan2` is the one caller, and it is told `now` by ITS
+    caller for the same reason `pipeline_derive.eligibility` documents: a
+    stale clock must be visible as stale, not invisible).
 
     No batch term exists here — 1.0's `eligibility` is keyed off a batch's
     shared launch key; 2.0 has no batch, so this is purely a function of one
     row's own `dep_ids` and `_not_before` (DRV-005). No `now` — or an
-    unparseable gate — while a gate exists means NOT eligible, never passed:
-    the safe direction, matching 1.0's posture exactly.
+    unparseable gate — while a gate exists means NOT open, never passed: the
+    safe direction, matching 1.0's posture exactly.
+
+    Factored out by req #3507, which needed the identical gate question asked
+    of a step in a DIFFERENT state. It is one function rather than two so the
+    two predicates cannot drift on the half they agree about — the state test
+    is the only thing that distinguishes them, and that is visible at both
+    call sites rather than buried in a duplicated body.
     """
-    if row.get('state') != STEP_PENDING:
-        return False
     for dep_id in (row.get('dep_ids') or []):
         dep = by_id.get(dep_id)
         if not dep or dep.get('state') != STEP_DONE:
@@ -831,6 +855,99 @@ def eligibility(row, by_id, now=None):
     if gate_epoch is None or gate_epoch > now_epoch:
         return False
     return True
+
+
+def eligibility(row, by_id, now=None):
+    """MAY THIS STEP BEGIN? A pending row is eligible when its gates are open.
+
+    **The pending-only test is UNCHANGED by req #3507 and must stay that way.**
+    This predicate answers whether a step may START, and a step that has
+    already left `pending` cannot start again. `top_up_eligibility` below is a
+    SECOND question about a step that has already started; it is additive and
+    is deliberately not folded in here, because widening this one would make a
+    running step `eligible` on every surface that draws an eligible-now ring
+    or counts what "starts immediately", and would say a finished step could
+    begin.
+    """
+    if row.get('state') != STEP_PENDING:
+        return False
+    return _gates_open(row, by_id, now)
+
+
+def top_up_eligibility(row, by_id, now=None):
+    """MAY NEW WORK BE COMMANDED ONTO THIS STEP WHILE IT RUNS? (req #3507.)
+
+    THE SECOND HALF OF REQ #3195's "work landing on a step" STORY. #3195 built
+    the new-ids-only diff for a step that stays `pending` between cycles; a
+    step that has already STARTED never reached it, because `eligibility`
+    above is a step's whole admission to the engine's launch loop and is
+    permanently False once the step leaves `pending`. MEASURED 2026-08-14,
+    plan 7 step 310: requirement #3506 was linked after a sibling had put the
+    step into `running`, stayed `swarm_ready` and in `launch_req_ids` for over
+    24 h, and was never once evaluated — zero engine edges naming either id.
+
+    THREE CONJUNCTS, and the third is what keeps the engine quiet:
+
+    * `state == running`. NOT "anything past pending": a `done` step's new
+      work is a step that must be REOPENED, which is a plan mutation and the
+      Primary's decision, not a launch this module may imply. `pending` is
+      `eligibility`'s and is excluded here so the two predicates are never
+      both true for one row — a consumer reading either gets one answer.
+    * The same gates, via `_gates_open`. A running step's dependencies were
+      open when it started, so this is normally vacuous — but a dependency
+      that has since REGRESSED closes it again, and topping work onto a step
+      whose gate has re-opened is exactly the launch the engine's regression
+      hold exists to refuse. The safe direction is the one the shared helper
+      already takes.
+
+      **THE COST OF THAT TERM, STATED SO IT IS A DECISION AND NOT AN
+      OVERSIGHT** (raised by the session on req #3448, the same defect filed
+      separately, 2026-08-14). A running step whose dep has regressed drops
+      out of `top_up_eligible` entirely, so no line names the requirement
+      seated on it — an argument against it on design rule 7, which says
+      silence is never a valid state. Three things settle it the other way,
+      and reversing the call means answering all three:
+
+        1. **The situation is already LOUD.** `pipeline_regression.
+           ADVANCED_STATES` is `(running, done)`, so `detect_regressions`
+           clause 2 fires on exactly this shape: the regressed dependency is
+           announced with the running step named among its already-launched
+           dependents. What is missing is the seated requirement's id, not the
+           event.
+        2. **SYMMETRY WITH `eligibility`.** A *pending* step whose dep
+           regresses is `eligible: False` and goes equally quiet about its own
+           `swarm_ready` requirements. Dropping the gate term here alone would
+           make a step that has STARTED louder about a re-opened gate than one
+           that has not — a new inconsistency, in the surface this requirement
+           exists to make consistent.
+        3. **A top-up is a COMMITMENT, not an observation.** Its output is a
+           `/swarm-start` somebody runs. Issuing one into a plan whose
+           premises have just been withdrawn is the decision the regression
+           hold is there to make a human take.
+
+      The alternative — admit it and let the engine's `regression_held` refuse
+      it with a named edge — is defensible and strictly louder. If it is ever
+      preferred, delete this term and the engine's existing `held_edge` path
+      already covers it; nothing else needs to change.
+    * At least one `launch_req_ids` entry. WITHOUT THIS TERM EVERY RUNNING
+      STEP IN EVERY PLAN BECOMES A TOP-UP CANDIDATE with nothing to command,
+      and the engine's own `step_items` answers the gate sentinel for a step
+      with no launchable ids — so each would draw a `READY … close it with
+      complete_pipeline_step` line about a step that is mid-flight. That is
+      noise on the flood-sensitive channel AND wrong advice.
+
+    Note what is NOT a conjunct: whether the ids are NEW. This module has no
+    memory between reads and must not grow one — WHICH ids have already been
+    commanded is the engine's `commanded` record (ENG-009), and asking that
+    question here would be a second, statelessly-wrong implementation of it.
+    This says the step is OPEN to a top-up; the engine's own diff says whether
+    there is anything to say.
+    """
+    if row.get('state') != STEP_RUNNING:
+        return False
+    if not (row.get('launch_req_ids') or []):
+        return False
+    return _gates_open(row, by_id, now)
 
 
 # ---------------------------------------------------------------------------
@@ -1102,8 +1219,8 @@ def derive_plan2(model, now=None, epic_scoped=False):
     fetched — zero additional gateway reads, matching design rule 5.
 
     Narrower than `pipeline_derive.derive_plan` in one respect: no batches —
-    Batch does not exist in 2.0. `eligible`, `pause` AND `serial` ARE built
-    here (DRV-005/006/016/017/018 for the first two — the verification
+    Batch does not exist in 2.0. `eligible`, `top_up_eligible` (req #3507),
+    `pause` AND `serial` ARE built here (DRV-005/006/016/017/018 for the first two — the verification
     register's boundary, not req #3345's stale docstring; `serial` per the
     gate delta naming req #3388 explicitly, which the register does not
     cover at all — see the module docstring's Scope section). `now` rides
@@ -1147,6 +1264,12 @@ def derive_plan2(model, now=None, epic_scoped=False):
     by_id = {row['id']: row for row in rows}
     eligible_ids = [row['id'] for row in rows if eligibility(row, by_id, now)]
     eligible_set = set(eligible_ids)
+    # req #3507 — a SECOND, DISJOINT set: steps already running that may still
+    # receive new work. Disjoint by construction (the two predicates test
+    # different states), so a consumer may union them without double-counting
+    # and a consumer that reads only `eligible` behaves exactly as before.
+    top_up_ids = [row['id'] for row in rows if top_up_eligibility(row, by_id, now)]
+    top_up_set = set(top_up_ids)
     out_of_scope_set = set(out_of_scope_dep_ids)
 
     unresolved = []
@@ -1165,6 +1288,12 @@ def derive_plan2(model, now=None, epic_scoped=False):
             'state': row['state'],
             'run': row['run'],
             'eligible': row['id'] in eligible_set,
+            # req #3507. NOT a widening of `eligible`, which still answers
+            # only "may this step BEGIN" — this answers "may new work be
+            # commanded onto a step that has already begun", and the two are
+            # never both true. A reader wanting "is there a launch here" reads
+            # both; a reader drawing an eligible-now ring reads the first.
+            'top_up_eligible': row['id'] in top_up_set,
             'epic_id': row['epic_id'],
             'dep_ids': row['dep_ids'],
             # Which of THIS row's own deps are out of scope (a subset of
@@ -1187,6 +1316,9 @@ def derive_plan2(model, now=None, epic_scoped=False):
         'pause': pause,
         'serial': serial,
         'eligible_step_ids': eligible_ids,
+        # req #3507 — the plan-level companion, in display order, beside
+        # `eligible_step_ids` rather than folded into it.
+        'top_up_step_ids': top_up_ids,
         'violations': violations,
         'cycle_detected': ordered['cycle_detected'],
         'cycle_step_ids': ordered['cycle_step_ids'],
