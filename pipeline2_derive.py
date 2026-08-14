@@ -62,17 +62,18 @@ indistinguishable stall.
 1. **`epic_id` is a column read.** `pipeline2_steps.epic_fk` is NOT NULL, so
    there is no tally, no tie-break, and no inheritance walk. `dominant_labels`,
    `inherited_labels` and the `label_inherited` flag do not exist here;
-   `epic_id`, `feature_id`, `feature`, `epic_labels` and `feature_labels` do
+   `epic_id` and `epic_labels` and their retired middle-tier counterparts do
    not appear on a derived row — an unlabelled step cannot exist under this
    schema, so there is nothing to borrow from a dependency. Measured against
    the live plan (163 steps) via the 1.0 field this module's `epic_id` column
    replaces: `label_inherited` was set on exactly 1 of 163 rows (step 11, a
    req-less gate) — that one walk is what this item deletes, not seventeen.
 
-2. **`requirement_counts` groups by the STEP's `epic_fk`**, not by the
-   requirement's own `feature_fk` -> `epic_fk` chain — Feature does not exist
-   in 2.0, so there is no other chain to read. This changes the ANSWER where a
-   requirement's step sits under a different epic than its feature did.
+2. **`requirement_counts` groups by the STEP's `epic_fk`**, not by a chain
+   through the requirement's own retired middle-tier link -> `epic_fk` —
+   that tier does not exist in 2.0, so there is no other chain to read. This
+   changes the ANSWER where a requirement's step sits under a different epic
+   than its retired middle-tier record did.
    **Measured against the live plan, 2026-08-09** (206 non-tracking
    requirements, re-grouped by the step each is linked to in the live 1.0
    composed read's own `derived.rows[].epic_id`, which is the field the 2.0
@@ -136,8 +137,8 @@ indistinguishable stall.
    names, not a question a bigger sweep would answer any differently.
 
 5. **The conformance corpus is untouched here, on purpose.** All 34 cases in
-   `tests/conformance/pipeline_conformance.json` mention `features`, and
-   re-expressing it is, in this requirement's own words, "the largest single
+   `tests/conformance/pipeline_conformance.json` mention the retired middle
+   tier, and re-expressing it is, in this requirement's own words, "the largest single
    dependency here and it cannot be finished alone" — its fate depends on req
    #3329's single-source-of-truth choice, which is now decided: **Remediation
    B, in its composing form** (`memory/pipeline-2-orchestration-algorithm.md`
@@ -424,9 +425,10 @@ def build_plan_rows(model):
     rendering or sequencing, exactly as 1.0 requires of its own rows.
 
     `epic_id` is `step['epic_fk']`, A COLUMN READ (item 1) — no tally, no
-    tie-break, no inheritance walk, and no `epic`/`feature`/`feature_id`/
-    `epic_labels`/`feature_labels`/`label_inherited` on the row: none of
-    those concepts exist once a step's epic is a NOT NULL column. A consumer
+    tie-break, no inheritance walk, and no `epic`/`epic_labels`/
+    `label_inherited` (nor their retired middle-tier counterparts) on the
+    row: none of those concepts exist once a step's epic is a NOT NULL
+    column. A consumer
     wanting the epic's title reads it off `model['epics']` by id — this
     module does not duplicate data the composed read already carries once.
 

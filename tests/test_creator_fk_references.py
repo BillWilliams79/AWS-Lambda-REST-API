@@ -280,7 +280,8 @@ def test_post_naming_any_victim_parent_is_refused(intruder, victim, attacker,
 def test_a_multi_parent_write_is_refused_on_any_one_foreign_parent(
         intruder, victim, attacker, db_connection):
     """`requirements` names three parents (project_fk, category_fk, machine_fk —
-    feature_fk dropped at req #3355). Owning some of them is not enough."""
+    the retired middle tier's reference was dropped at req #3355). Owning some
+    of them is not enough."""
     before = _count(db_connection, 'requirements', 'category_fk', victim['category'])
 
     resp = intruder('POST', '/darwin_dev/requirements',

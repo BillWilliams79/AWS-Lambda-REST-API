@@ -184,7 +184,8 @@ class TestWholePlanCompose:
         # (2026-08-09) — the browser's client-side time axis
         # (pipelinePlanTime.js) reads them per-requirement and had no
         # evidence at all without this widening. Still light: no
-        # `description`, no `feature_fk` (2.0 has no Feature).
+        # `description`, and no reference to the retired middle tier (2.0
+        # has no such column at all).
         resp = _get(owner, 'pipeline_compose', plan['pipeline'])
         body = json.loads(resp['body'])
         for row in body['requirements']:
@@ -192,7 +193,6 @@ class TestWholePlanCompose:
                                 'ai_model', 'effort', 'machine_fk', 'tracking',
                                 'started_at', 'completed_at'}
             assert 'description' not in row
-            assert 'feature_fk' not in row
 
     def test_steps_have_no_state_column_and_epic_fk_not_pipeline_fk(self, owner, plan):
         resp = _get(owner, 'pipeline_compose', plan['pipeline'])

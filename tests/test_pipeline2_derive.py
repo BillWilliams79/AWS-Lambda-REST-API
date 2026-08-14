@@ -48,7 +48,7 @@ Translated and covered by a test in this file:
   `requirement-counts-tracking-and-terminal-statuses`,
     `requirement-counts-deferred-completes-epic`,
     `requirement-counts-wontfix-completes-epic` →
-    `test_requirement_counts_groups_by_the_seated_epic_not_a_feature_chain`,
+    `test_requirement_counts_groups_by_the_seated_epic_not_a_retired_middle_tier_chain`,
     `test_requirement_counts_excludes_tracking_containers`,
     `test_requirement_with_no_step_link_counts_overall_not_by_epic`
     (`met`/`deferred`/`wontfix` are one TERMINAL_REQUIREMENT_STATUSES tuple,
@@ -210,22 +210,22 @@ def test_epic_id_follows_the_step_even_when_its_requirement_implies_nothing():
 
 
 # COVERS: DRV-002, DRV-003
-def test_deleted_fields_are_absent_from_every_derived_row():
-    """One test per deleted field (req #3349 item 6). A field that silently
-    survives is the failure this requirement exists to prevent."""
+def test_build_plan_rows_has_no_legacy_or_leaked_fields():
+    """Req #3349 item 6: a field that silently survives from the 1.0 shape
+    (or from the retired middle tier) is the failure this requirement exists
+    to prevent. An exhaustive POSITIVE assertion on the internal, pre-
+    projection `build_plan_rows` shape catches that categorically — anything
+    not on this list fails, named or not — the same technique
+    `test_derive_plan2_shape_is_compact_ids_and_enums_only` below already uses
+    for the projected `plan['rows']` shape."""
     model = _basic_model()
-    plan = deriv.derive_plan2(model, now='2026-08-09T00:00:00Z')
-    deleted = ('inherited_labels', 'label_inherited', 'feature_id', 'feature',
-              'feature_labels', 'epic_labels', 'time_deps', 'epic',
-              'machine_fks')
-    for row in plan['rows']:
-        for field in deleted:
-            assert field not in row, f"{field} leaked onto a 2.0 derived row"
-    # And not on the internal build_plan_rows shape either, before projection.
     for row in deriv.build_plan_rows(model):
-        for field in ('inherited_labels', 'label_inherited', 'feature_id',
-                      'feature', 'feature_labels', 'epic_labels', 'time_deps'):
-            assert field not in row, f"{field} leaked onto a build_plan_rows row"
+        assert set(row) == {
+            'id', 'title', 'run', 'notes', 'completed_at', 'state', 'epic_id',
+            'req_ids', 'tracking_req_ids', 'unresolved_req_ids',
+            'launch_req_ids', 'launch_excluded', 'launch_block',
+            'swarm_start_command', 'no_launch_reason', 'dep_ids',
+            '_create_ts', '_not_before'}
 
 
 # COVERS: DRV-021
@@ -248,7 +248,7 @@ def test_no_batches_key_but_pause_serial_and_eligibility_are_present():
 # ---------------------------------------------------------------------------
 
 # COVERS: DRV-008
-def test_requirement_counts_groups_by_the_seated_epic_not_a_feature_chain():
+def test_requirement_counts_groups_by_the_seated_epic_not_a_retired_middle_tier_chain():
     model = {
         'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active',
                     'execution_mode': 'parallel'},
