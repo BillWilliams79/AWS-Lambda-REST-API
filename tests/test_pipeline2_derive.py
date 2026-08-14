@@ -587,12 +587,14 @@ def test_derive_plan2_shape_is_compact_ids_and_enums_only():
     plan = deriv.derive_plan2(model, now='2026-08-09T00:00:00Z')
     assert set(plan) == {
         'now', 'epic_order', 'display_order', 'rows', 'pause', 'serial',
-        'eligible_step_ids', 'violations', 'cycle_detected', 'cycle_step_ids',
+        'eligible_step_ids', 'top_up_step_ids',
+        'violations', 'cycle_detected', 'cycle_step_ids',
         'duplicate_step_ids', 'unresolved_req_ids', 'out_of_scope_dep_ids',
         'requirement_counts'}
     for row in plan['rows']:
         assert set(row) == {
-            'id', 'state', 'run', 'eligible', 'epic_id', 'dep_ids',
+            'id', 'state', 'run', 'eligible', 'top_up_eligible',
+            'epic_id', 'dep_ids',
             'out_of_scope_dep_ids', 'req_ids',
             'tracking_req_ids', 'unresolved_req_ids', 'launch_req_ids',
             'launch_excluded', 'launch_block', 'swarm_start_command',
@@ -665,6 +667,119 @@ def test_derive_plan2_eligible_step_ids_reflects_the_dep_graph():
     assert plan['eligible_step_ids'] == [9003]
     row = next(r for r in plan['rows'] if r['id'] == 9003)
     assert row['eligible'] is True
+
+
+# ---------------------------------------------------------------------------
+# Top-up eligibility (DRV-026, req #3507) — may a RUNNING step gain work?
+# ---------------------------------------------------------------------------
+#
+# THE MEASURED CASE, 2026-08-14: plan 7 step 310 was `running` because
+# requirement #3503 had reached `development`; #3506 was then linked onto it,
+# stayed `swarm_ready` and in `launch_req_ids` for over 24 h, and was never
+# once evaluated — `eligibility` is False for every non-pending row and the
+# engine's launch loop is gated on it before req #3195's new-ids diff.
+
+def _running_row(id, epic_id=90, dep_ids=None, not_before=None,
+                 launch_req_ids=(3506,)):
+    return {'id': id, 'state': deriv.STEP_RUNNING, 'dep_ids': dep_ids or [],
+            'epic_id': epic_id, '_not_before': not_before,
+            'launch_req_ids': list(launch_req_ids)}
+
+
+NOW = '2026-08-09T00:00:00Z'
+
+
+# COVERS: DRV-026
+def test_top_up_eligibility_admits_a_running_step_carrying_launchable_work():
+    row = _running_row(310)
+    assert deriv.top_up_eligibility(row, {310: row}, now=NOW) is True
+
+
+# COVERS: DRV-026
+def test_top_up_eligibility_refuses_a_running_step_with_nothing_launchable():
+    """The conjunct that keeps the engine quiet. Without it every running step
+    in every plan is a top-up candidate with nothing to command, and the
+    engine's gate sentinel draws a `close this step` line about work in
+    flight."""
+    row = _running_row(310, launch_req_ids=())
+    assert deriv.top_up_eligibility(row, {310: row}, now=NOW) is False
+
+
+# COVERS: DRV-026
+def test_top_up_eligibility_is_disjoint_from_eligibility_on_every_state():
+    """The two predicates answer different questions and are never both true —
+    that is what lets a consumer union them without double-counting, and what
+    keeps an eligible-now ring off a step that has already started."""
+    pending = _pending_row(1)
+    pending['launch_req_ids'] = [3506]
+    running = _running_row(2)
+    done = {'id': 3, 'state': deriv.STEP_DONE, 'dep_ids': [], 'epic_id': 90,
+            '_not_before': None, 'launch_req_ids': [3506]}
+    by_id = {1: pending, 2: running, 3: done}
+    assert (deriv.eligibility(pending, by_id, NOW),
+            deriv.top_up_eligibility(pending, by_id, NOW)) == (True, False)
+    assert (deriv.eligibility(running, by_id, NOW),
+            deriv.top_up_eligibility(running, by_id, NOW)) == (False, True)
+    # A `done` step's new work is a REOPEN, which is a plan mutation and the
+    # Primary's decision — never a launch this module may imply.
+    assert (deriv.eligibility(done, by_id, NOW),
+            deriv.top_up_eligibility(done, by_id, NOW)) == (False, False)
+
+
+# COVERS: DRV-026
+def test_top_up_eligibility_asks_the_same_gate_question_as_eligibility():
+    """A dependency that has REGRESSED closes the gate again, and topping work
+    onto a step whose gate has re-opened is the launch the regression hold
+    exists to refuse."""
+    dep = _pending_row(1)
+    row = _running_row(2, dep_ids=[1])
+    by_id = {1: dep, 2: row}
+    assert deriv.top_up_eligibility(row, by_id, now=NOW) is False
+    by_id[1] = _done_row(1)
+    assert deriv.top_up_eligibility(row, by_id, now=NOW) is True
+    # ...and the time gate, on the same clock, with the same safe direction.
+    gated = _running_row(3, not_before='2026-08-10T00:00:00Z')
+    assert deriv.top_up_eligibility(gated, {3: gated}, now=NOW) is False
+    assert deriv.top_up_eligibility(gated, {3: gated}, now=None) is False
+    assert deriv.top_up_eligibility(
+        gated, {3: gated}, now='2026-08-11T00:00:00Z') is True
+
+
+# COVERS: DRV-026
+def test_derive_plan2_reports_the_measured_case_as_a_top_up():
+    """End to end over a composed-read-shaped model: a step running on one
+    requirement in `development`, carrying a second that is `swarm_ready`."""
+    model = _basic_model()
+    model['step_requirements'].append({'step_fk': 9001, 'requirement_fk': 5012})
+    model['requirements'] = [_req(5010, status='development'),
+                             _req(5011, status='met'),
+                             _req(5012, status='swarm_ready')]
+    plan = deriv.derive_plan2(model, now=NOW)
+    row = next(r for r in plan['rows'] if r['id'] == 9001)
+    assert row['state'] == deriv.STEP_RUNNING
+    # BEFORE req #3507 this row was invisible to the engine's launch loop:
+    # `eligible` False and no other field said there was anything to launch.
+    assert row['eligible'] is False
+    assert row['top_up_eligible'] is True
+    assert row['launch_req_ids'] == [5012]
+    assert row['swarm_start_command'] == '/swarm-start 5012'
+    assert plan['top_up_step_ids'] == [9001]
+    # ...and `eligible_step_ids` is untouched by any of it.
+    assert 9001 not in plan['eligible_step_ids']
+
+
+# COVERS: DRV-026
+def test_derive_plan2_top_up_step_ids_is_empty_when_nothing_is_launchable():
+    """A running step whose only requirement IS the one being worked emits
+    nothing — the steady state of every plan, and the volume guarantee."""
+    model = _basic_model()
+    model['requirements'] = [_req(5010, status='development'),
+                             _req(5011, status='met')]
+    plan = deriv.derive_plan2(model, now=NOW)
+    row = next(r for r in plan['rows'] if r['id'] == 9001)
+    assert row['state'] == deriv.STEP_RUNNING
+    assert row['top_up_eligible'] is False
+    assert plan['top_up_step_ids'] == []
 
 
 # ---------------------------------------------------------------------------
