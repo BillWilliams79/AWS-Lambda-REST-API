@@ -347,3 +347,65 @@ def test_whole_plan_sees_the_same_edge_as_an_ordinary_satisfied_gate(owner, two_
     assert derived['out_of_scope_dep_ids'] == []
     assert derived['violations'] == []
     assert two_epic_plan['step_b'] in derived['eligible_step_ids']
+
+
+# ---------------------------------------------------------------------------
+# req #3597 (the user's amendment): a step CLOSED BY HAND blocks everything
+# downstream — across epics too. The epic-scoped route must see a checkpoint
+# in another epic, and must not ship the plan graph it read to find it.
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def checkpoint_plan(owner):
+    ids = {}
+    resp = owner('POST', '/darwin_dev/projects', body={'project_name': 'p2compose ckpt project'})
+    ids['project'] = int(extract_id(resp))
+    resp = owner('POST', '/darwin_dev/categories',
+                body={'category_name': 'p2compose ckpt category', 'project_fk': ids['project']})
+    ids['category'] = int(extract_id(resp))
+    resp = owner('POST', '/darwin_dev/pipelines', body={
+        'title': 'p2compose checkpoint', 'pipeline_status': 'active',
+        'execution_mode': 'parallel'})
+    ids['pipeline'] = int(extract_id(resp))
+    for key, title, order in (('epic_a', 'ckpt epic A', '1'), ('epic_b', 'ckpt epic B', '2')):
+        resp = owner('POST', '/darwin_dev/epics', body={
+            'pipeline_fk': ids['pipeline'], 'title': title, 'epic_status': 'active',
+            'category_fk': ids['category'], 'sort_order': order, 'closed': '0'})
+        assert resp['statusCode'] == 200, resp
+        ids[key] = int(extract_id(resp))
+    # An OPEN checkpoint in epic A: no links, no completed_at.
+    resp = owner('POST', '/darwin_dev/pipeline_steps',
+                body={'epic_fk': ids['epic_a'], 'title': 'checkpoint', 'run': 'manual'})
+    ids['checkpoint'] = int(extract_id(resp))
+    resp = owner('POST', '/darwin_dev/pipeline_steps',
+                body={'epic_fk': ids['epic_b'], 'title': 'held work', 'run': 'auto'})
+    ids['held'] = int(extract_id(resp))
+    resp = owner('POST', '/darwin_dev/requirements', body={
+        'title': 'checkpoint-held requirement', 'requirement_status': 'swarm_ready',
+        'category_fk': ids['category'], 'coordination_type': 'deployed',
+        'ai_model': 'sonnet', 'effort': 'high'})
+    ids['req'] = int(extract_id(resp))
+    owner('POST', '/darwin_dev/pipeline_step_requirements',
+         body={'step_fk': ids['held'], 'requirement_fk': ids['req']})
+    owner('POST', '/darwin_dev/pipeline_step_deps',
+         body={'step_fk': ids['held'], 'dep_step_fk': ids['checkpoint']})
+    return ids
+
+
+def test_epic_scoped_read_holds_work_behind_another_epics_checkpoint(owner, checkpoint_plan):
+    resp = _get(owner, 'pipeline_compose_epic', checkpoint_plan['epic_b'])
+    assert resp['statusCode'] == 200, resp
+    body = json.loads(resp['body'])
+    row = next(r for r in body['derived']['rows'] if r['id'] == checkpoint_plan['held'])
+    assert row['checkpoint_blocked_by'] == [checkpoint_plan['checkpoint']]
+    assert row['launch_candidate'] is False
+    # The plan graph fed the derivation and is NOT part of the response.
+    assert 'plan_graph' not in body
+
+
+def test_whole_plan_read_holds_the_same_step(owner, checkpoint_plan):
+    resp = _get(owner, 'pipeline_compose', checkpoint_plan['pipeline'])
+    body = json.loads(resp['body'])
+    row = next(r for r in body['derived']['rows'] if r['id'] == checkpoint_plan['held'])
+    assert row['checkpoint_blocked_by'] == [checkpoint_plan['checkpoint']]
+    assert row['launch_candidate'] is False

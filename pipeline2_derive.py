@@ -178,6 +178,24 @@ naming it.
 construction (they test different states), so nothing that reads only
 `eligible` changes behaviour, and the shared gate half lives in one place
 (`_gates_open`) so they cannot drift on the half they agree about.
+
+## Added after the fact: DEPENDENCIES ARE A PRIORITY, NOT A GATE (req #3597, 2026-10-17)
+
+User rule, every plan, always: whenever the machine has a free slot, launch-
+ready work is started even when its step's dependency gate is not satisfied.
+`launch_candidacy` answers "may this step's work be announced" WITHOUT asking
+whether its dependencies are done (it keeps the time gate, the `swarm_ready`
+rule and the done-step exclusion), and `launch_candidate_step_ids` lists the
+candidates gate-open first, then down the chain in display order. The gate is
+still computed and REPORTED (`gate_open`), and `eligible` / `top_up_eligible`
+still mean exactly what they meant — they draw the view's eligible-now ring
+and the heartbeat's counts. What changed is only which work the engine may
+ANNOUNCE; step STATE and completion semantics are untouched.
+
+**One dependency stays a gate** (the user's amendment, same day): a CHECKPOINT
+— a step with no work requirement, which only `complete_pipeline_step` closes
+— blocks every step downstream of it, transitively, until it is completed.
+`checkpoint_blocked_by` names the open checkpoints holding a row.
 """
 
 import re
@@ -189,7 +207,8 @@ __all__ = [
     'PAUSED_STATUS', 'MODE_PARALLEL', 'MODE_SERIAL',
     'is_tracking_requirement', 'derive_step_state',
     'build_plan_rows', 'display_order', 'verify_order', 'eligibility',
-    'top_up_eligibility',
+    'top_up_eligibility', 'launch_candidacy', 'is_checkpoint',
+    'open_checkpoints_upstream', 'plan_graph_outside',
     'pause_state', 'serial_state', 'requirement_counts', 'derive_plan2',
 ]
 
@@ -823,30 +842,30 @@ def verify_order(rows, epic_scoped=False):
 # Eligibility (DRV-005/006) — a plain per-step predicate, no batch term
 # ---------------------------------------------------------------------------
 
-def _gates_open(row, by_id, now):
-    """THE GATE HALF of the launch predicate, shared by both callers below:
-    every dependency `done`, and this row's own `not_before` (if any) passed
-    relative to the caller-supplied `now`. This module never reads the clock
-    itself (`derive_plan2` is the one caller, and it is told `now` by ITS
-    caller for the same reason `pipeline_derive.eligibility` documents: a
-    stale clock must be visible as stale, not invisible).
+def _deps_done(row, by_id):
+    """Every step dependency of this row is `done`. ONE HALF of the gate.
 
-    No batch term exists here — 1.0's `eligibility` is keyed off a batch's
-    shared launch key; 2.0 has no batch, so this is purely a function of one
-    row's own `dep_ids` and `_not_before` (DRV-005). No `now` — or an
-    unparseable gate — while a gate exists means NOT open, never passed: the
-    safe direction, matching 1.0's posture exactly.
-
-    Factored out by req #3507, which needed the identical gate question asked
-    of a step in a DIFFERENT state. It is one function rather than two so the
-    two predicates cannot drift on the half they agree about — the state test
-    is the only thing that distinguishes them, and that is visible at both
-    call sites rather than buried in a duplicated body.
+    Split out of `_gates_open` by req #3597, which made this half a PRIORITY
+    rather than a precondition for launching: `launch_candidacy` below asks
+    only the time half, and orders candidates by this one. An unknown
+    dependency (absent from `by_id`) is NOT done — the safe direction.
     """
     for dep_id in (row.get('dep_ids') or []):
         dep = by_id.get(dep_id)
         if not dep or dep.get('state') != STEP_DONE:
             return False
+    return True
+
+
+def _time_gate_passed(row, now):
+    """This row's own `not_before` (if any) has passed relative to `now`. The
+    OTHER half of the gate, and the one req #3597 left a precondition: a time
+    gate is a person's stated "not before", not a dependency on other work, so
+    a free slot is no reason to start early.
+
+    No `now` — or an unparseable gate — while a gate exists means NOT passed,
+    never passed: the safe direction, matching 1.0's posture exactly.
+    """
     gate = row.get('_not_before')
     if not gate:
         return True
@@ -857,6 +876,35 @@ def _gates_open(row, by_id, now):
     if gate_epoch is None or gate_epoch > now_epoch:
         return False
     return True
+
+
+def _gates_open(row, by_id, now):
+    """THE GATE, shared by `eligibility` and `top_up_eligibility`, and
+    reported per row as `gate_open`: every dependency `done`, and this row's
+    own `not_before` (if any) passed relative to the caller-supplied `now`.
+    This module never reads the clock itself (`derive_plan2` is the one
+    caller, and it is told `now` by ITS caller for the same reason
+    `pipeline_derive.eligibility` documents: a stale clock must be visible as
+    stale, not invisible).
+
+    No batch term exists here — 1.0's `eligibility` is keyed off a batch's
+    shared launch key; 2.0 has no batch, so this is purely a function of one
+    row's own `dep_ids` and `_not_before` (DRV-005).
+
+    **Since req #3597 this is a REPORT and a SORT KEY, not a launch
+    precondition.** It still decides `eligible` (the view's eligible-now ring)
+    and `top_up_eligible`, and it orders `launch_candidate_step_ids`; it no
+    longer decides whether work may be announced — `launch_candidacy` does.
+
+    **An open CHECKPOINT upstream closes it too** (the user's amendment).
+    `_deps_done` sees only DIRECT dependencies, so a step whose own deps are
+    done while a checkpoint further up is still open would otherwise read
+    gate-open — `eligible`, so the engine admitted it and announced it past
+    the checkpoint (review C1, measured). The checkpoint term lives HERE so
+    every predicate built on the gate honours it, not only candidacy.
+    """
+    return (_deps_done(row, by_id) and _time_gate_passed(row, now)
+            and not _checkpoint_blockers(row, by_id))
 
 
 def eligibility(row, by_id, now=None):
@@ -897,40 +945,13 @@ def top_up_eligibility(row, by_id, now=None):
       both true for one row — a consumer reading either gets one answer.
     * The same gates, via `_gates_open`. A running step's dependencies were
       open when it started, so this is normally vacuous — but a dependency
-      that has since REGRESSED closes it again, and topping work onto a step
-      whose gate has re-opened is exactly the launch the engine's regression
-      hold exists to refuse. The safe direction is the one the shared helper
-      already takes.
-
-      **THE COST OF THAT TERM, STATED SO IT IS A DECISION AND NOT AN
-      OVERSIGHT** (raised by the session on req #3448, the same defect filed
-      separately, 2026-08-14). A running step whose dep has regressed drops
-      out of `top_up_eligible` entirely, so no line names the requirement
-      seated on it — an argument against it on design rule 7, which says
-      silence is never a valid state. Three things settle it the other way,
-      and reversing the call means answering all three:
-
-        1. **The situation is already LOUD.** `pipeline_regression.
-           ADVANCED_STATES` is `(running, done)`, so `detect_regressions`
-           clause 2 fires on exactly this shape: the regressed dependency is
-           announced with the running step named among its already-launched
-           dependents. What is missing is the seated requirement's id, not the
-           event.
-        2. **SYMMETRY WITH `eligibility`.** A *pending* step whose dep
-           regresses is `eligible: False` and goes equally quiet about its own
-           `swarm_ready` requirements. Dropping the gate term here alone would
-           make a step that has STARTED louder about a re-opened gate than one
-           that has not — a new inconsistency, in the surface this requirement
-           exists to make consistent.
-        3. **A top-up is a COMMITMENT, not an observation.** Its output is a
-           `/swarm-start` somebody runs. Issuing one into a plan whose
-           premises have just been withdrawn is the decision the regression
-           hold is there to make a human take.
-
-      The alternative — admit it and let the engine's `regression_held` refuse
-      it with a named edge — is defensible and strictly louder. If it is ever
-      preferred, delete this term and the engine's existing `held_edge` path
-      already covers it; nothing else needs to change.
+      that has since REGRESSED closes it again. **Since req #3597 that no
+      longer withholds anything**: the term keeps `top_up_eligible` meaning
+      "running WITH its gate open" (what the view and the heartbeat report),
+      while `launch_candidacy` below admits the same step's work for launch
+      whatever its gate says. The req #3448 objection to this term — a
+      running step behind a regressed dep went silent about its seated work —
+      is answered there, not by deleting the term here.
     * At least one `launch_req_ids` entry. WITHOUT THIS TERM EVERY RUNNING
       STEP IN EVERY PLAN BECOMES A TOP-UP CANDIDATE with nothing to command,
       and the engine's own `step_items` answers the gate sentinel for a step
@@ -950,6 +971,147 @@ def top_up_eligibility(row, by_id, now=None):
     if not (row.get('launch_req_ids') or []):
         return False
     return _gates_open(row, by_id, now)
+
+
+def is_checkpoint(row):
+    """A step the user CLOSES BY HAND — it carries no work requirement (no
+    links, or only tracking containers), so nothing but
+    `complete_pipeline_step` can finish it. Its `launch_block` says exactly
+    that, so this reads it rather than re-deriving the gating set."""
+    return (row or {}).get('launch_block') in (BLOCK_NO_LINKS, BLOCK_CONTAINERS)
+
+
+def _checkpoint_blockers(row, by_id):
+    """`open_checkpoints_upstream`, read from the row's cache when
+    `derive_plan2` has already walked it (one walk per row, not one per
+    predicate), computed otherwise — for a caller handing in bare rows."""
+    cached = (row or {}).get('_checkpoint_blockers')
+    if cached is not None:
+        return cached
+    return open_checkpoints_upstream(row, by_id or {})
+
+
+def plan_graph_outside(model, by_id):
+    """The steps of this PLAN that this payload's rows do not carry, as
+    `{step_id: {'dep_ids', 'checkpoint', 'done'}}` — so an EPIC-scoped read
+    can still see a checkpoint in another epic (review I1: without it an
+    epic-scoped orchestrator launched straight past one that a whole-plan
+    orchestrator held).
+
+    Read from `model['plan_graph']` — `{steps: [{id, completed_at}],
+    step_deps, step_requirements, tracking_req_ids}` — which only the
+    epic-scoped compose supplies; a whole-plan model carries every step
+    already and has no outside. A step outside is a CHECKPOINT when every
+    link it has is a tracking container (or it has none), and such a step is
+    done exactly when it carries `completed_at` — the same rule
+    `derive_step_state` applies to a step with no gating requirement.
+    """
+    graph = (model or {}).get('plan_graph') or {}
+    tracking = set(graph.get('tracking_req_ids') or [])
+    links = {}
+    for link in graph.get('step_requirements') or []:
+        links.setdefault(link['step_fk'], []).append(link['requirement_fk'])
+    deps = {}
+    for dep in graph.get('step_deps') or []:
+        deps.setdefault(dep['step_fk'], []).append(dep['dep_step_fk'])
+    outside = {}
+    for step in graph.get('steps') or []:
+        if step['id'] in by_id:
+            continue
+        gating = [r for r in links.get(step['id'], []) if r not in tracking]
+        outside[step['id']] = {'dep_ids': deps.get(step['id'], []),
+                               'checkpoint': not gating,
+                               'done': bool(step.get('completed_at'))}
+    return outside
+
+
+def open_checkpoints_upstream(row, by_id, outside=None):
+    """Every CHECKPOINT this row depends on, directly or transitively, that is
+    not yet `done` — in id order. Empty means nothing hand-closed holds it.
+
+    THE USER'S AMENDMENT TO req #3597 (2026-10-17): "requirements that I close
+    by hand should block progress ... until I have cleared them". A
+    checkpoint is the one dependency that is NOT a mere launch priority: it
+    is a person's decision point, so everything downstream of it waits. Once
+    it is completed it blocks nothing.
+
+    The walk goes THROUGH every ancestor, checkpoint or not, so a checkpoint
+    two edges up holds the step as surely as one edge up, and a completed
+    checkpoint does not release anything an open one further up still holds.
+    A dependency absent from `by_id` is looked up in `outside` (the rest of
+    the plan, which the epic-scoped compose supplies — `plan_graph_outside`),
+    so a checkpoint in another epic holds this step exactly as it would under
+    a whole-plan read. One found in neither is unknowable and does not block:
+    treating every unseen edge as a possible checkpoint would withhold all
+    cross-epic work, the opposite of the rule. A `visited` set makes a cycle
+    terminate.
+    """
+    blockers, visited = set(), set()
+    stack = list((row or {}).get('dep_ids') or [])
+    while stack:
+        dep_id = stack.pop()
+        if dep_id in visited:
+            continue
+        visited.add(dep_id)
+        dep = by_id.get(dep_id)
+        if dep is not None:
+            if is_checkpoint(dep) and dep.get('state') != STEP_DONE:
+                blockers.add(dep_id)
+            stack.extend(dep.get('dep_ids') or [])
+            continue
+        far = (outside or {}).get(dep_id)
+        if far is None:
+            continue
+        if far['checkpoint'] and not far['done']:
+            blockers.add(dep_id)
+        stack.extend(far['dep_ids'])
+    return sorted(blockers, key=_id_sort_key)
+
+
+def launch_candidacy(row, by_id=None, now=None):
+    """MAY THIS STEP'S WORK BE ANNOUNCED FOR LAUNCH? (req #3597.)
+
+    THE USER RULE (2026-10-17, plan 10): bias orchestration toward STARTING
+    work. A step's dependencies are a PRIORITY ORDER for launching, not a
+    hard gate, on every plan, always — no mode, no flag. So this predicate
+    deliberately does NOT ask `_deps_done`; the engine fills free slots from
+    gate-open candidates first (`launch_candidate_step_ids` carries that
+    order) and then cascades down the dependency chain.
+
+    FOUR CONJUNCTS — three that req #3597 left unchanged, and the user's
+    amendment to it:
+
+    * `state != done`. A done step's new work is a step that must be
+      REOPENED (a plan mutation, the Primary's call). It cannot carry a
+      `swarm_ready` gating requirement anyway — a done step's gating set is
+      all terminal — so this is a statement of intent more than a filter.
+    * At least one `launch_req_ids` entry — only `swarm_ready`, non-tracking
+      work is ever launch-ready (rule 8, req #3360). A step with nothing to
+      command is not a candidate; the gate-step READY sentinel stays
+      `eligibility`'s, so a pending step behind a closed gate never tells a
+      reader to close it.
+    * Its own time gate (`_time_gate_passed`). A `not_before` is a person's
+      scheduling intention, not a dependency on other work.
+    * No CHECKPOINT upstream is still open (`open_checkpoints_upstream`). A
+      step the user closes by hand blocks everything downstream of it until
+      it is completed — the one dependency that stays a gate.
+
+    Pause and serial turn-taking are NOT conjuncts here, exactly as they are
+    not conjuncts of `eligible`: they are SUPPRESSION, carried separately on
+    `launch_suppressed`/`suppressed_by`, so a reader can tell "may launch but
+    is held by a person" from "has nothing to launch".
+
+    A SUPERSET of `top_up_eligible` and of every `eligible` step that has
+    launchable work, never a replacement for either: those two keep
+    answering the gate question for the view.
+    """
+    if row.get('state') == STEP_DONE:
+        return False
+    if not (row.get('launch_req_ids') or []):
+        return False
+    if not _time_gate_passed(row, now):
+        return False
+    return not _checkpoint_blockers(row, by_id)
 
 
 # ---------------------------------------------------------------------------
@@ -1102,11 +1264,18 @@ def serial_deadlocks(rows, epic_order, serial):
     delta's own new invariant, unique to 2.0: cross-epic edges are legal
     (item 4's gate delta), so a step can name a dependency in an epic that
     has not had its turn yet. Under serial execution that dependency is
-    HELD by `serial_state` until its own epic goes live — which can never
-    happen while it is itself blocking an earlier epic from closing. That is
-    a structural deadlock, not a data defect that resolves itself, and it
-    must be LOUD (`design rule 7`) rather than a silent stall indistinguishable
-    from ordinary in-progress work.
+    HELD by `serial_state` until its own epic goes live, which is after the
+    depending step's epic has closed — so the edge can NEVER be honoured as
+    an ordering.
+
+    **IT IS NO LONGER A DEADLOCK (req #3597)**, and the message says so. It
+    was one while a dependency GATED a launch: the depending step could not
+    start, so its epic could not close, so the dependency's turn never came.
+    Now a dependency is a launch PRIORITY, the depending step launches ahead
+    of it and the plan runs. The edge is still reported, LOUDLY (design rule
+    7), because an ordering the author wrote that the plan structurally
+    inverts is almost certainly not what they meant. The invariant keeps its
+    `serial-deadlock` key so no consumer of the wire format changes.
 
     A "backward" edge is one where the DEPENDENCY's epic sits AFTER the
     DEPENDING step's epic in `epic_order` — the depending step's turn
@@ -1138,11 +1307,12 @@ def serial_deadlocks(rows, epic_order, serial):
                 'message': (
                     f"step {row['id']} (epic turn {row_pos}) depends on step "
                     f"{dep_id} (epic turn {dep_pos}) — a BACKWARD cross-epic "
-                    "edge under serial execution. That dependency can never "
-                    "be released: its epic never goes live while this one, "
-                    "blocked on it, never closes. The gate can never open — "
-                    "this is a deadlock, not a stall. Re-order the epics, "
-                    "move both steps into one epic, or drop the edge."),
+                    "edge under serial execution. The dependency's epic only "
+                    "goes live after this one closes, so this step ALWAYS "
+                    "launches ahead of it (a dependency is a launch priority, "
+                    "not a gate — req #3597) and the edge can never be "
+                    "honoured as an ordering. Re-order the epics, move both "
+                    "steps into one epic, or drop the edge."),
             })
     return violations
 
@@ -1222,6 +1392,7 @@ def derive_plan2(model, now=None, epic_scoped=False):
 
     Narrower than `pipeline_derive.derive_plan` in one respect: no batches —
     Batch does not exist in 2.0. `eligible`, `top_up_eligible` (req #3507),
+    `gate_open` / `launch_candidate` (req #3597),
     `pause` AND `serial` ARE built here (DRV-005/006/016/017/018 for the first two — the verification
     register's boundary, not req #3345's stale docstring; `serial` per the
     gate delta naming req #3388 explicitly, which the register does not
@@ -1264,6 +1435,12 @@ def derive_plan2(model, now=None, epic_scoped=False):
     violations = violations + serial_deadlocks(rows, ordered['epic_order'], serial['serial'])
 
     by_id = {row['id']: row for row in rows}
+    # The user's amendment to req #3597 — ONE checkpoint walk per row, cached
+    # on the row, before any predicate reads it (`_checkpoint_blockers`).
+    outside = plan_graph_outside(model, by_id)
+    for row in rows:
+        row['_checkpoint_blockers'] = open_checkpoints_upstream(row, by_id,
+                                                                outside)
     eligible_ids = [row['id'] for row in rows if eligibility(row, by_id, now)]
     eligible_set = set(eligible_ids)
     # req #3507 — a SECOND, DISJOINT set: steps already running that may still
@@ -1272,6 +1449,15 @@ def derive_plan2(model, now=None, epic_scoped=False):
     # and a consumer that reads only `eligible` behaves exactly as before.
     top_up_ids = [row['id'] for row in rows if top_up_eligibility(row, by_id, now)]
     top_up_set = set(top_up_ids)
+    # req #3597 — the gate as a REPORT, and launch candidacy past it. The
+    # candidate list is in LAUNCH PRIORITY order: gate-open candidates first,
+    # then the rest, each half in display order — so a consumer filling free
+    # slots walks it front to back and cascades down the dependency chain.
+    gate_open_set = {row['id'] for row in rows if _gates_open(row, by_id, now)}
+    candidates = [row['id'] for row in rows if launch_candidacy(row, by_id, now)]
+    candidate_set = set(candidates)
+    candidate_ids = ([i for i in candidates if i in gate_open_set]
+                     + [i for i in candidates if i not in gate_open_set])
     out_of_scope_set = set(out_of_scope_dep_ids)
 
     unresolved = []
@@ -1296,6 +1482,16 @@ def derive_plan2(model, now=None, epic_scoped=False):
             # never both true. A reader wanting "is there a launch here" reads
             # both; a reader drawing an eligible-now ring reads the first.
             'top_up_eligible': row['id'] in top_up_set,
+            # req #3597. `gate_open` is the gate REPORTED (every dep done and
+            # the time gate passed) — the view's "gate satisfied / waiting".
+            # `launch_candidate` is whether this step's work may be announced
+            # for launch, which no longer requires the gate.
+            'gate_open': row['id'] in gate_open_set,
+            'launch_candidate': row['id'] in candidate_set,
+            # The amendment: hand-closed checkpoints upstream that are still
+            # open. Non-empty means this step's work is NOT announced, and
+            # these are the steps to complete to release it.
+            'checkpoint_blocked_by': row['_checkpoint_blockers'],
             'epic_id': row['epic_id'],
             'dep_ids': row['dep_ids'],
             # Which of THIS row's own deps are out of scope (a subset of
@@ -1321,6 +1517,9 @@ def derive_plan2(model, now=None, epic_scoped=False):
         # req #3507 — the plan-level companion, in display order, beside
         # `eligible_step_ids` rather than folded into it.
         'top_up_step_ids': top_up_ids,
+        # req #3597 — every launch candidate, in launch PRIORITY order
+        # (gate-open first, then display order), NOT display order.
+        'launch_candidate_step_ids': candidate_ids,
         'violations': violations,
         'cycle_detected': ordered['cycle_detected'],
         'cycle_step_ids': ordered['cycle_step_ids'],

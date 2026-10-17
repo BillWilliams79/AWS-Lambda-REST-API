@@ -341,7 +341,16 @@ def compose_pipeline2_epic(conn, epic_id, authenticated_user):
     """THE epic-scoped composed render. Same shape, narrowed to one epic —
     six reads, not five, because the epic's own row AND the pipeline's own
     row are both required (two independent pause scopes). Returns None when
-    not found / not owned."""
+    not found / not owned.
+
+    PLUS UP TO FOUR LIGHT READS OF THE REST OF THE PLAN'S GRAPH (req #3597,
+    the user's amendment: a step closed by hand blocks everything downstream).
+    A checkpoint in ANOTHER epic must hold this epic's steps exactly as a
+    whole-plan read holds them, and only the plan's step ids, `completed_at`,
+    dependency edges, links and tracking flags can say where one is. Same
+    invocation, so still ONE gateway round trip; ids and timestamps only.
+    The graph feeds the derivation and is then DROPPED — it is not part of
+    the response shape."""
     with conn.cursor(pymysql.cursors.DictCursor) as cursor:
         epics = _select(cursor, _EPIC_COLUMNS, 'epics',
                         'id = %s AND creator_fk = %s',
@@ -384,10 +393,47 @@ def compose_pipeline2_epic(conn, epic_id, authenticated_user):
                 f"id IN {_in_clause(len(requirement_ids))} AND creator_fk = %s",
                 tuple(requirement_ids) + (authenticated_user,), order_by='id ASC')  # read 6
 
+        plan_graph = _plan_graph_outside_epic(cursor, pipeline['id'], epic_id,
+                                              authenticated_user)
+
     model = {
         'pipeline': pipeline, 'epics': [epic], 'steps': steps,
         'step_requirements': links, 'step_deps': deps,
-        'requirements': requirements,
+        'requirements': requirements, 'plan_graph': plan_graph,
     }
     model['derived'] = _derive(model, epic_scoped=True)
+    model.pop('plan_graph')
     return _bounded(f"pipeline2_compose_epic/{epic_id}", model, epic_scoped=True)
+
+
+def _plan_graph_outside_epic(cursor, pipeline_id, epic_id, authenticated_user):
+    """The plan's steps OUTSIDE this epic, as the derivation's checkpoint walk
+    needs them (`pipeline2_derive.plan_graph_outside`). Reads 7-10, each
+    skipped when the one before it finds nothing."""
+    graph = {'steps': [], 'step_deps': [], 'step_requirements': [],
+             'tracking_req_ids': []}
+    graph['steps'] = _select(
+        cursor, ('id', 'completed_at'), 'pipeline_steps',
+        'epic_fk IN (SELECT id FROM epics WHERE pipeline_fk = %s '
+        'AND creator_fk = %s) AND epic_fk <> %s AND creator_fk = %s',
+        (pipeline_id, authenticated_user, epic_id, authenticated_user),
+        order_by='id ASC')                                                    # read 7
+    if not graph['steps']:
+        return graph
+    ids = tuple(sorted(s['id'] for s in graph['steps']))
+    in_clause = _in_clause(len(ids))
+    graph['step_deps'] = _select(cursor, ('step_fk', 'dep_step_fk'),
+                                 'pipeline_step_deps', f'step_fk IN {in_clause}',
+                                 ids)                                         # read 8
+    graph['step_requirements'] = _select(cursor, _LINK_COLUMNS,
+                                         'pipeline_step_requirements',
+                                         f'step_fk IN {in_clause}', ids)      # read 9
+    req_ids = sorted({link['requirement_fk']
+                      for link in graph['step_requirements']})
+    if req_ids:
+        graph['tracking_req_ids'] = [row['id'] for row in _select(
+            cursor, ('id',), 'requirements',
+            f"id IN {_in_clause(len(req_ids))} AND tracking = 1 "
+            "AND creator_fk = %s",
+            tuple(req_ids) + (authenticated_user,))]                          # read 10
+    return graph
