@@ -587,13 +587,14 @@ def test_derive_plan2_shape_is_compact_ids_and_enums_only():
     plan = deriv.derive_plan2(model, now='2026-08-09T00:00:00Z')
     assert set(plan) == {
         'now', 'epic_order', 'display_order', 'rows', 'pause', 'serial',
-        'eligible_step_ids', 'top_up_step_ids',
+        'eligible_step_ids', 'top_up_step_ids', 'launch_candidate_step_ids',
         'violations', 'cycle_detected', 'cycle_step_ids',
         'duplicate_step_ids', 'unresolved_req_ids', 'out_of_scope_dep_ids',
         'requirement_counts'}
     for row in plan['rows']:
         assert set(row) == {
             'id', 'state', 'run', 'eligible', 'top_up_eligible',
+            'gate_open', 'launch_candidate', 'checkpoint_blocked_by',
             'epic_id', 'dep_ids',
             'out_of_scope_dep_ids', 'req_ids',
             'tracking_req_ids', 'unresolved_req_ids', 'launch_req_ids',
@@ -728,9 +729,10 @@ def test_top_up_eligibility_is_disjoint_from_eligibility_on_every_state():
 
 # COVERS: DRV-026
 def test_top_up_eligibility_asks_the_same_gate_question_as_eligibility():
-    """A dependency that has REGRESSED closes the gate again, and topping work
-    onto a step whose gate has re-opened is the launch the regression hold
-    exists to refuse."""
+    """A dependency that has REGRESSED closes the gate again, so the step is
+    no longer reported `top_up_eligible` (running WITH its gate open). Since
+    req #3597 that withholds nothing — `launch_candidacy` admits its work —
+    but the REPORT stays the gate question."""
     dep = _pending_row(1)
     row = _running_row(2, dep_ids=[1])
     by_id = {1: dep, 2: row}
@@ -780,6 +782,273 @@ def test_derive_plan2_top_up_step_ids_is_empty_when_nothing_is_launchable():
     assert row['state'] == deriv.STEP_RUNNING
     assert row['top_up_eligible'] is False
     assert plan['top_up_step_ids'] == []
+
+
+# ---------------------------------------------------------------------------
+# Launch candidacy (DRV-027, req #3597) — dependencies are a PRIORITY, not a gate
+# ---------------------------------------------------------------------------
+#
+# THE USER RULE, 2026-10-17 (plan 10): whenever the machine has a free slot,
+# launch-ready work is started even when its step's dependency gate is not
+# satisfied. Measured trigger: #3594/#3595 seated on step 315 while dependent
+# step 316 was running — held, with two slots free, and launched by hand.
+
+def _plan10_model():
+    """Plan 10's shape on 2026-10-17: 313 done; 315 depends on 313 and was
+    RE-OPENED by added work while its dependent 316 runs; 314 depends on 316
+    (gate closed) and carries launch-ready work; 317 depends on 314 — a
+    further-downstream gated step, also carrying launch-ready work."""
+    return {
+        'pipeline': {'id': 10, 'title': 'Tip of the Spear',
+                     'pipeline_status': 'active', 'execution_mode': 'parallel'},
+        'epics': [_epic(100, pipeline_fk=10)],
+        'steps': [_step(313, 100), _step(315, 100), _step(316, 100),
+                  _step(314, 100), _step(317, 100)],
+        'step_requirements': [
+            {'step_fk': 313, 'requirement_fk': 3580},
+            {'step_fk': 315, 'requirement_fk': 3581},
+            {'step_fk': 315, 'requirement_fk': 3594},
+            {'step_fk': 315, 'requirement_fk': 3595},
+            {'step_fk': 316, 'requirement_fk': 3590},
+            {'step_fk': 314, 'requirement_fk': 3586},
+            {'step_fk': 317, 'requirement_fk': 3599},
+            {'step_fk': 317, 'requirement_fk': 3598},
+        ],
+        'step_deps': [
+            {'id': 1, 'step_fk': 315, 'dep_step_fk': 313},
+            {'id': 2, 'step_fk': 316, 'dep_step_fk': 315},
+            {'id': 3, 'step_fk': 314, 'dep_step_fk': 316},
+            {'id': 4, 'step_fk': 317, 'dep_step_fk': 314},
+        ],
+        'requirements': [
+            _req(3580, status='met'), _req(3581, status='met'),
+            _req(3594, status='swarm_ready'), _req(3595, status='swarm_ready'),
+            _req(3590, status='development'),
+            _req(3586, status='swarm_ready'),
+            _req(3599, status='swarm_ready'), _req(3598, status='swarm_ready'),
+        ],
+    }
+
+
+# COVERS: DRV-027
+def test_launch_candidacy_ignores_dependencies():
+    dep = _pending_row(1)
+    row = _pending_row(2, dep_ids=[1])
+    row['launch_req_ids'] = [42]
+    assert deriv.eligibility(row, {1: dep, 2: row}, now=NOW) is False
+    assert deriv.launch_candidacy(row, now=NOW) is True
+    running = _running_row(3, dep_ids=[1])
+    assert deriv.top_up_eligibility(running, {1: dep, 3: running}, NOW) is False
+    assert deriv.launch_candidacy(running, now=NOW) is True
+
+
+# COVERS: DRV-027
+def test_launch_candidacy_keeps_the_unchanged_conjuncts():
+    """No launchable work, a done step, or an unpassed TIME gate: not a
+    candidate. A time gate is a person's "not before", not a dependency."""
+    empty = _pending_row(1)
+    empty['launch_req_ids'] = []
+    assert deriv.launch_candidacy(empty, now=NOW) is False
+    done = _done_row(2)
+    done['launch_req_ids'] = [42]
+    assert deriv.launch_candidacy(done, now=NOW) is False
+    timed = _running_row(3, not_before='2026-08-10T00:00:00Z')
+    assert deriv.launch_candidacy(timed, now=NOW) is False
+    assert deriv.launch_candidacy(timed, now=None) is False
+    assert deriv.launch_candidacy(timed, now='2026-08-11T00:00:00Z') is True
+
+
+# COVERS: DRV-027
+def test_derive_plan2_plan10_every_launch_ready_step_is_a_candidate():
+    plan = deriv.derive_plan2(_plan10_model(), now=NOW)
+    rows = {r['id']: r for r in plan['rows']}
+    assert [rows[i]['state'] for i in (313, 315, 316, 314, 317)] == [
+        'done', 'pending', 'running', 'pending', 'pending']
+    # The gate is still REPORTED, and still draws the eligible-now ring.
+    assert rows[315]['gate_open'] is True and rows[315]['eligible'] is True
+    assert rows[314]['gate_open'] is False and rows[314]['eligible'] is False
+    assert rows[317]['gate_open'] is False and rows[317]['eligible'] is False
+    # ...but it no longer decides candidacy.
+    assert {i for i, r in rows.items() if r['launch_candidate']} == {315, 314, 317}
+    assert rows[316]['launch_candidate'] is False   # nothing launch-ready
+    assert rows[313]['launch_candidate'] is False   # done
+
+
+# COVERS: DRV-027
+def test_launch_candidate_step_ids_is_gate_open_first_then_display_order():
+    plan = deriv.derive_plan2(_plan10_model(), now=NOW)
+    order = plan['display_order']
+    assert order.index(314) < order.index(317)
+    # 315's gate is open, so it leads; then the gated steps down the chain.
+    assert plan['launch_candidate_step_ids'] == [315, 314, 317]
+
+
+def test_launch_candidate_step_ids_puts_gate_open_ahead_of_display_order():
+    """A gate-open candidate that DISPLAYS after a gated one still leads."""
+    model = _plan10_model()
+    # A second root step, displayed last, whose (empty) gate is open.
+    model['steps'].append(_step(318, 100))
+    model['step_requirements'].append({'step_fk': 318, 'requirement_fk': 3600})
+    model['requirements'].append(_req(3600, status='swarm_ready'))
+    plan = deriv.derive_plan2(model, now=NOW)
+    ids = plan['launch_candidate_step_ids']
+    gate_open = [i for i in ids if next(r for r in plan['rows']
+                                        if r['id'] == i)['gate_open']]
+    assert ids[:len(gate_open)] == gate_open
+    assert set(gate_open) == {315, 318}
+    assert ids[len(gate_open):] == [314, 317]
+
+
+# The user's amendment (2026-10-17): a step CLOSED BY HAND — a checkpoint, with
+# no work requirement — blocks everything downstream of it until completed.
+
+def _checkpoint_model(checkpoint_done=False):
+    """Step 1 is a CHECKPOINT (no links). Step 2 (running work) and step 4
+    (launch-ready) depend on it directly; step 3 (launch-ready) depends on 2,
+    so it is two edges below the checkpoint. Step 5 is unrelated."""
+    return {
+        'pipeline': {'id': 11, 'title': 'Checkpoints',
+                     'pipeline_status': 'active', 'execution_mode': 'parallel'},
+        'epics': [_epic(110, pipeline_fk=11)],
+        'steps': [_step(1, 110, title='checkpoint',
+                        completed_at='2026-10-17 00:00:00' if checkpoint_done else None),
+                  _step(2, 110), _step(3, 110), _step(4, 110), _step(5, 110)],
+        'step_requirements': [
+            {'step_fk': 2, 'requirement_fk': 20},
+            {'step_fk': 3, 'requirement_fk': 30},
+            {'step_fk': 4, 'requirement_fk': 40},
+            {'step_fk': 5, 'requirement_fk': 50},
+        ],
+        'step_deps': [
+            {'id': 1, 'step_fk': 2, 'dep_step_fk': 1},
+            {'id': 2, 'step_fk': 3, 'dep_step_fk': 2},
+            {'id': 3, 'step_fk': 4, 'dep_step_fk': 1},
+        ],
+        'requirements': [_req(20, status='development'),
+                         _req(30, status='swarm_ready'),
+                         _req(40, status='swarm_ready'),
+                         _req(50, status='swarm_ready')],
+    }
+
+
+# COVERS: DRV-028
+def test_an_open_checkpoint_blocks_everything_downstream_transitively():
+    plan = deriv.derive_plan2(_checkpoint_model(), now=NOW)
+    rows = {r['id']: r for r in plan['rows']}
+    assert rows[1]['state'] == 'pending'               # the checkpoint, open
+    assert rows[4]['launch_candidate'] is False         # one edge below it
+    assert rows[4]['checkpoint_blocked_by'] == [1]
+    assert rows[3]['launch_candidate'] is False         # two edges below it
+    assert rows[3]['checkpoint_blocked_by'] == [1]
+    assert rows[5]['launch_candidate'] is True          # not downstream
+    assert rows[5]['checkpoint_blocked_by'] == []
+    assert plan['launch_candidate_step_ids'] == [5]
+
+
+# COVERS: DRV-028
+def test_a_completed_checkpoint_blocks_nothing():
+    plan = deriv.derive_plan2(_checkpoint_model(checkpoint_done=True), now=NOW)
+    rows = {r['id']: r for r in plan['rows']}
+    assert rows[1]['state'] == 'done'
+    assert rows[4]['launch_candidate'] is True
+    assert rows[4]['gate_open'] is True                 # its only dep is done
+    # 3 sits behind running step 2 — an ordinary dependency, so a PRIORITY.
+    assert rows[3]['launch_candidate'] is True
+    assert rows[3]['gate_open'] is False
+    assert all(r['checkpoint_blocked_by'] == [] for r in plan['rows'])
+
+
+# COVERS: DRV-028
+def test_a_checkpoint_is_a_step_with_no_work_requirement():
+    assert deriv.is_checkpoint({'launch_block': 'no-links'}) is True
+    assert deriv.is_checkpoint({'launch_block': 'containers'}) is True
+    # Work that is merely not swarm_ready is not a checkpoint: it finishes
+    # when its requirements do, not by hand.
+    assert deriv.is_checkpoint({'launch_block': 'not-ready'}) is False
+    assert deriv.is_checkpoint({'launch_block': None}) is False
+
+
+# COVERS: DRV-028
+def test_an_open_checkpoint_above_a_DONE_step_still_holds_eligible_and_top_up():
+    """Review C1, measured: checkpoint 10 open, step 11 under it DONE (its
+    requirement set met by hand), 12 pending and 13 running under 11. Their
+    DIRECT deps are done, so before the fix they read `eligible` /
+    `top_up_eligible` and the engine launched straight past the checkpoint."""
+    model = {
+        'pipeline': {'id': 12, 'title': 'C1', 'pipeline_status': 'active',
+                     'execution_mode': 'parallel'},
+        'epics': [_epic(120, pipeline_fk=12)],
+        'steps': [_step(10, 120), _step(11, 120), _step(12, 120), _step(13, 120),
+                  _step(14, 120)],
+        'step_requirements': [
+            {'step_fk': 11, 'requirement_fk': 101},
+            {'step_fk': 12, 'requirement_fk': 102},
+            {'step_fk': 13, 'requirement_fk': 103},
+            {'step_fk': 13, 'requirement_fk': 104},
+        ],
+        'step_deps': [
+            {'id': 1, 'step_fk': 11, 'dep_step_fk': 10},
+            {'id': 2, 'step_fk': 12, 'dep_step_fk': 11},
+            {'id': 3, 'step_fk': 13, 'dep_step_fk': 11},
+            {'id': 4, 'step_fk': 14, 'dep_step_fk': 11},   # a 2nd checkpoint
+        ],
+        'requirements': [_req(101, status='met'), _req(102, status='swarm_ready'),
+                         _req(103, status='development'),
+                         _req(104, status='swarm_ready')],
+    }
+    plan = deriv.derive_plan2(model, now=NOW)
+    rows = {r['id']: r for r in plan['rows']}
+    assert rows[11]['state'] == 'done'
+    for sid in (12, 13, 14):
+        assert rows[sid]['checkpoint_blocked_by'] == [10], sid
+        assert rows[sid]['gate_open'] is False, sid
+        assert rows[sid]['eligible'] is False, sid
+        assert rows[sid]['top_up_eligible'] is False, sid
+        assert rows[sid]['launch_candidate'] is False, sid
+    # 14 is itself a checkpoint behind an open one: never told to close it yet.
+    assert 14 not in plan['eligible_step_ids']
+    assert plan['eligible_step_ids'] == [10]
+
+
+# COVERS: DRV-028
+def test_an_epic_scoped_read_sees_a_checkpoint_in_another_epic():
+    """Review I1: the epic-scoped compose supplies `plan_graph` (the rest of
+    the plan's steps, edges, links and tracking ids) so a checkpoint outside
+    the epic holds this epic's step exactly as a whole-plan read does."""
+    model = {
+        'pipeline': {'id': 13, 'title': 'I1', 'pipeline_status': 'active',
+                     'execution_mode': 'parallel'},
+        'epics': [_epic(131, pipeline_fk=13)],
+        'steps': [_step(2, 131)],
+        'step_requirements': [{'step_fk': 2, 'requirement_fk': 20}],
+        'step_deps': [{'id': 1, 'step_fk': 2, 'dep_step_fk': 5}],
+        'requirements': [_req(20, status='swarm_ready')],
+        # step 5 is ordinary work (link 50, not tracking) in epic 130, and it
+        # depends on step 1 — a checkpoint whose only link is a container.
+        'plan_graph': {
+            'steps': [{'id': 1, 'completed_at': None},
+                      {'id': 5, 'completed_at': None}],
+            'step_deps': [{'step_fk': 5, 'dep_step_fk': 1}],
+            'step_requirements': [{'step_fk': 1, 'requirement_fk': 900},
+                                  {'step_fk': 5, 'requirement_fk': 50}],
+            'tracking_req_ids': [900],
+        },
+    }
+    plan = deriv.derive_plan2(model, now=NOW, epic_scoped=True)
+    row = plan['rows'][0]
+    assert row['checkpoint_blocked_by'] == [1]
+    assert row['launch_candidate'] is False
+    # ...and once it is completed, the same read releases the step.
+    model['plan_graph']['steps'][0]['completed_at'] = '2026-10-17 00:00:00'
+    plan = deriv.derive_plan2(model, now=NOW, epic_scoped=True)
+    assert plan['rows'][0]['checkpoint_blocked_by'] == []
+    assert plan['rows'][0]['launch_candidate'] is True
+
+
+def test_checkpoint_walk_survives_a_cycle_and_an_unseen_dependency():
+    a = {'id': 1, 'dep_ids': [2, 99], 'launch_block': None, 'state': 'pending'}
+    b = {'id': 2, 'dep_ids': [1], 'launch_block': None, 'state': 'pending'}
+    assert deriv.open_checkpoints_upstream(a, {1: a, 2: b}) == []
 
 
 # ---------------------------------------------------------------------------
@@ -1034,6 +1303,10 @@ def test_backward_cross_epic_edge_under_serial_is_a_loud_deadlock():
     plan = deriv.derive_plan2(model, now='2026-08-09T00:00:00Z')
     deadlocks = [v for v in plan['violations'] if v['invariant'] == 'serial-deadlock']
     assert deadlocks and set(deadlocks[0]['step_ids']) == {9101, 9201}
+    # req #3597 — still LOUD, but no longer called a deadlock: the depending
+    # step launches ahead of its dependency, so the plan runs.
+    assert 'never be honoured as an ordering' in deadlocks[0]['message']
+    assert 'can never open' not in deadlocks[0]['message']
 
 
 def test_backward_edge_under_parallel_mode_is_not_a_deadlock():
