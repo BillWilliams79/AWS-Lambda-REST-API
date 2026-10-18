@@ -407,12 +407,133 @@ def test_three_step_single_epic_case_still_reports_amended_acceptance():
         'step_deps': [{'id': 1, 'step_fk': 3, 'dep_step_fk': 2}],
     }
     rows = deriv.build_plan_rows(model)
-    ordered = deriv.display_order(rows, model['epics'])
-    violations, _ = deriv.verify_order(ordered['rows'])
+    by_id = {r['id']: r for r in rows}
+    # The CHECK still reports the greedy order this criterion was written
+    # against: `1` is held up for nobody, so `3` below it is avoidable.
+    violations, _ = deriv.verify_order([by_id[1], by_id[2], by_id[3]])
     banding = [v for v in violations if v['invariant'] == 'state-banding']
     assert banding, ('the amended acceptance criterion requires this case to '
                      'still report — see visualizer-design.md § 5.3')
     assert set(banding[0]['step_ids']) == {3, 1}
+    # req #3626 — and the ORDER no longer produces it: `display_order` lifts
+    # `2, 3` above `1`, so the inversion never renders.
+    ordered = deriv.display_order(rows, model['epics'])
+    assert [r['id'] for r in ordered['rows']] == [2, 3, 1]
+    violations, _ = deriv.verify_order(ordered['rows'])
+    assert [v for v in violations if v['invariant'] == 'state-banding'] == []
+
+
+# req #3626 — a done step waiting on a pending dependency (a step inserted in
+# front of finished work). Shaped on darwin_dev pipeline 7, epic 11: done 304 ->
+# pending 447, done 305 -> pending 449, done 303 -> pending 450, beside an
+# unrelated running 102 and an unrelated pending 200.
+def _done_waiting_model():
+    return {
+        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active',
+                    'execution_mode': 'parallel'},
+        'epics': [_epic(90)],
+        'steps': [
+            _step(100, 90, completed_at='2026-08-01 00:00:00'),
+            _step(102, 90),
+            _step(200, 90),
+            _step(303, 90, completed_at='2026-08-01 00:00:00'),
+            _step(304, 90, completed_at='2026-08-01 00:00:00'),
+            _step(305, 90, completed_at='2026-08-01 00:00:00'),
+            _step(447, 90), _step(449, 90), _step(450, 90),
+        ],
+        'step_requirements': [{'step_fk': 102, 'requirement_fk': 9}],
+        'requirements': [{'id': 9, 'title': 'r', 'requirement_status': 'development',
+                          'tracking': 0}],
+        'step_deps': [
+            {'id': 1, 'step_fk': 102, 'dep_step_fk': 100},
+            {'id': 2, 'step_fk': 304, 'dep_step_fk': 447},
+            {'id': 3, 'step_fk': 305, 'dep_step_fk': 449},
+            {'id': 4, 'step_fk': 303, 'dep_step_fk': 450},
+        ],
+    }
+
+
+def test_done_step_waiting_on_a_pending_dependency_is_not_a_violation():
+    model = _done_waiting_model()
+    plan = deriv.derive_plan2(model, now='2026-10-18T00:00:00Z')
+    states = {r['id']: r['state'] for r in plan['rows']}
+    assert states[102] == 'running' and states[447] == 'pending'
+    assert [v for v in plan['violations'] if v['invariant'] == 'state-banding'] == []
+    order = [r['id'] for r in plan['rows']]
+    # Each held-up pending dependency renders ahead of the unrelated pending
+    # 200, directly above the done step waiting on it.
+    assert order == [100, 102, 447, 304, 449, 305, 450, 303, 200]
+
+
+def test_forced_inversion_done_below_running_because_its_dep_is_pending():
+    """Lifting 304 above running 102 means lifting pending 447 above it too —
+    one inversion for another, so it is not avoidable."""
+    by_id = {r['id']: r for r in deriv.build_plan_rows(_done_waiting_model())}
+    rows = [by_id[i] for i in (100, 102, 447, 304)]
+    violations, _ = deriv.verify_order(rows)
+    assert [v for v in violations if v['invariant'] == 'state-banding'] == []
+
+
+def test_forced_inversion_two_held_up_clusters_cannot_both_come_first():
+    by_id = {r['id']: r for r in deriv.build_plan_rows(_done_waiting_model())}
+    rows = [by_id[i] for i in (447, 304, 449, 305)]
+    violations, _ = deriv.verify_order(rows)
+    assert [v for v in violations if v['invariant'] == 'state-banding'] == []
+
+
+def test_done_step_below_an_unrelated_pending_row_still_reports():
+    """304 below the unrelated pending 200 was avoidable (447, 304 could have
+    rendered first), and so is a done step with no pending dependency at all
+    below a held-up one."""
+    by_id = {r['id']: r for r in deriv.build_plan_rows(_done_waiting_model())}
+    violations, _ = deriv.verify_order([by_id[i] for i in (200, 447, 304)])
+    banding = [v for v in violations if v['invariant'] == 'state-banding']
+    assert banding and set(banding[0]['step_ids']) == {304, 200}
+    violations, _ = deriv.verify_order([by_id[i] for i in (447, 100, 304)])
+    banding = [v for v in violations if v['invariant'] == 'state-banding']
+    assert banding and set(banding[0]['step_ids']) == {100, 447}
+
+
+def test_inversions_the_review_found_hidden_still_report_and_are_rendered_away():
+    """Two shapes a pairwise excuse silenced (req #3626 code review). Each is
+    avoidable, so the check reports it when handed the bad order, and
+    `display_order` never renders it."""
+    cross = {
+        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active',
+                    'execution_mode': 'parallel'},
+        'epics': [_epic(90, sort_order=1), _epic(91, sort_order=2)],
+        'steps': [_step(3, 90, completed_at='2026-08-01 00:00:00'), _step(4, 90),
+                  _step(5, 90, completed_at='2026-08-01 00:00:00'), _step(7, 91)],
+        'step_requirements': [{'step_fk': 4, 'requirement_fk': 9}],
+        'requirements': [{'id': 9, 'title': 'r', 'requirement_status': 'development',
+                          'tracking': 0}],
+        'step_deps': [{'id': 1, 'step_fk': 4, 'dep_step_fk': 3},
+                      {'id': 2, 'step_fk': 5, 'dep_step_fk': 3},
+                      {'id': 3, 'step_fk': 5, 'dep_step_fk': 7}],
+    }
+    nested = {
+        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active',
+                    'execution_mode': 'parallel'},
+        'epics': [_epic(90)],
+        'steps': [_step(1, 90, completed_at='2026-08-01 00:00:00'),
+                  _step(2, 90, completed_at='2026-08-01 00:00:00'),
+                  _step(3, 90, completed_at='2026-08-01 00:00:00'),
+                  _step(5, 90, completed_at='2026-08-01 00:00:00'),
+                  _step(7, 90), _step(8, 90)],
+        'step_requirements': [], 'requirements': [],
+        'step_deps': [{'id': 1, 'step_fk': 2, 'dep_step_fk': 8},
+                      {'id': 2, 'step_fk': 5, 'dep_step_fk': 2},
+                      {'id': 3, 'step_fk': 5, 'dep_step_fk': 7}],
+    }
+    for model, bad, pair in ((cross, (3, 4, 7, 5), {5, 4}),
+                             (nested, (1, 3, 7, 8, 2, 5), {2, 7})):
+        by_id = {r['id']: r for r in deriv.build_plan_rows(model)}
+        violations, _ = deriv.verify_order([by_id[i] for i in bad])
+        banding = [v for v in violations if v['invariant'] == 'state-banding']
+        assert banding and set(banding[0]['step_ids']) == pair
+        plan = deriv.derive_plan2(model, now='2026-10-18T00:00:00Z')
+        assert [v for v in plan['violations'] if v['invariant'] == 'state-banding'] == []
+        assert [r['id'] for r in plan['rows']] != list(bad)
 
 
 # COVERS: DRV-020
@@ -1374,7 +1495,12 @@ def test_epic_sort_order_does_not_outrank_a_within_epic_state_band():
     }
     plan = deriv.derive_plan2(model, now='2026-08-09T00:00:00Z')
     assert plan['epic_order'] == [90, 91], "sort_order still clusters the epics"
-    banding = [v for v in plan['violations'] if v['invariant'] == 'state-banding']
+    # req #3626 renders `2, 3` above `1`, so the derived order holds no
+    # inversion to report; the check is asserted on the inverted order itself.
+    by_id = {r['id']: r for r in deriv.build_plan_rows(model)}
+    violations, _ = deriv.verify_order(
+        [by_id[1], by_id[2], by_id[3], by_id[9101]])
+    banding = [v for v in violations if v['invariant'] == 'state-banding']
     assert banding, ("sort_order must not suppress a genuine within-epic "
                      "banding violation")
     assert set(banding[0]['step_ids']) == {3, 1}
