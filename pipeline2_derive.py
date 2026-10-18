@@ -658,46 +658,182 @@ def display_order(rows, epics):
         out.append(pick)
         del remaining[pick['id']]
 
+    # `banding_settled`: True when the settle finished — it has then asked the
+    # check's own question of every pair, so `verify_order` need not repeat
+    # it; False when its work budget ran out; None on a cycle (stored-order
+    # fallback, never settled — the check runs in full).
+    banding_settled = None
+    if not cycle_detected:
+        out, banding_settled = _settle_banding(out)
+
     return {'rows': out, 'cycle_detected': cycle_detected,
+            'banding_settled': banding_settled,
             'cycle_step_ids': cycle_step_ids,
             'duplicate_step_ids': duplicate_step_ids,
             'epic_order': full_epic_order}
 
 
-def _epic_banding_violations(epic_rows, depends_on):
-    """The state-banding invariant, compared over ONE epic's own rows only —
-    item 4's epic-scoped self-check (`memory/pipeline-2-visualizer-design.md`
-    § 5.4, measurement D). A band inversion is a violation only when it was
-    AVOIDABLE: the lower-band row does not depend, TRANSITIVELY, on the
-    higher-band row it renders below.
+def _dependency_closure(rows):
+    """`depends_on(step_id)` -> every row id `step_id` depends on, transitively,
+    over `rows` only — a dependency outside them (out of scope, or dangling) is
+    not part of the closure. ONE closure over the whole plan, never per epic:
+    cross-epic edges are legal, so a transitive path can leave an epic and come
+    back (A -> B in another epic -> C, back in this one)."""
+    by_id = {row['id']: row for row in rows}
+    closure = {}
 
-    `depends_on` is the caller's GLOBAL closure (over every row in the whole
-    plan, not just this epic) — this is corrected from an earlier version
-    that computed the closure locally per epic, which was WRONG: cross-epic
-    dependency edges are legal, so a transitive path can legitimately leave
-    this epic and come back (A -> B in another epic -> C, back in this one),
-    and a closure that cannot see B reports a false "unavoidable" inversion
-    between A and C. Only the COMPARISON — which pairs of rows are even
-    checked against each other — is epic-scoped; what counts as "avoidable"
-    is a fact about the whole dependency graph and must be computed there.
-    (Measured over 3000 fuzzed plans: an epic-local closure produced 50 false
-    positives beyond the 386 a global closure finds — 11.5% of the total.)
+    def depends_on(step_id):
+        if step_id in closure:
+            return closure[step_id]
+        out = set()
+        closure[step_id] = out          # cycle guard; the cycle invariant reports it
+        for dep in (by_id.get(step_id) or {}).get('dep_ids') or []:
+            if dep not in by_id:
+                continue
+            out.add(dep)
+            out.update(depends_on(dep))
+        return out
 
-    This is the check the amended acceptance criterion's three-step case
-    exercises: `1 pending, 2 pending, 3 done depending on 2` in one epic
-    reports `3` rendering below `1`, because `1` is not a dependency of `3`
-    and the greedy topological pass had no reason to place it after `2, 3`.
+    return depends_on
+
+
+def _band(row):
+    return _STATE_RANK.get(row.get('state'), 2)
+
+
+def _inverted(above, below, depends_on):
+    """`below` renders under a WORSE-banded row of its own epic that it does
+    not depend on — a done>running>pending inversion. Epic-scoped: a finished
+    epic above another epic's pending work is what containment asks for."""
+    return (above.get('epic_id') == below.get('epic_id')
+            and _band(above) > _band(below)
+            and above['id'] not in depends_on(below['id']))
+
+
+def _crossings(rows, span, moved, depends_on, moved_first, work=None):
+    """Inversions between the `moved` positions of `span` and the rest of it,
+    (before, after) the move puts every moved row above (`moved_first`) or
+    below the rest. Pairs inside either group keep their relative order, so
+    these are the only pairs a move can change."""
+    taken = set(moved)
+    stay = [k for k in span if k not in taken]
+    if work is not None:
+        work[0] += len(moved) * len(stay)
+    before = after = 0
+    for m in moved:
+        for t in stay:
+            a, b = (m, t) if m < t else (t, m)
+            before += _inverted(rows[a], rows[b], depends_on)
+            after += (_inverted(rows[m], rows[t], depends_on) if moved_first
+                      else _inverted(rows[t], rows[m], depends_on))
+    return before, after
+
+
+def _banding_fix(rows, i, j, depends_on, work=None):
+    """THE banding rule (req #3626): the inversion of `rows[j]` under
+    `rows[i]` is AVOIDABLE exactly when one of two topologically valid moves
+    over `rows[i..j]` leaves FEWER inversions in that span — and then the
+    rearranged span is returned. Otherwise `None`: the inversion is forced.
+
+    LIFT the lower row above the upper one, carrying the rows of the span it
+    depends on; or SINK the upper row below the lower one, carrying the rows
+    of the span that depend on it. Rows outside the span keep their place
+    relative to the whole span, so only pairs inside it can change.
+
+    Why a move and not a pairwise test. "Does not depend on the row above it"
+    is not the whole of avoidability: a done step that depends on a pending
+    one — a step inserted in front of finished work, or a dependency added
+    or regressed (req #3597 makes dependencies a launch priority, so
+    done-ahead-of-dependency is legal) — cannot sit in the done band at all.
+    Measured on darwin_dev pipeline 7: done 304 -> pending 447 renders below
+    running 102, and lifting 304 means lifting 447 above 102, one inversion
+    for another; two such pairs in one epic cannot both come first. A
+    pairwise excuse for those shapes was tried and hid real ones (a pending
+    dependency in ANOTHER epic costs nothing to lift). A move either exists
+    or it does not, so every report names an order that really is better.
     """
-    def band_of(row):
-        return _STATE_RANK.get(row.get('state'), 2)
+    span = range(i, j + 1)
+    need = depends_on(rows[j]['id'])
+    lifted = [k for k in span if k == j or rows[k]['id'] in need]
+    upper = rows[i]['id']
+    sunk = [k for k in span if k == i or upper in depends_on(rows[k]['id'])]
+    best, gain = None, 0
+    for moved, first in ((lifted, True), (sunk, False)):
+        before, after = _crossings(rows, span, moved, depends_on, first, work)
+        if before - after > gain:
+            taken = set(moved)
+            group = [rows[k] for k in moved]
+            rest = [rows[k] for k in span if k not in taken]
+            best, gain = (group + rest if first else rest + group), before - after
+    return best
 
+
+def _settle_banding(rows):
+    """Apply `_banding_fix` until no avoidable inversion is left (req #3626).
+
+    The greedy walk in `display_order` ranks by band PLAN-WIDE, while banding
+    is judged per epic, so it can leave an inversion a different order would
+    not — a done step held below a running one by a pending dependency in
+    another epic, which could simply have rendered first. Each applied move
+    strictly lowers the plan's inversion count, so this terminates; on a plan
+    with no inversion (every production plan measured) it changes nothing.
+    The check below asks the same question of the result, so the engine's
+    own order never reports — the check still catches any other order.
+
+    A move rearranges `rows[i..j]` only, so the scan resumes at `i` rather
+    than starting over. `_SETTLE_WORK_CAP` bounds a pathological plan's cost
+    per read — a count of row pairs compared, not a clock, so one plan always
+    settles the same way. Every production plan measured spends zero of it; a
+    random 300-step plan with a quarter of its steps running and a quarter
+    pending (hundreds of inversions) is what it exists for. Were it reached,
+    the read says so (`verify_order`'s `banding-unsettled`) rather than this
+    hiding it. Returns `(rows, settled)`.
+    """
+    rows = list(rows)
+    depends_on = _dependency_closure(rows)
+    work, j = [0], 0
+    while j < len(rows) and work[0] < _SETTLE_WORK_CAP:
+        resume = None
+        # Nearest offender first: the smallest span moves the fewest rows,
+        # so the walk's own order survives wherever it can.
+        for i in range(j - 1, -1, -1):
+            if not _inverted(rows[i], rows[j], depends_on):
+                continue
+            fix = _banding_fix(rows, i, j, depends_on, work)
+            if fix is not None:
+                rows[i:j + 1] = fix
+                resume = i
+                break
+        j = j + 1 if resume is None else resume
+    return rows, j >= len(rows)
+
+
+_SETTLE_WORK_CAP = 2_000_000   # row pairs compared, per read
+
+
+def _banding_violations(rows, depends_on):
+    """The state-banding invariant — item 4's epic-scoped self-check
+    (`memory/pipeline-2-visualizer-design.md` § 5.4, measurement D). Rows are
+    compared with their own epic's rows only (`_inverted`), wherever those
+    fall in the global order, and an inversion is a violation only when it
+    was AVOIDABLE (`_banding_fix`).
+
+    `depends_on` is the caller's GLOBAL closure. (Measured over 3000 fuzzed
+    plans: an epic-local closure produced 50 false positives beyond the 386 a
+    global closure finds — 11.5% of the total.)
+
+    The amended acceptance criterion's three-step case still reports when
+    handed the greedy order: `1 pending, 2 pending, 3 done depending on 2`
+    rendered `1, 2, 3` puts `3` below `1`, and lifting `2, 3` above `1`
+    removes it. `display_order` itself now renders it `2, 3, 1`.
+    """
     violations = []
-    for position, row in enumerate(epic_rows):
-        band = band_of(row)
-        avoidable = [prev for prev in epic_rows[:position]
-                     if band_of(prev) > band and prev['id'] not in depends_on(row['id'])]
-        if avoidable:
-            worst = avoidable[-1]
+    for j, row in enumerate(rows):
+        # Nearest first, so the row named is the closest one it sits under.
+        worst = next((rows[i] for i in range(j - 1, -1, -1)
+                      if _inverted(rows[i], row, depends_on)
+                      and _banding_fix(rows, i, j, depends_on) is not None), None)
+        if worst is not None:
             violations.append({
                 'invariant': 'state-banding', 'step_ids': [row['id'], worst['id']],
                 'message': (f"{row.get('state')} step {row['id']} renders below "
@@ -708,7 +844,7 @@ def _epic_banding_violations(epic_rows, depends_on):
     return violations
 
 
-def verify_order(rows, epic_scoped=False):
+def verify_order(rows, epic_scoped=False, banding_settled=None):
     """Design rule 3 self-check — structured violations, NEVER raised.
 
     `duplicate-id`, `cycle` and `topology` stay plan-wide, because they must:
@@ -721,7 +857,7 @@ def verify_order(rows, epic_scoped=False):
     false violations for every finished epic that happens to render above an
     unrelated epic still holding pending work (measurement C: 15 false
     positives on the live plan), which is not a defect, it is what
-    containment asks for. `_epic_banding_violations` groups `rows` by
+    containment asks for. `_banding_violations` compares rows of one
     `epic_id` wherever they fall in the global order — it does not require
     (and `display_order` does not guarantee) that one epic's rows are
     contiguous, and it is handed a GLOBAL `depends_on` closure so a
@@ -807,33 +943,27 @@ def verify_order(rows, epic_scoped=False):
                 })
 
     # ONE global closure, over every row regardless of epic — see
-    # `_epic_banding_violations`'s docstring for why a per-epic closure is
-    # wrong (a cross-epic transitive path is invisible to it).
-    by_id = {row['id']: row for row in rows}
-    closure = {}
-
-    def depends_on(step_id):
-        if step_id in closure:
-            return closure[step_id]
-        out = set()
-        closure[step_id] = out
-        row = by_id.get(step_id)
-        for dep in (row or {}).get('dep_ids') or []:
-            if dep not in posn:
-                continue
-            out.add(dep)
-            out.update(depends_on(dep))
-        return out
-
-    # `rows` arrive in epic-block order (`display_order`'s contract), so a
-    # plain first-appearance walk visits each epic's rows together and in the
-    # same order the caller rendered them — nothing here re-derives epic
-    # order a second time.
-    by_epic = {}
-    for row in rows:
-        by_epic.setdefault(row.get('epic_id'), []).append(row)
-    for epic_rows in by_epic.values():
-        violations.extend(_epic_banding_violations(epic_rows, depends_on))
+    # `_dependency_closure`. `_banding_violations` compares each row with its
+    # own epic's rows only, wherever they fall in the global order; it does
+    # not require (and `display_order` does not guarantee) that one epic's
+    # rows are contiguous.
+    #
+    # req #3626 — `banding_settled` is `display_order`'s own verdict on these
+    # rows. True: its settle ended on a full pass that found no avoidable
+    # inversion, which IS this check, so it is not run twice (on a large plan
+    # of forced inversions the check alone is cubic). False: the settle's
+    # work budget ran out — said plainly, because "banding broken" would
+    # blame the plan for what is the budget. None (any other caller, or a
+    # cycle): the check runs in full.
+    if banding_settled is False:
+        violations.append({
+            'invariant': 'banding-unsettled', 'step_ids': [],
+            'message': ("display order ran out of its work budget before every "
+                        "avoidable done>running>pending inversion was settled — "
+                        "the order is valid, its banding may not be the best"),
+        })
+    elif banding_settled is not True:
+        violations.extend(_banding_violations(rows, _dependency_closure(rows)))
 
     return violations, sorted(out_of_scope, key=_id_sort_key)
 
@@ -1422,7 +1552,8 @@ def derive_plan2(model, now=None, epic_scoped=False):
     plan_rows = build_plan_rows(model)
     ordered = display_order(plan_rows, model.get('epics') or [])
     rows = ordered['rows']
-    violations, out_of_scope_dep_ids = verify_order(rows, epic_scoped=epic_scoped)
+    violations, out_of_scope_dep_ids = verify_order(
+        rows, epic_scoped=epic_scoped, banding_settled=ordered['banding_settled'])
     # AFTER `display_order`, so `suppressed_step_ids` comes out in display
     # order, and it writes `launch_suppressed`/`suppressed_by` onto the same
     # row dicts the payload below projects — matching 1.0's ordering of the
