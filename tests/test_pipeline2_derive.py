@@ -157,9 +157,14 @@ def _epic(id, pipeline_fk=900, sort_order=None, title=None):
 
 
 def _step(id, epic_fk, title=None, run='auto', not_before=None, notes=None,
-         completed_at=None, create_ts='2026-08-01 00:00:00'):
+         completed_at=None, create_ts='2026-08-01 00:00:00', checkpoint=0,
+         locked=0):
+    # `checkpoint=0` here, against the column's DEFAULT 1 (req #3649): these
+    # fixtures were written for steps that are launch PRIORITIES, and the
+    # checkpoint tests below say `checkpoint=1` where they mean it.
     return {'id': id, 'epic_fk': epic_fk, 'title': title or f'step {id}',
-            'run': run, 'not_before': not_before, 'notes': notes,
+            'run': run, 'checkpoint': checkpoint, 'locked': locked,
+            'not_before': not_before, 'notes': notes,
             'completed_at': completed_at, 'creator_fk': _SUB,
             'create_ts': create_ts, 'update_ts': create_ts}
 
@@ -221,7 +226,8 @@ def test_build_plan_rows_has_no_legacy_or_leaked_fields():
     model = _basic_model()
     for row in deriv.build_plan_rows(model):
         assert set(row) == {
-            'id', 'title', 'run', 'notes', 'completed_at', 'state', 'epic_id',
+            'id', 'title', 'run', 'checkpoint', 'locked', 'notes',
+            'completed_at', 'state', 'epic_id',
             'req_ids', 'tracking_req_ids', 'unresolved_req_ids',
             'launch_req_ids', 'launch_excluded', 'launch_block',
             'swarm_start_command', 'no_launch_reason', 'dep_ids',
@@ -709,12 +715,16 @@ def test_derive_plan2_shape_is_compact_ids_and_enums_only():
     assert set(plan) == {
         'now', 'epic_order', 'display_order', 'rows', 'pause', 'serial',
         'eligible_step_ids', 'top_up_step_ids', 'launch_candidate_step_ids',
+        'launch_queue',
         'violations', 'cycle_detected', 'cycle_step_ids',
         'duplicate_step_ids', 'unresolved_req_ids', 'out_of_scope_dep_ids',
         'requirement_counts'}
+    for entry in plan['launch_queue']:
+        assert set(entry) == {'step_id', 'requirement_id'}
     for row in plan['rows']:
         assert set(row) == {
-            'id', 'state', 'run', 'eligible', 'top_up_eligible',
+            'id', 'state', 'run', 'checkpoint', 'locked', 'eligible',
+            'top_up_eligible',
             'gate_open', 'launch_candidate', 'checkpoint_blocked_by',
             'epic_id', 'dep_ids',
             'out_of_scope_dep_ids', 'req_ids',
@@ -1020,18 +1030,20 @@ def test_launch_candidate_step_ids_puts_gate_open_ahead_of_display_order():
     assert ids[len(gate_open):] == [314, 317]
 
 
-# The user's amendment (2026-10-17): a step CLOSED BY HAND — a checkpoint, with
-# no work requirement — blocks everything downstream of it until completed.
+# The user's amendment (2026-10-17): a CHECKPOINT blocks everything downstream
+# of it until it is done. Since req #3649 a checkpoint is the step's own
+# `checkpoint` column (default ON), with or without work — not an inference
+# from "has no work requirement".
 
 def _checkpoint_model(checkpoint_done=False):
-    """Step 1 is a CHECKPOINT (no links). Step 2 (running work) and step 4
-    (launch-ready) depend on it directly; step 3 (launch-ready) depends on 2,
-    so it is two edges below the checkpoint. Step 5 is unrelated."""
+    """Step 1 is a CHECKPOINT (flag on, no links). Step 2 (running work) and
+    step 4 (launch-ready) depend on it directly; step 3 (launch-ready) depends
+    on 2, so it is two edges below the checkpoint. Step 5 is unrelated."""
     return {
         'pipeline': {'id': 11, 'title': 'Checkpoints',
                      'pipeline_status': 'active', 'execution_mode': 'parallel'},
         'epics': [_epic(110, pipeline_fk=11)],
-        'steps': [_step(1, 110, title='checkpoint',
+        'steps': [_step(1, 110, title='checkpoint', checkpoint=1,
                         completed_at='2026-10-17 00:00:00' if checkpoint_done else None),
                   _step(2, 110), _step(3, 110), _step(4, 110), _step(5, 110)],
         'step_requirements': [
@@ -1080,13 +1092,69 @@ def test_a_completed_checkpoint_blocks_nothing():
 
 
 # COVERS: DRV-028
-def test_a_checkpoint_is_a_step_with_no_work_requirement():
-    assert deriv.is_checkpoint({'launch_block': 'no-links'}) is True
-    assert deriv.is_checkpoint({'launch_block': 'containers'}) is True
-    # Work that is merely not swarm_ready is not a checkpoint: it finishes
-    # when its requirements do, not by hand.
-    assert deriv.is_checkpoint({'launch_block': 'not-ready'}) is False
-    assert deriv.is_checkpoint({'launch_block': None}) is False
+def test_a_checkpoint_is_the_column_not_the_link_shape():
+    """req #3649: the flag decides, default ON; link shape says nothing."""
+    assert deriv.is_checkpoint({'checkpoint': 1}) is True
+    assert deriv.is_checkpoint({'checkpoint': '1'}) is True
+    assert deriv.is_checkpoint({'checkpoint': True}) is True
+    assert deriv.is_checkpoint({'checkpoint': 0}) is False
+    assert deriv.is_checkpoint({'checkpoint': '0'}) is False
+    assert deriv.is_checkpoint({'checkpoint': False}) is False
+    # Absent or blank = the column's DEFAULT, which is on.
+    assert deriv.is_checkpoint({}) is True
+    assert deriv.is_checkpoint({'checkpoint': None}) is True
+    assert deriv.is_checkpoint({'checkpoint': ''}) is True
+    # A no-work step with the flag off is NOT a checkpoint any more.
+    assert deriv.is_checkpoint({'checkpoint': 0, 'launch_block': 'no-links'}) is False
+
+
+# COVERS: DRV-028
+def test_a_checkpoint_with_work_holds_downstream_until_its_requirements_are_terminal():
+    """The generalisation req #3649 adds: a step WITH work and the flag on
+    holds its transitive downstream until every gating requirement is
+    met/deferred/wontfix — then it holds nothing. `derive_step_state` is the
+    one rule for 'done' in both shapes."""
+    model = _checkpoint_model()
+    # Step 2 (running work, one edge under the checkpoint) becomes a
+    # checkpoint itself; step 3 depends on it.
+    model['steps'][1]['checkpoint'] = 1
+    plan = deriv.derive_plan2(model, now=NOW)
+    rows = {r['id']: r for r in plan['rows']}
+    assert rows[2]['checkpoint'] is True and rows[2]['state'] == 'running'
+    assert rows[3]['checkpoint_blocked_by'] == [1, 2]
+    assert rows[3]['launch_candidate'] is False
+    # Complete the hand-closed checkpoint; step 2 still holds step 3...
+    model['steps'][0]['completed_at'] = '2026-10-17 00:00:00'
+    plan = deriv.derive_plan2(model, now=NOW)
+    rows = {r['id']: r for r in plan['rows']}
+    assert rows[3]['checkpoint_blocked_by'] == [2]
+    assert rows[3]['launch_candidate'] is False
+    # ...until its work is terminal.
+    model['requirements'][0]['requirement_status'] = 'met'
+    plan = deriv.derive_plan2(model, now=NOW)
+    rows = {r['id']: r for r in plan['rows']}
+    assert rows[2]['state'] == 'done'
+    assert rows[3]['checkpoint_blocked_by'] == []
+    assert rows[3]['launch_candidate'] is True
+    assert rows[3]['gate_open'] is True
+
+
+# COVERS: DRV-028
+def test_a_no_work_step_with_the_flag_off_is_a_priority_not_a_hold():
+    """A link-less step with `checkpoint=0`: nothing closes it but
+    `complete_pipeline_step`, and it holds NOTHING — its dependants are
+    past-gate launch candidates, exactly like work behind ordinary work."""
+    model = _checkpoint_model()
+    model['steps'][0]['checkpoint'] = 0
+    plan = deriv.derive_plan2(model, now=NOW)
+    rows = {r['id']: r for r in plan['rows']}
+    assert rows[1]['state'] == 'pending' and rows[1]['checkpoint'] is False
+    for sid in (3, 4):
+        assert rows[sid]['checkpoint_blocked_by'] == [], sid
+        assert rows[sid]['launch_candidate'] is True, sid
+        assert rows[sid]['gate_open'] is False, sid
+    # The step itself still gets the eligible-now ring (close it by hand).
+    assert 1 in plan['eligible_step_ids']
 
 
 # COVERS: DRV-028
@@ -1099,8 +1167,8 @@ def test_an_open_checkpoint_above_a_DONE_step_still_holds_eligible_and_top_up():
         'pipeline': {'id': 12, 'title': 'C1', 'pipeline_status': 'active',
                      'execution_mode': 'parallel'},
         'epics': [_epic(120, pipeline_fk=12)],
-        'steps': [_step(10, 120), _step(11, 120), _step(12, 120), _step(13, 120),
-                  _step(14, 120)],
+        'steps': [_step(10, 120, checkpoint=1), _step(11, 120), _step(12, 120),
+                  _step(13, 120), _step(14, 120, checkpoint=1)],
         'step_requirements': [
             {'step_fk': 11, 'requirement_fk': 101},
             {'step_fk': 12, 'requirement_fk': 102},
@@ -1144,15 +1212,15 @@ def test_an_epic_scoped_read_sees_a_checkpoint_in_another_epic():
         'step_requirements': [{'step_fk': 2, 'requirement_fk': 20}],
         'step_deps': [{'id': 1, 'step_fk': 2, 'dep_step_fk': 5}],
         'requirements': [_req(20, status='swarm_ready')],
-        # step 5 is ordinary work (link 50, not tracking) in epic 130, and it
-        # depends on step 1 — a checkpoint whose only link is a container.
+        # step 5 is a priority step (flag off, work link 50) in epic 130, and
+        # it depends on step 1 — a checkpoint whose only link is a container.
         'plan_graph': {
-            'steps': [{'id': 1, 'completed_at': None},
-                      {'id': 5, 'completed_at': None}],
+            'steps': [{'id': 1, 'completed_at': None, 'checkpoint': 1},
+                      {'id': 5, 'completed_at': None, 'checkpoint': 0}],
             'step_deps': [{'step_fk': 5, 'dep_step_fk': 1}],
-            'step_requirements': [{'step_fk': 1, 'requirement_fk': 900},
-                                  {'step_fk': 5, 'requirement_fk': 50}],
-            'tracking_req_ids': [900],
+            'step_requirements': [{'step_fk': 1, 'requirement_fk': 900}],
+            'requirements': [{'id': 900, 'requirement_status': 'development',
+                              'tracking': 1}],
         },
     }
     plan = deriv.derive_plan2(model, now=NOW, epic_scoped=True)
@@ -1166,10 +1234,158 @@ def test_an_epic_scoped_read_sees_a_checkpoint_in_another_epic():
     assert plan['rows'][0]['launch_candidate'] is True
 
 
+# COVERS: DRV-028
+def test_an_epic_scoped_read_holds_behind_another_epics_checkpoint_with_work():
+    """req #3649: an outside checkpoint WITH work is done when its gating
+    requirements are terminal — `completed_at` says nothing about it, so the
+    plan graph carries the requirement rows and the derivation reuses
+    `derive_step_state`."""
+    model = {
+        'pipeline': {'id': 14, 'title': 'I1b', 'pipeline_status': 'active',
+                     'execution_mode': 'parallel'},
+        'epics': [_epic(141, pipeline_fk=14)],
+        'steps': [_step(2, 141)],
+        'step_requirements': [{'step_fk': 2, 'requirement_fk': 20}],
+        'step_deps': [{'id': 1, 'step_fk': 2, 'dep_step_fk': 1}],
+        'requirements': [_req(20, status='swarm_ready')],
+        'plan_graph': {
+            'steps': [{'id': 1, 'completed_at': None, 'checkpoint': 1}],
+            'step_deps': [],
+            'step_requirements': [{'step_fk': 1, 'requirement_fk': 10},
+                                  {'step_fk': 1, 'requirement_fk': 11}],
+            'requirements': [{'id': 10, 'requirement_status': 'met', 'tracking': 0},
+                             {'id': 11, 'requirement_status': 'development',
+                              'tracking': 0}],
+        },
+    }
+    plan = deriv.derive_plan2(model, now=NOW, epic_scoped=True)
+    assert plan['rows'][0]['checkpoint_blocked_by'] == [1]
+    assert plan['rows'][0]['launch_candidate'] is False
+    # A stamp on a step WITH gating work does not finish it...
+    model['plan_graph']['steps'][0]['completed_at'] = '2026-10-17 00:00:00'
+    plan = deriv.derive_plan2(model, now=NOW, epic_scoped=True)
+    assert plan['rows'][0]['checkpoint_blocked_by'] == [1]
+    # ...its last requirement going terminal does.
+    model['plan_graph']['requirements'][1]['requirement_status'] = 'wontfix'
+    plan = deriv.derive_plan2(model, now=NOW, epic_scoped=True)
+    assert plan['rows'][0]['checkpoint_blocked_by'] == []
+    assert plan['rows'][0]['launch_candidate'] is True
+    # An outside step with the flag OFF never holds, whatever its links say.
+    model['plan_graph']['steps'][0] = {'id': 1, 'completed_at': None,
+                                       'checkpoint': 0}
+    model['plan_graph']['requirements'][1]['requirement_status'] = 'development'
+    plan = deriv.derive_plan2(model, now=NOW, epic_scoped=True)
+    assert plan['rows'][0]['checkpoint_blocked_by'] == []
+
+
 def test_checkpoint_walk_survives_a_cycle_and_an_unseen_dependency():
-    a = {'id': 1, 'dep_ids': [2, 99], 'launch_block': None, 'state': 'pending'}
-    b = {'id': 2, 'dep_ids': [1], 'launch_block': None, 'state': 'pending'}
+    a = {'id': 1, 'dep_ids': [2, 99], 'checkpoint': 0, 'state': 'pending'}
+    b = {'id': 2, 'dep_ids': [1], 'checkpoint': 0, 'state': 'pending'}
     assert deriv.open_checkpoints_upstream(a, {1: a, 2: b}) == []
+    # ...and with the flag on, the cycle still terminates and names the hold.
+    b['checkpoint'] = 1
+    assert deriv.open_checkpoints_upstream(a, {1: a, 2: b}) == [2]
+
+
+# ---------------------------------------------------------------------------
+# req #3649 — `launch_queue`: THE launch order, stated once
+# ---------------------------------------------------------------------------
+
+def _queue_model():
+    """Two gate-open roots (A displays before B), C past its gate behind A.
+    A carries implemented 31, deployed 32, implemented 30 (junction order);
+    B carries deployed 41; C carries 51. A `run=manual` root M carries 61."""
+    model = {
+        'pipeline': {'id': 15, 'title': 'Queue', 'pipeline_status': 'active',
+                     'execution_mode': 'parallel'},
+        'epics': [_epic(150, pipeline_fk=15)],
+        'steps': [_step(1, 150, title='A'), _step(2, 150, title='B'),
+                  _step(3, 150, title='C'), _step(4, 150, title='M', run='manual')],
+        'step_requirements': [
+            {'step_fk': 1, 'requirement_fk': 31},
+            {'step_fk': 1, 'requirement_fk': 32},
+            {'step_fk': 1, 'requirement_fk': 30},
+            {'step_fk': 2, 'requirement_fk': 41},
+            {'step_fk': 3, 'requirement_fk': 51},
+            {'step_fk': 4, 'requirement_fk': 61},
+        ],
+        'step_deps': [{'id': 1, 'step_fk': 3, 'dep_step_fk': 1}],
+        'requirements': [
+            {**_req(31, status='swarm_ready'), 'coordination_type': 'implemented'},
+            {**_req(32, status='swarm_ready'), 'coordination_type': 'deployed'},
+            {**_req(30, status='swarm_ready'), 'coordination_type': 'implemented'},
+            {**_req(41, status='swarm_ready'), 'coordination_type': 'deployed'},
+            {**_req(51, status='swarm_ready'), 'coordination_type': 'deployed'},
+            {**_req(61, status='swarm_ready'), 'coordination_type': 'implemented'},
+        ],
+    }
+    return model
+
+
+def _pairs(plan):
+    return [(e['step_id'], e['requirement_id']) for e in plan['launch_queue']]
+
+
+# COVERS: DRV-029
+def test_launch_queue_is_gate_open_steps_then_past_gate_in_display_order():
+    plan = deriv.derive_plan2(_queue_model(), now=NOW)
+    steps = [s for s, _ in _pairs(plan)]
+    # Every gate-open step's work precedes every past-gate step's work.
+    assert steps.index(3) > max(steps.index(1), steps.index(2), steps.index(4))
+    assert plan['launch_candidate_step_ids'][-1] == 3
+
+
+# COVERS: DRV-029
+def test_launch_queue_within_a_step_is_deployed_first_then_fifo_by_id():
+    plan = deriv.derive_plan2(_queue_model(), now=NOW)
+    a = [r for s, r in _pairs(plan) if s == 1]
+    assert a == [32, 30, 31]          # deployed 32 first, then ids ascending
+
+
+# COVERS: DRV-029
+def test_launch_queue_a_later_steps_deployed_work_never_jumps_an_earlier_step():
+    """The user's ruling (2026-10-19), superseding req #3623's scope-wide
+    preference: B's deployed 41 and C's deployed 51 rank AFTER every one of
+    A's requirements, implemented included."""
+    plan = deriv.derive_plan2(_queue_model(), now=NOW)
+    pairs = _pairs(plan)
+    last_of_a = max(i for i, (s, _) in enumerate(pairs) if s == 1)
+    assert pairs.index((2, 41)) > last_of_a
+    assert pairs.index((3, 51)) > pairs.index((2, 41))
+
+
+# COVERS: DRV-029
+def test_launch_queue_includes_manual_steps_and_excludes_suppressed_ones():
+    model = _queue_model()
+    plan = deriv.derive_plan2(model, now=NOW)
+    assert (4, 61) in _pairs(plan)                    # run=manual is IN
+    model['epics'][0]['epic_status'] = 'paused'
+    plan = deriv.derive_plan2(model, now=NOW)
+    assert plan['launch_queue'] == []                 # suppressed is OUT...
+    assert plan['launch_candidate_step_ids'] == [1, 2, 4, 3]   # ...but still a candidate
+
+
+# COVERS: DRV-029
+def test_launch_queue_omits_a_step_held_by_a_checkpoint_and_non_launchable_work():
+    plan = deriv.derive_plan2(_checkpoint_model(), now=NOW)
+    assert _pairs(plan) == [(5, 50)]
+    model = _queue_model()
+    model['requirements'][0]['requirement_status'] = 'development'   # 31
+    plan = deriv.derive_plan2(model, now=NOW)
+    assert 31 not in [r for _, r in _pairs(plan)]
+
+
+# COVERS: DRV-029
+def test_launch_queue_is_a_pure_function_of_candidates_rows_and_requirements():
+    rows = {7: {'id': 7, 'launch_req_ids': [3, 1, 2], 'launch_suppressed': False},
+            8: {'id': 8, 'launch_req_ids': [9], 'launch_suppressed': True}}
+    reqs = {1: {'coordination_type': 'implemented'},
+            2: {'coordination_type': 'deployed'}}       # 3 unknown -> not deployed
+    assert deriv.launch_queue([7, 8], rows, reqs) == [
+        {'step_id': 7, 'requirement_id': 2},
+        {'step_id': 7, 'requirement_id': 1},
+        {'step_id': 7, 'requirement_id': 3}]
+    assert deriv.launch_queue([], rows, reqs) == []
 
 
 # ---------------------------------------------------------------------------

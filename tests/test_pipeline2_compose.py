@@ -176,7 +176,12 @@ class TestWholePlanCompose:
         assert len(body['epics']) == 1
         epic = body['epics'][0]
         assert set(epic) == {'id', 'pipeline_fk', 'title', 'description',
-                             'epic_status', 'sort_order', 'category_fk', 'closed'}
+                             'epic_status', 'locked', 'sort_order', 'category_fk',
+                             'closed'}
+        assert epic['locked'] == 0
+        assert body['pipeline']['locked'] == 0
+        for step in body['steps']:
+            assert step['checkpoint'] == 1 and step['locked'] == 0
         assert epic['description'] == 'build it'
 
     def test_requirements_are_the_light_projection(self, owner, plan):
@@ -409,3 +414,34 @@ def test_whole_plan_read_holds_the_same_step(owner, checkpoint_plan):
     row = next(r for r in body['derived']['rows'] if r['id'] == checkpoint_plan['held'])
     assert row['checkpoint_blocked_by'] == [checkpoint_plan['checkpoint']]
     assert row['launch_candidate'] is False
+
+
+def test_epic_scoped_read_holds_behind_another_epics_checkpoint_with_work(owner, checkpoint_plan):
+    """req #3649: the outside checkpoint carries WORK (a swarm_ready link),
+    so the plan graph must carry its requirement rows for the derivation to
+    say whether it is done; a `checkpoint=0` outside step holds nothing."""
+    ids = checkpoint_plan
+    resp = owner('POST', '/darwin_dev/requirements', body={
+        'title': 'checkpoint work', 'requirement_status': 'swarm_ready',
+        'category_fk': ids['category'], 'coordination_type': 'implemented',
+        'ai_model': 'sonnet', 'effort': 'high'})
+    work = int(extract_id(resp))
+    owner('POST', '/darwin_dev/pipeline_step_requirements',
+          body={'step_fk': ids['checkpoint'], 'requirement_fk': work})
+    held = lambda: next(r for r in json.loads(_get(
+        owner, 'pipeline_compose_epic', ids['epic_b'])['body'])['derived']['rows']
+        if r['id'] == ids['held'])
+    assert held()['checkpoint_blocked_by'] == [ids['checkpoint']]
+    # The work going terminal releases it.
+    owner('PUT', '/darwin_dev/requirements', body=[{'id': work, 'requirement_status': 'met'}])
+    assert held()['checkpoint_blocked_by'] == []
+    assert held()['launch_candidate'] is True
+    # Back to open work, flag OFF: a priority, no hold.
+    owner('PUT', '/darwin_dev/requirements',
+          body=[{'id': work, 'requirement_status': 'swarm_ready'}])
+    owner('PUT', '/darwin_dev/pipeline_steps', body=[{'id': ids['checkpoint'], 'checkpoint': 0}])
+    assert held()['checkpoint_blocked_by'] == []
+    assert held()['gate_open'] is False
+    owner('DELETE', '/darwin_dev/pipeline_step_requirements',
+          body={'step_fk': ids['checkpoint'], 'requirement_fk': work})
+    owner('DELETE', '/darwin_dev/requirements', body={'id': work})

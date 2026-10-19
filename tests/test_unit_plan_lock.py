@@ -1,0 +1,484 @@
+"""The plan-layer LOCK guard (req #3649) — no DB.
+
+`plan_lock.py` is the ONE enforcement point for `pipelines.locked`,
+`epics.locked` and `pipeline_steps.locked`: a locked row, or any row under a
+locked ancestor, accepts no authoring — no child created, deleted or moved,
+no requirement linked or unlinked, no dependency edge, no title/notes/run/
+checkpoint/not_before/sort_order — while the lock itself and lifecycle state
+(`pipeline_status`, `epic_status`, `closed`, a step's `completed_at`) still
+write. The answer is 423 LOCKED with an object body naming the OUTERMOST
+locked level.
+
+Three properties, each held here:
+
+* **The cascade is derived from one SELECT**, and the verdict names the
+  outermost lock (unlocking a step helps nobody while its plan is locked).
+* **Nothing a lock does not protect opens a cursor** — the `ExplodingConn`
+  routes: `completed_at` from complete_pipeline_step, `locked` itself, a
+  lifecycle status, an unauthenticated call, a table outside the plan layer.
+* **The wiring is real**: `rest_post` / `rest_put` / `rest_delete` reach the
+  guard through their real entry points, asserted both ways — a protected
+  write is refused with 423 and never reaches the statement, a permitted
+  write reaches the cursor.
+
+# COVERS: SCH-040
+"""
+import json
+import os
+import re
+import sys
+
+import pytest
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+import plan_lock                                        # noqa: E402
+from plan_lock import (PLAN_LOCK, plan_lock_guard, plan_lock_guard_delete,  # noqa: E402
+                       plan_lock_lookups, resolve_locks)
+from rest_post import rest_post                         # noqa: E402
+from rest_put import rest_put                           # noqa: E402
+
+USER = 'victim'
+
+# The fixture plan. Pipeline 7 (unlocked) holds epic 70 (unlocked) -> steps
+# 700, 701 (701 locked) and epic 71 (LOCKED) -> step 710. Pipeline 8 is LOCKED
+# and holds epic 80 -> step 800. Pipeline 9 belongs to a stranger.
+PIPELINES = {7: ('victim', 0), 8: ('victim', 1), 9: ('stranger', 0)}
+EPICS = {70: (7, 0), 71: (7, 1), 80: (8, 0), 90: (9, 0)}
+STEPS = {700: (70, 0), 701: (70, 1), 710: (71, 0), 800: (80, 0), 900: (90, 0)}
+LINKS = {5001: 700, 5002: 701, 5003: 710}           # requirement_fk -> step_fk
+DEPS = {1: (700, 701), 2: (710, 700), 3: (800, 800)}  # id -> (step_fk, dep_step_fk)
+
+
+def _chain(step_id=None, epic_id=None, pipeline_id=None):
+    """The chain row the real SELECT would return, outermost first."""
+    if step_id is not None:
+        epic_id = STEPS[step_id][0]
+    if epic_id is not None:
+        pipeline_id = EPICS[epic_id][0]
+    owner, p_locked = PIPELINES[pipeline_id]
+    row = [pipeline_id, p_locked]
+    if epic_id is not None:
+        row += [epic_id, EPICS[epic_id][1]]
+    if step_id is not None:
+        row += [step_id, STEPS[step_id][1]]
+    return owner, tuple(row)
+
+
+class FakeCursor:
+    """Answers the chain SELECTs from the fixture above, by table and ids."""
+
+    def __init__(self):
+        self.queries = []
+        self._result = []
+
+    def execute(self, sql, params=()):
+        self.queries.append((sql, params))
+        if sql.lstrip().upper().startswith(('INSERT', 'UPDATE', 'DELETE')):
+            # The statement itself: reaching it is what the wiring tests
+            # below observe. Nothing here can run it.
+            raise CursorRequested()
+        chain = re.search(r'FROM (\w+) t', sql)
+        if chain is None:
+            # `parent_reference_guard`'s own `SELECT id, creator_fk FROM
+            # <parent> WHERE id IN (...)`, which runs before this guard on the
+            # real entry points — answered so the wiring tests reach it.
+            parent = re.search(r'FROM (\w+)', sql).group(1)
+            owner_of = {'pipelines': lambda i: PIPELINES[i][0],
+                        'epics': lambda i: PIPELINES[EPICS[i][0]][0],
+                        'pipeline_steps': lambda i: _chain(step_id=i)[0]}[parent]
+            known = {'pipelines': PIPELINES, 'epics': EPICS,
+                     'pipeline_steps': STEPS}[parent]
+            self._result = [(str(i), owner_of(int(i))) for i in params
+                            if int(i) in known]
+            return
+        table = chain.group(1)
+        where = sql.split('WHERE', 1)[1]
+        *ids, user = params
+        ids = [int(i) for i in ids]
+        rows = []
+        if 'below_id' in sql:
+            # `resolve_locked_below`: the locked rows UNDER the deleted ones.
+            out = []
+            if table == 'epics':
+                out = [(e, sid) for e in ids for sid, (ep, lk) in STEPS.items()
+                       if ep == e and lk]
+            elif table == 'pipelines' and 'JOIN pipeline_steps' in sql:
+                out = [(p, sid) for p in ids for sid, (ep, lk) in STEPS.items()
+                       if EPICS[ep][0] == p and lk]
+            elif table == 'pipelines':
+                out = [(p, eid) for p in ids for eid, (pp, lk) in EPICS.items()
+                       if pp == p and lk]
+            self._result = [(own, below) for own, below in out
+                            if PIPELINES[own if table == 'pipelines' else EPICS[own][0]][0] == user]
+            return
+        if table == 'pipelines':
+            rows = [_chain(pipeline_id=i) for i in ids if i in PIPELINES]
+        elif table == 'epics':
+            rows = [_chain(epic_id=i) for i in ids if i in EPICS]
+        elif table == 'pipeline_steps':
+            rows = [_chain(step_id=i) for i in ids if i in STEPS]
+        elif table == 'pipeline_step_requirements':
+            if 't.step_fk' in where:
+                rows = [_chain(step_id=i) for i in ids if i in STEPS]
+            else:
+                rows = [_chain(step_id=LINKS[i]) for i in ids if i in LINKS]
+        elif table == 'pipeline_step_deps':
+            if 't.step_fk' in where:
+                rows = [_chain(step_id=i) for i in ids if i in STEPS]
+            else:
+                rows = [_chain(step_id=DEPS[i][0]) for i in ids if i in DEPS]
+        self._result = [row for owner, row in rows if owner == user]
+
+    def fetchall(self):
+        return self._result
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class Conn:
+    def __init__(self):
+        self.cursor_obj = FakeCursor()
+        self.opened = 0
+
+    def cursor(self):
+        self.opened += 1
+        return self.cursor_obj
+
+
+class ExplodingConn:
+    def cursor(self):
+        raise AssertionError('the lock guard opened a cursor it did not need')
+
+    def rollback(self):
+        raise AssertionError('rollback on a connection that must not be used')
+
+
+class CursorRequested(Exception):
+    """Raised the instant the write statement itself is executed."""
+
+
+def _body(resp):
+    return json.loads(resp['body'])
+
+
+# ---------------------------------------------------------------------------
+# Planning is pure
+# ---------------------------------------------------------------------------
+
+def test_a_put_writing_only_unlocked_keys_plans_no_lookup():
+    for table, body in (('pipeline_steps', {'id': 701, 'completed_at': 'x'}),
+                        ('pipeline_steps', {'id': 701, 'locked': 0}),
+                        ('epics', {'id': 71, 'epic_status': 'paused', 'closed': 1}),
+                        ('pipelines', {'id': 8, 'pipeline_status': 'completed',
+                                       'started_at': 'x', 'completed_at': 'y'}),
+                        ('pipelines', {'id': 8, 'LOCKED': 0, 'creator_fk': 'v'})):
+        assert plan_lock_lookups(table, [body], 'PUT') == ([], [], None), table
+
+
+def test_a_put_writing_an_authoring_key_plans_the_row():
+    assert plan_lock_lookups('pipeline_steps', [{'id': 701, 'title': 't'}],
+                             'PUT') == (['701'], [], None)
+    assert plan_lock_lookups('pipeline_steps', [{'id': 701, 'CHECKPOINT': 0}],
+                             'PUT') == (['701'], [], None)
+    assert plan_lock_lookups('epics', [{'id': 71, 'sort_order': 2}],
+                             'PUT') == (['71'], [], None)
+    assert plan_lock_lookups('pipelines', [{'id': 8, 'execution_mode': 'serial'}],
+                             'PUT') == (['8'], [], None)
+
+
+def test_a_move_plans_the_destination_parent_too():
+    assert plan_lock_lookups('pipeline_steps', [{'id': 700, 'epic_fk': 71}],
+                             'PUT') == (['700'], ['71'], None)
+    assert plan_lock_lookups('epics', [{'id': 70, 'pipeline_fk': 8}],
+                             'PUT') == (['70'], ['8'], None)
+
+
+def test_a_post_plans_its_container():
+    assert plan_lock_lookups('epics', [{'pipeline_fk': 8, 'title': 'e'}],
+                             'POST') == ([], ['8'], None)
+    assert plan_lock_lookups('pipeline_steps', [{'epic_fk': '71', 'title': 's'}],
+                             'POST') == ([], ['71'], None)
+    assert plan_lock_lookups('pipeline_step_requirements',
+                             [{'step_fk': 710, 'requirement_fk': 1}],
+                             'POST') == ([], ['710'], None)
+    assert plan_lock_lookups('pipeline_step_deps',
+                             [{'step_fk': 710, 'dep_step_fk': 700}],
+                             'POST') == ([], ['710'], None)
+    # A pipeline has no container.
+    assert plan_lock_lookups('pipelines', [{'title': 'p'}], 'POST') == ([], [], None)
+
+
+def test_an_uncanonical_id_is_a_400_before_any_lookup():
+    assert plan_lock_lookups('pipeline_steps', [{'id': '701abc', 'title': 't'}],
+                             'PUT') == ([], [], (400, 'BAD REQUEST'))
+    assert plan_lock_lookups('epics', [{'pipeline_fk': 8.5, 'title': 'e'}],
+                             'POST') == ([], [], (400, 'BAD REQUEST'))
+    assert plan_lock_lookups('epics', ['not-a-dict'], 'POST') == (
+        [], [], (400, 'BAD REQUEST'))
+
+
+def test_a_table_outside_the_plan_layer_plans_nothing():
+    assert plan_lock_lookups('tasks', [{'id': 1, 'title': 't'}], 'PUT') == ([], [], None)
+
+
+# ---------------------------------------------------------------------------
+# Resolution — the cascade, from one SELECT
+# ---------------------------------------------------------------------------
+
+def test_resolve_names_the_outermost_locked_level():
+    cursor = FakeCursor()
+    assert resolve_locks(cursor, 'pipeline_steps', 't.id IN (%s, %s, %s, %s)',
+                         [700, 701, 710, 800], USER) == [
+        (701, 'step', 701),          # its own lock
+        (710, 'epic', 71),           # under a locked epic
+        (800, 'pipeline', 8)]        # under a locked plan, outermost named
+    assert len(cursor.queries) == 1
+
+
+def test_resolve_ignores_rows_another_creator_owns():
+    cursor = FakeCursor()
+    assert resolve_locks(cursor, 'pipeline_steps', 't.id IN (%s)', [900], USER) == []
+    assert resolve_locks(cursor, 'pipelines', 't.id IN (%s)', [9], USER) == []
+
+
+def test_resolve_covers_every_registered_table_with_its_own_chain():
+    cursor = FakeCursor()
+    assert resolve_locks(cursor, 'pipelines', 't.id IN (%s, %s)', [7, 8], USER) == [
+        (8, 'pipeline', 8)]
+    assert resolve_locks(cursor, 'epics', 't.id IN (%s, %s, %s)', [70, 71, 80], USER) == [
+        (71, 'epic', 71), (80, 'pipeline', 8)]
+    assert resolve_locks(cursor, 'pipeline_step_requirements',
+                         't.requirement_fk = %s', [5003], USER) == [(710, 'epic', 71)]
+    assert resolve_locks(cursor, 'pipeline_step_deps', 't.id IN (%s, %s)',
+                         [1, 3], USER) == [(800, 'pipeline', 8)]
+    for table in PLAN_LOCK:
+        assert table in plan_lock._CHAINS
+
+
+# ---------------------------------------------------------------------------
+# The guard — 423, with the object body
+# ---------------------------------------------------------------------------
+
+def test_put_on_a_locked_step_is_423_naming_the_lock():
+    conn = Conn()
+    resp = plan_lock_guard(conn, 'pipeline_steps', [{'id': 710, 'title': 'x'}],
+                           USER, 'PUT')
+    assert resp['statusCode'] == 423
+    body = _body(resp)
+    assert body['error'] == 'LOCKED'
+    assert (body['table'], body['id'], body['locked_by'], body['locked_id']) == (
+        'pipeline_steps', 710, 'epic', 71)
+    assert 'locked by epic 71' in body['message'] and 'unlock' in body['message']
+    assert conn.opened == 1
+
+
+def test_put_on_an_unlocked_row_passes_after_one_lookup():
+    conn = Conn()
+    assert plan_lock_guard(conn, 'pipeline_steps', [{'id': 700, 'title': 'x'}],
+                           USER, 'PUT') is None
+    assert conn.opened == 1
+    assert len(conn.cursor_obj.queries) == 1
+
+
+def test_a_bulk_put_is_refused_whole_on_one_locked_row():
+    resp = plan_lock_guard(Conn(), 'pipeline_steps',
+                           [{'id': 700, 'notes': 'a'}, {'id': 701, 'notes': 'b'}],
+                           USER, 'PUT')
+    assert resp['statusCode'] == 423
+    assert _body(resp)['id'] == 701
+
+
+def test_a_locked_plan_cascades_to_its_epics_and_steps():
+    assert plan_lock_guard(Conn(), 'epics', [{'id': 80, 'title': 'x'}],
+                           USER, 'PUT')['statusCode'] == 423
+    assert _body(plan_lock_guard(Conn(), 'pipeline_steps',
+                                 [{'id': 800, 'run': 'manual'}],
+                                 USER, 'PUT'))['locked_by'] == 'pipeline'
+
+
+def test_post_into_a_locked_container_is_423():
+    resp = plan_lock_guard(Conn(), 'pipeline_steps',
+                           [{'epic_fk': 71, 'title': 'new'}], USER, 'POST')
+    assert resp['statusCode'] == 423
+    body = _body(resp)
+    assert (body['table'], body['id'], body['locked_by']) == ('epics', 71, 'epic')
+    assert 'cannot add pipeline_steps under epics 71' in body['message']
+    assert plan_lock_guard(Conn(), 'epics', [{'pipeline_fk': 8, 'title': 'e'}],
+                           USER, 'POST')['statusCode'] == 423
+    assert plan_lock_guard(Conn(), 'pipeline_step_requirements',
+                           [{'step_fk': 701, 'requirement_fk': 9}],
+                           USER, 'POST')['statusCode'] == 423
+    assert plan_lock_guard(Conn(), 'pipeline_step_deps',
+                           [{'step_fk': 800, 'dep_step_fk': 700}],
+                           USER, 'POST')['statusCode'] == 423
+    # An unlocked container is fine; a stranger's is not this guard's answer.
+    assert plan_lock_guard(Conn(), 'pipeline_steps', [{'epic_fk': 70}],
+                           USER, 'POST') is None
+    assert plan_lock_guard(Conn(), 'pipeline_steps', [{'epic_fk': 90}],
+                           USER, 'POST') is None
+
+
+def test_a_move_into_a_locked_destination_is_423():
+    resp = plan_lock_guard(Conn(), 'pipeline_steps', [{'id': 700, 'epic_fk': 71}],
+                           USER, 'PUT')
+    assert resp['statusCode'] == 423
+    assert 'cannot move pipeline_steps under epics 71' in _body(resp)['message']
+
+
+def test_the_lock_itself_and_lifecycle_state_write_without_a_cursor():
+    for table, body in (('pipeline_steps', {'id': 710, 'locked': 0}),
+                        ('pipeline_steps', {'id': 800, 'completed_at': '2026-10-19 00:00:00'}),
+                        ('epics', {'id': 80, 'epic_status': 'paused'}),
+                        ('epics', {'id': 71, 'closed': 1, 'locked': 1}),
+                        ('pipelines', {'id': 8, 'pipeline_status': 'paused',
+                                       'completed_at': 'NULL'})):
+        assert plan_lock_guard(ExplodingConn(), table, [body], USER, 'PUT') is None, table
+
+
+def test_no_identity_and_no_plan_table_open_no_cursor():
+    assert plan_lock_guard(ExplodingConn(), 'pipeline_steps',
+                           [{'id': 710, 'title': 'x'}], None, 'PUT') is None
+    assert plan_lock_guard(ExplodingConn(), 'tasks', [{'id': 1, 'title': 'x'}],
+                           USER, 'PUT') is None
+    assert plan_lock_guard(ExplodingConn(), 'pipelines', [{'title': 'p'}],
+                           USER, 'POST') is None
+    assert plan_lock_guard_delete(ExplodingConn(), 'tasks', 't.id = %s', [1],
+                                  USER) is None
+
+
+def test_delete_of_a_locked_row_or_its_children_is_423():
+    assert plan_lock_guard_delete(Conn(), 'pipeline_steps', 't.id = %s', [710],
+                                  USER)['statusCode'] == 423
+    assert plan_lock_guard_delete(Conn(), 'epics', 't.id IN (%s, %s)', [70, 71],
+                                  USER)['statusCode'] == 423
+    assert plan_lock_guard_delete(Conn(), 'pipelines', 't.id = %s', [8],
+                                  USER)['statusCode'] == 423
+    assert plan_lock_guard_delete(Conn(), 'pipeline_step_requirements',
+                                  't.step_fk = %s', [701], USER)['statusCode'] == 423
+    assert plan_lock_guard_delete(Conn(), 'pipeline_step_deps',
+                                  't.id IN (%s)', [3], USER)['statusCode'] == 423
+    assert plan_lock_guard_delete(Conn(), 'pipeline_step_deps',
+                                  't.id IN (%s)', [1], USER) is None
+    assert plan_lock_guard_delete(Conn(), 'pipeline_steps', 't.id = %s', [700],
+                                  USER) is None
+
+
+def test_a_failed_check_is_a_500_never_a_pass():
+    class BrokenCursor(FakeCursor):
+        def execute(self, sql, params=()):
+            import pymysql
+            raise pymysql.err.OperationalError(2013, 'Lost connection')
+
+    class BrokenConn(Conn):
+        def __init__(self):
+            super().__init__()
+            self.cursor_obj = BrokenCursor()
+
+    resp = plan_lock_guard(BrokenConn(), 'pipeline_steps', [{'id': 700, 'title': 'x'}],
+                           USER, 'PUT')
+    assert resp['statusCode'] == 500
+    assert 'lock check failed' in json.loads(resp['body'])
+
+
+# ---------------------------------------------------------------------------
+# The wiring — through the real entry points
+# ---------------------------------------------------------------------------
+
+# `Conn` answers every guard SELECT and its cursor raises `CursorRequested`
+# on the statement itself, so reaching the write is observable.
+GuardConn = Conn
+
+
+def test_rest_put_refuses_a_locked_step_before_the_update():
+    resp = rest_put('PUT', GuardConn(), 'darwin_dev', 'pipeline_steps',
+                    [{'id': 710, 'title': 'renamed'}], authenticated_user=USER)
+    assert resp['statusCode'] == 423
+    assert _body(resp)['locked_by'] == 'epic'
+
+
+def test_rest_put_lets_a_lifecycle_write_on_a_locked_step_reach_the_update():
+    with pytest.raises(CursorRequested):
+        rest_put('PUT', GuardConn(), 'darwin_dev', 'pipeline_steps',
+                 [{'id': 710, 'completed_at': '2026-10-19 00:00:00'}],
+                 authenticated_user=USER)
+    with pytest.raises(CursorRequested):
+        rest_put('PUT', GuardConn(), 'darwin_dev', 'pipeline_steps',
+                 [{'id': 710, 'locked': 0}], authenticated_user=USER)
+
+
+def test_rest_post_refuses_a_child_of_a_locked_container_before_the_insert():
+    resp = rest_post('POST', GuardConn(), 'darwin_dev', 'pipeline_step_deps',
+                     {'step_fk': 800, 'dep_step_fk': 700}, authenticated_user=USER)
+    assert resp['statusCode'] == 423
+    assert _body(resp)['locked_by'] == 'pipeline'
+    resp = rest_post('POST', GuardConn(), 'darwin_dev', 'pipeline_steps',
+                     [{'epic_fk': 70, 'title': 'a'}, {'epic_fk': 71, 'title': 'b'}],
+                     authenticated_user=USER)
+    assert resp['statusCode'] == 423
+
+
+def test_rest_post_lets_a_child_of_an_unlocked_container_reach_the_insert():
+    with pytest.raises(CursorRequested):
+        rest_post('POST', GuardConn(), 'darwin_dev', 'pipeline_steps',
+                  {'epic_fk': 70, 'title': 'a'}, authenticated_user=USER)
+
+
+# ---------------------------------------------------------------------------
+# Review findings (req #3649): W1 — the cascade runs DOWN; W4 — lifting a lock
+# ---------------------------------------------------------------------------
+
+def test_deleting_an_unlocked_container_with_a_locked_row_under_it_is_423():
+    """Epic 70 is open but holds locked step 701; plan 7 is open but holds
+    locked epic 71. Deleting either would cascade through a lock."""
+    resp = plan_lock_guard_delete(Conn(), 'epics', 't.id = %s', [70], USER)
+    assert resp['statusCode'] == 423
+    body = _body(resp)
+    assert (body['table'], body['id'], body['locked_by'], body['locked_id']) == (
+        'epics', 70, 'step', 701)
+    assert 'under it is locked' in body['message']
+    resp = plan_lock_guard_delete(Conn(), 'pipelines', 't.id = %s', [7], USER)
+    assert resp['statusCode'] == 423
+    assert _body(resp)['locked_by'] == 'epic'
+    # A container with nothing locked under it still deletes.
+    assert plan_lock_guard_delete(Conn(), 'epics', 't.id = %s', [80], USER) is not None  # plan 8 locked
+    assert plan_lock_guard_delete(Conn(), 'pipelines', 't.id = %s', [9], USER) is None    # stranger's
+    assert plan_lock_guard_delete(Conn(), 'epics', 't.id = %s', [90], USER) is None
+
+
+def test_a_put_that_lifts_the_rows_own_lock_may_edit_in_the_same_call():
+    # 701 is locked in its own right: unlocking and renaming together passes.
+    assert plan_lock_guard(Conn(), 'pipeline_steps',
+                           [{'id': 701, 'locked': 0, 'title': 'renamed'}],
+                           USER, 'PUT') is None
+    assert plan_lock_guard(Conn(), 'pipeline_steps',
+                           [{'id': 701, 'LOCKED': '0', 'notes': 'n'}],
+                           USER, 'PUT') is None
+    # ...but not an ANCESTOR's lock: 710 sits under locked epic 71.
+    resp = plan_lock_guard(Conn(), 'pipeline_steps',
+                           [{'id': 710, 'locked': 0, 'title': 'renamed'}], USER, 'PUT')
+    assert resp['statusCode'] == 423 and _body(resp)['locked_by'] == 'epic'
+    # Locking (locked=1) alongside an edit on a locked row is still refused.
+    resp = plan_lock_guard(Conn(), 'pipeline_steps',
+                           [{'id': 701, 'locked': 1, 'title': 'renamed'}], USER, 'PUT')
+    assert resp['statusCode'] == 423
+
+
+def test_resolve_locks_reads_a_dict_cursor_row_too():
+    class DictRowCursor(FakeCursor):
+        def fetchall(self):
+            levels = [lvl for lvl, _, _ in plan_lock._CHAINS['pipeline_steps'][2]]
+            out = []
+            for row in super().fetchall():
+                d = {}
+                for (lvl, i, l) in zip(levels, row[0::2], row[1::2]):
+                    d['%s_id' % lvl] = i
+                    d['%s_locked' % lvl] = l
+                out.append(d)
+            return out
+    assert resolve_locks(DictRowCursor(), 'pipeline_steps', 't.id IN (%s, %s)',
+                         [700, 710], USER) == [(710, 'epic', 71)]

@@ -2,6 +2,7 @@ import pymysql
 import json
 from rest_api_utils import (compose_rest_response, compose_conflict_response,
                             error_detail, integrity_errno, parent_reference_guard)
+from plan_lock import plan_lock_guard
 from classifier import varDump, pretty_print_sql
 from auth_utils import (CREATOR_FK_TABLES, PROFILE_TABLE, body_column,
                         check_body_keys, check_enum_blanks, force_column,
@@ -78,6 +79,15 @@ def rest_put(put_method, conn, database, table, body_list, authenticated_user=No
         refusal = parent_reference_guard(conn, table, body_list,
                                          authenticated_user, put_method,
                                          require_scope=False)
+        if refusal is not None:
+            return refusal
+
+        # req #3649 — a LOCKED plan-layer row (or one under a locked epic or
+        # plan) accepts no authoring field and cannot be moved; the lock
+        # itself and lifecycle state still write. Here, before the single/CASE
+        # split, while every body still carries its `id`. See plan_lock.py.
+        refusal = plan_lock_guard(conn, table, body_list, authenticated_user,
+                                  put_method)
         if refusal is not None:
             return refusal
 

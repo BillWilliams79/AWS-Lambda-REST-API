@@ -2,6 +2,7 @@ import pymysql
 import json
 from rest_api_utils import (compose_rest_response, compose_conflict_response,
                             error_detail, integrity_errno, parent_reference_guard)
+from plan_lock import plan_lock_guard
 from classifier import varDump, pretty_print_sql
 from auth_utils import (CREATOR_FK_TABLES, PROFILE_TABLE, check_body_keys,
                         check_enum_blanks, force_column)
@@ -59,6 +60,14 @@ def rest_post(post_method, conn, database, table, body, authenticated_user=None)
     # they cannot see, list or delete. Same guard, other registry.
     refusal = parent_reference_guard(conn, table, [body], authenticated_user,
                                      post_method)
+    if refusal is not None:
+        return refusal
+
+    # req #3649 — a LOCKED plan-layer container accepts no new child: an epic
+    # under a locked plan, a step under a locked epic, a link or edge under a
+    # locked step. Answered 423 before the INSERT; see plan_lock.py.
+    refusal = plan_lock_guard(conn, table, [body], authenticated_user,
+                              post_method)
     if refusal is not None:
         return refusal
 
@@ -315,6 +324,12 @@ def _rest_post_bulk(post_method, conn, table, body_list, authenticated_user):
     # across all of them.
     refusal = parent_reference_guard(conn, table, body_list, authenticated_user,
                                      post_method)
+    if refusal is not None:
+        return refusal
+
+    # req #3649 — every item, for the same one-statement reason as above.
+    refusal = plan_lock_guard(conn, table, body_list, authenticated_user,
+                              post_method)
     if refusal is not None:
         return refusal
 
