@@ -192,9 +192,9 @@ still mean exactly what they meant — they draw the view's eligible-now ring
 and the heartbeat's counts. What changed is only which work the engine may
 ANNOUNCE; step STATE and completion semantics are untouched.
 
-**One dependency stays a gate** (the user's amendment, same day): a CHECKPOINT
-— a step with no work requirement, which only `complete_pipeline_step` closes
-— blocks every step downstream of it, transitively, until it is completed.
+**One dependency stays a gate** (the user's amendment, same day; a per-step
+FLAG since req #3649): a CHECKPOINT — `pipeline_steps.checkpoint`, on by
+default — blocks every step downstream of it, transitively, until it is done.
 `checkpoint_blocked_by` names the open checkpoints holding a row.
 """
 
@@ -328,15 +328,22 @@ def is_tracking_requirement(req):
     restated rather than imported (`pipeline2_derive` must not import from
     `pipeline_derive` — module docstring).
     """
-    value = (req or {}).get('tracking')
+    return _flag((req or {}).get('tracking'), default=False)
+
+
+def _flag(value, default):
+    """A TINYINT(1) column as a bool, with the column's own DEFAULT standing in
+    for an absent or blank value — the coercion `is_tracking_requirement` has
+    always used (`"0"` is False, `1`/`"1"`/`True` are True), shared by the
+    req #3649 flags `checkpoint` (default 1) and `locked` (default 0)."""
     if value is None or value == '':
-        return False
+        return default
     if isinstance(value, bool):
         return value
     try:
         return float(value) != 0
     except (TypeError, ValueError):
-        return False
+        return default
 
 
 def _index_by_id(rows):
@@ -478,6 +485,11 @@ def build_plan_rows(model):
             'id': step['id'],
             'title': step.get('title'),
             'run': step.get('run') or 'auto',
+            # req #3649 — the step's two stored flags. `checkpoint` is what
+            # the hold walk reads (`is_checkpoint`); `locked` is carried for
+            # the view and enforced by the gateway, never here.
+            'checkpoint': _flag(step.get('checkpoint'), default=True),
+            'locked': _flag(step.get('locked'), default=False),
             'notes': step.get('notes'),
             'completed_at': step.get('completed_at'),
             'state': derive_step_state(step, linked),
@@ -1104,11 +1116,20 @@ def top_up_eligibility(row, by_id, now=None):
 
 
 def is_checkpoint(row):
-    """A step the user CLOSES BY HAND — it carries no work requirement (no
-    links, or only tracking containers), so nothing but
-    `complete_pipeline_step` can finish it. Its `launch_block` says exactly
-    that, so this reads it rather than re-deriving the gating set."""
-    return (row or {}).get('launch_block') in (BLOCK_NO_LINKS, BLOCK_CONTAINERS)
+    """Is this step a CHECKPOINT — one that holds everything downstream of it
+    until it is done? **The answer is the `pipeline_steps.checkpoint` column
+    (req #3649), default ON**, never an inference from the step's links.
+
+    Before #3649 a checkpoint was IMPLIED: a step with no work requirement
+    (no links, or only tracking containers) was the one kind of step a
+    person closes by hand, and only that kind held its downstream. The
+    user's rule (2026-10-19) is that every step holds by default and a person
+    turns the hold OFF to make a step a mere launch priority — so the fact is
+    stored, and link shape says nothing about it any more. What "done" means
+    is unchanged and still `derive_step_state`'s: all gating requirements
+    terminal, or `completed_at` when there is no gating work.
+    """
+    return _flag((row or {}).get('checkpoint'), default=True)
 
 
 def _checkpoint_blockers(row, by_id):
@@ -1128,16 +1149,20 @@ def plan_graph_outside(model, by_id):
     epic-scoped orchestrator launched straight past one that a whole-plan
     orchestrator held).
 
-    Read from `model['plan_graph']` — `{steps: [{id, completed_at}],
-    step_deps, step_requirements, tracking_req_ids}` — which only the
-    epic-scoped compose supplies; a whole-plan model carries every step
-    already and has no outside. A step outside is a CHECKPOINT when every
-    link it has is a tracking container (or it has none), and such a step is
-    done exactly when it carries `completed_at` — the same rule
-    `derive_step_state` applies to a step with no gating requirement.
+    Read from `model['plan_graph']` — `{steps: [{id, completed_at,
+    checkpoint}], step_deps, step_requirements, requirements: [{id,
+    requirement_status, tracking}]}` — which only the epic-scoped compose
+    supplies; a whole-plan model carries every step already and has no
+    outside. A step outside is a CHECKPOINT by its own column (req #3649,
+    `is_checkpoint`), and it is done by exactly the rule `derive_step_state`
+    applies inside the epic: every gating requirement terminal, or
+    `completed_at` when it has no gating work. The compose reads links and
+    requirement rows for the outside checkpoints only; a link whose
+    requirement row is absent is dropped here the way `build_plan_rows`
+    drops an unresolved one.
     """
     graph = (model or {}).get('plan_graph') or {}
-    tracking = set(graph.get('tracking_req_ids') or [])
+    reqs_by_id = _index_by_id(graph.get('requirements'))
     links = {}
     for link in graph.get('step_requirements') or []:
         links.setdefault(link['step_fk'], []).append(link['requirement_fk'])
@@ -1148,16 +1173,21 @@ def plan_graph_outside(model, by_id):
     for step in graph.get('steps') or []:
         if step['id'] in by_id:
             continue
-        gating = [r for r in links.get(step['id'], []) if r not in tracking]
-        outside[step['id']] = {'dep_ids': deps.get(step['id'], []),
-                               'checkpoint': not gating,
-                               'done': bool(step.get('completed_at'))}
+        linked = [reqs_by_id[r] for r in links.get(step['id'], [])
+                  if r in reqs_by_id]
+        checkpoint = is_checkpoint(step)
+        outside[step['id']] = {
+            'dep_ids': deps.get(step['id'], []),
+            'checkpoint': checkpoint,
+            # Only a checkpoint's done-ness is ever read (the compose reads
+            # links for checkpoints alone), so it is only claimed for one.
+            'done': checkpoint and derive_step_state(step, linked) == STEP_DONE}
     return outside
 
 
 def open_checkpoints_upstream(row, by_id, outside=None):
     """Every CHECKPOINT this row depends on, directly or transitively, that is
-    not yet `done` — in id order. Empty means nothing hand-closed holds it.
+    not yet `done` — in id order. Empty means no checkpoint holds it.
 
     THE USER'S AMENDMENT TO req #3597 (2026-10-17): "requirements that I close
     by hand should block progress ... until I have cleared them". A
@@ -1223,8 +1253,10 @@ def launch_candidacy(row, by_id=None, now=None):
     * Its own time gate (`_time_gate_passed`). A `not_before` is a person's
       scheduling intention, not a dependency on other work.
     * No CHECKPOINT upstream is still open (`open_checkpoints_upstream`). A
-      step the user closes by hand blocks everything downstream of it until
-      it is completed — the one dependency that stays a gate.
+      checkpoint step — `pipeline_steps.checkpoint`, ON by default (req
+      #3649) — blocks everything downstream of it until it is done, the one
+      dependency that stays a gate; a step with the flag OFF is a launch
+      priority and nothing more.
 
     Pause and serial turn-taking are NOT conjuncts here, exactly as they are
     not conjuncts of `eligible`: they are SUPPRESSION, carried separately on
@@ -1242,6 +1274,48 @@ def launch_candidacy(row, by_id=None, now=None):
     if not _time_gate_passed(row, now):
         return False
     return not _checkpoint_blockers(row, by_id)
+
+
+def launch_queue(candidate_ids, by_id, reqs_by_id):
+    """THE LAUNCH PRIORITY, as one ordered list — the only place it is stated
+    (req #3649: "minimal and well tested … focused in a single area").
+
+    `[{'step_id', 'requirement_id'}, ...]`: every requirement the engine may
+    announce, in the order it hands out free slots. The engine consumes this
+    list and ranks by position in it; it keeps no ordering rule of its own.
+
+    THE ORDER:
+
+    1. `candidate_ids` — launch candidates (`launch_candidacy`) gate-open
+       first, then past their gate, each half in display order (req #3597:
+       a dependency is WHO GOES FIRST, never WHETHER; a CHECKPOINT upstream
+       has already removed a held step from candidacy).
+    2. Within a step, `coordination_type == 'deployed'` first (a deployed
+       worker closes itself through `/swarm-complete`, so its slot frees and
+       the plan drains), then ascending requirement id — FIFO, since ids
+       are allocated in creation order. **Within a step only** (user ruling
+       2026-10-19, superseding req #3623's scope-wide preference): a later
+       step's deployed work never jumps an earlier step's implemented work.
+
+    A `launch_suppressed` step (pause, serial turn) is LEFT OUT — this is what
+    WOULD be announced, and suppression is reported beside it on the row. A
+    `run=manual` step is IN: where its READY-MANUAL reminder ranks against
+    auto work is policy too, and the engine must not keep a second rule for
+    it. Only *expiry* of a reminder's announce window — debounce state the
+    derivation cannot see — stays an engine term.
+    """
+    queue = []
+    for step_id in candidate_ids:
+        row = by_id.get(step_id) or {}
+        if row.get('launch_suppressed'):
+            continue
+        ids = list(row.get('launch_req_ids') or [])
+        ids.sort(key=lambda rid: (
+            0 if (reqs_by_id.get(rid) or {}).get('coordination_type') == 'deployed'
+            else 1,
+            _id_sort_key(rid)))
+        queue.extend({'step_id': step_id, 'requirement_id': rid} for rid in ids)
+    return queue
 
 
 # ---------------------------------------------------------------------------
@@ -1589,6 +1663,10 @@ def derive_plan2(model, now=None, epic_scoped=False):
     candidate_set = set(candidates)
     candidate_ids = ([i for i in candidates if i in gate_open_set]
                      + [i for i in candidates if i not in gate_open_set])
+    # req #3649 — THE launch order, requirement by requirement. The engine
+    # ranks by position in this list and nothing else.
+    queue = launch_queue(candidate_ids, by_id,
+                         _index_by_id(model.get('requirements')))
     out_of_scope_set = set(out_of_scope_dep_ids)
 
     unresolved = []
@@ -1606,6 +1684,10 @@ def derive_plan2(model, now=None, epic_scoped=False):
             'id': row['id'],
             'state': row['state'],
             'run': row['run'],
+            # req #3649 — the two stored flags, so a reader can say WHY a
+            # step holds its downstream (checkpoint) and draw the lock.
+            'checkpoint': row['checkpoint'],
+            'locked': row['locked'],
             'eligible': row['id'] in eligible_set,
             # req #3507. NOT a widening of `eligible`, which still answers
             # only "may this step BEGIN" — this answers "may new work be
@@ -1619,9 +1701,9 @@ def derive_plan2(model, now=None, epic_scoped=False):
             # for launch, which no longer requires the gate.
             'gate_open': row['id'] in gate_open_set,
             'launch_candidate': row['id'] in candidate_set,
-            # The amendment: hand-closed checkpoints upstream that are still
-            # open. Non-empty means this step's work is NOT announced, and
-            # these are the steps to complete to release it.
+            # The amendment: checkpoint steps upstream that are not yet done
+            # (req #3649: the flag, on by default). Non-empty means this
+            # step's work is NOT announced until they are.
             'checkpoint_blocked_by': row['_checkpoint_blockers'],
             'epic_id': row['epic_id'],
             'dep_ids': row['dep_ids'],
@@ -1651,6 +1733,9 @@ def derive_plan2(model, now=None, epic_scoped=False):
         # req #3597 — every launch candidate, in launch PRIORITY order
         # (gate-open first, then display order), NOT display order.
         'launch_candidate_step_ids': candidate_ids,
+        # req #3649 — THE launch order, one entry per announceable
+        # requirement (`launch_queue`): the engine ranks by position here.
+        'launch_queue': queue,
         'violations': violations,
         'cycle_detected': ordered['cycle_detected'],
         'cycle_step_ids': ordered['cycle_step_ids'],

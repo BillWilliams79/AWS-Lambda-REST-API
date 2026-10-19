@@ -4,6 +4,7 @@ from rest_api_utils import (compose_rest_response, compose_conflict_response,
                             error_detail, integrity_errno)
 from classifier import varDump, pretty_print_sql
 from auth_utils import CREATOR_FK_TABLES, PROFILE_TABLE, junction_scope_clause
+from plan_lock import plan_lock_guard_delete
 
 def _unknown_columns(conn, table, keys):
     """The body keys that are not real columns on `table`.
@@ -51,6 +52,15 @@ def rest_delete(delete_method, conn, database, table, body, authenticated_user=N
         if unknown:
             print(f"HTTP {delete_method} invalid body key(s) for {table}: {unknown}")
             return compose_rest_response(400, '', 'BAD REQUEST')
+
+        # req #3649 — an effectively LOCKED plan-layer row (a step under a
+        # locked epic, a link or edge under a locked step...) is not deleted.
+        # The keys are validated above, so they are safe as `t.<key>` here.
+        refusal = plan_lock_guard_delete(
+            conn, table, ' AND '.join(f"t.{key} = %s" for key in keys), values,
+            authenticated_user, delete_method)
+        if refusal is not None:
+            return refusal
 
         where_clause = ' AND '.join(f"{key} = %s" for key in keys)
 
@@ -118,6 +128,12 @@ def _rest_delete_bulk(delete_method, conn, table, body_list, authenticated_user)
     placeholders = ', '.join(['%s'] * len(ids))
     where_clause = f"id IN ({placeholders})"
     values = list(ids)
+
+    # req #3649 — see the single-row path; one statement, one answer.
+    refusal = plan_lock_guard_delete(conn, table, f"t.id IN ({placeholders})",
+                                     values, authenticated_user, delete_method)
+    if refusal is not None:
+        return refusal
 
     # Add creator_fk scoping for user-owned tables (same policy as single-object delete)
     if authenticated_user is not None:

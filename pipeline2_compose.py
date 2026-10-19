@@ -236,12 +236,17 @@ def _bounded(uri, composed, *, epic_scoped=False):
 # ---------------------------------------------------------------------------
 
 _PIPELINE_COLUMNS = ('id', 'title', 'description', 'pipeline_status',
-                     'execution_mode', 'machine_fk', 'creator_fk',
+                     'execution_mode', 'locked', 'machine_fk', 'creator_fk',
                      'started_at', 'completed_at', 'create_ts', 'update_ts')
 _EPIC_COLUMNS = ('id', 'pipeline_fk', 'title', 'description', 'epic_status',
-                 'sort_order', 'category_fk', 'closed')
-_STEP_COLUMNS = ('id', 'epic_fk', 'title', 'run', 'not_before', 'notes',
-                 'completed_at', 'creator_fk', 'create_ts', 'update_ts')
+                 'locked', 'sort_order', 'category_fk', 'closed')
+_STEP_COLUMNS = ('id', 'epic_fk', 'title', 'run', 'checkpoint', 'locked',
+                 'not_before', 'notes', 'completed_at', 'creator_fk',
+                 'create_ts', 'update_ts')
+# `checkpoint` and the three `locked` flags: req #3649 (migration
+# 20261019100448). `checkpoint` feeds the derivation's hold walk; `locked` is
+# carried so the view can draw the lock — the gateway (`plan_lock.py`) is what
+# enforces it.
 _LINK_COLUMNS = ('step_fk', 'requirement_fk')
 _DEP_COLUMNS = ('id', 'step_fk', 'dep_step_fk')
 _REQUIREMENT_COLUMNS = ('id', 'title', 'requirement_status', 'coordination_type',
@@ -411,9 +416,9 @@ def _plan_graph_outside_epic(cursor, pipeline_id, epic_id, authenticated_user):
     needs them (`pipeline2_derive.plan_graph_outside`). Reads 7-10, each
     skipped when the one before it finds nothing."""
     graph = {'steps': [], 'step_deps': [], 'step_requirements': [],
-             'tracking_req_ids': []}
+             'requirements': []}
     graph['steps'] = _select(
-        cursor, ('id', 'completed_at'), 'pipeline_steps',
+        cursor, ('id', 'completed_at', 'checkpoint'), 'pipeline_steps',
         'epic_fk IN (SELECT id FROM epics WHERE pipeline_fk = %s '
         'AND creator_fk = %s) AND epic_fk <> %s AND creator_fk = %s',
         (pipeline_id, authenticated_user, epic_id, authenticated_user),
@@ -425,15 +430,24 @@ def _plan_graph_outside_epic(cursor, pipeline_id, epic_id, authenticated_user):
     graph['step_deps'] = _select(cursor, ('step_fk', 'dep_step_fk'),
                                  'pipeline_step_deps', f'step_fk IN {in_clause}',
                                  ids)                                         # read 8
-    graph['step_requirements'] = _select(cursor, _LINK_COLUMNS,
-                                         'pipeline_step_requirements',
-                                         f'step_fk IN {in_clause}', ids)      # read 9
+    # Only a CHECKPOINT's done-ness matters to the walk (req #3649): a
+    # non-checkpoint outside step contributes its edges for traversal and
+    # nothing else, so its links are not read.
+    checkpoint_ids = tuple(sorted(s['id'] for s in graph['steps']
+                                  if s.get('checkpoint')))
+    if not checkpoint_ids:
+        return graph
+    graph['step_requirements'] = _select(
+        cursor, _LINK_COLUMNS, 'pipeline_step_requirements',
+        f'step_fk IN {_in_clause(len(checkpoint_ids))}', checkpoint_ids)     # read 9
     req_ids = sorted({link['requirement_fk']
                       for link in graph['step_requirements']})
     if req_ids:
-        graph['tracking_req_ids'] = [row['id'] for row in _select(
-            cursor, ('id',), 'requirements',
-            f"id IN {_in_clause(len(req_ids))} AND tracking = 1 "
-            "AND creator_fk = %s",
-            tuple(req_ids) + (authenticated_user,))]                          # read 10
+        # A checkpoint WITH work is done when every gating requirement is
+        # terminal, which `completed_at` cannot say — so the derivation gets
+        # the rows `derive_step_state` needs, not just the tracking ids.
+        graph['requirements'] = _select(
+            cursor, ('id', 'requirement_status', 'tracking'), 'requirements',
+            f"id IN {_in_clause(len(req_ids))} AND creator_fk = %s",
+            tuple(req_ids) + (authenticated_user,))                           # read 10
     return graph
