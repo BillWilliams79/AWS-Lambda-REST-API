@@ -218,3 +218,36 @@ def test_unlocking_and_editing_in_one_put_lands(owner, plan):
         rows = json.loads(rows)
     assert rows[0]['locked'] == 0 and rows[0]['title'] == 'b1 renamed'
     _put(owner, 'pipeline_steps', {'id': plan['b1'], 'title': 'b1'})
+
+
+def test_a_seated_requirement_deletes_with_its_seat_unless_the_step_is_locked(owner, plan):
+    """Req #3706: a requirement seated on a step could not be deleted at all
+    (RESTRICT, 409/1451). It now deletes and its seat goes with it — except
+    under a lock, where the cascade would unlink it from a relic."""
+    resp = owner('POST', '/darwin_dev/requirements', body={
+        'title': 'req_doomed', 'requirement_status': 'swarm_ready',
+        'category_fk': plan['category'], 'coordination_type': 'implemented',
+        'ai_model': 'sonnet', 'effort': 'high'})
+    doomed = int(extract_id(resp))
+    resp = owner('POST', '/darwin_dev/pipeline_step_requirements',
+                 body={'step_fk': plan['b1'], 'requirement_fk': doomed})
+    assert resp['statusCode'] in (200, 201), resp
+
+    _set_locked(owner, 'epics', plan['epic_b'], 1)
+    try:
+        resp = owner('DELETE', '/darwin_dev/requirements', body={'id': doomed})
+        assert resp['statusCode'] == 423, resp
+        body = _body(resp)
+        assert (body['table'], body['id'], body['locked_by'], body['locked_id']) == (
+            'requirements', doomed, 'epic', plan['epic_b'])
+        assert f"seated on step {plan['b1']}" in body['message']
+    finally:
+        _set_locked(owner, 'epics', plan['epic_b'], 0)
+
+    resp = owner('DELETE', '/darwin_dev/requirements', body={'id': doomed})
+    assert resp['statusCode'] == 200, resp
+    resp = owner('GET', '/darwin_dev/pipeline_step_requirements',
+                 query={'requirement_fk': str(doomed)})
+    assert resp['statusCode'] == 404, resp
+    resp = owner('GET', '/darwin_dev/pipeline_steps', query={'id': str(plan['b1'])})
+    assert resp['statusCode'] == 200, resp

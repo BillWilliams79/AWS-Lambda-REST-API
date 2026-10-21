@@ -97,6 +97,12 @@ class FakeCursor:
         *ids, user = params
         ids = [int(i) for i in ids]
         rows = []
+        if 'seated_id' in sql:
+            # `resolve_locked_seats` (req #3706): requirement ids -> their
+            # seat's chain, the requirement id leading the row.
+            seats = [(i, _chain(step_id=LINKS[i])) for i in ids if i in LINKS]
+            self._result = [(i,) + row for i, (owner, row) in seats if owner == user]
+            return
         if 'below_id' in sql:
             # `resolve_locked_below`: the locked rows UNDER the deleted ones.
             out = []
@@ -482,3 +488,45 @@ def test_resolve_locks_reads_a_dict_cursor_row_too():
             return out
     assert resolve_locks(DictRowCursor(), 'pipeline_steps', 't.id IN (%s, %s)',
                          [700, 710], USER) == [(710, 'epic', 71)]
+
+
+# ---------------------------------------------------------------------------
+# req #3706 — deleting a requirement CASCADEs its seat, so a seat under a
+# locked step refuses the requirement delete
+# ---------------------------------------------------------------------------
+
+def test_deleting_a_requirement_seated_on_a_locked_step_is_423():
+    # 5002 sits on step 701 (locked itself); 5003 on step 710 (epic 71 locked).
+    resp = plan_lock_guard_delete(Conn(), 'requirements', 't.id = %s', [5002], USER)
+    assert resp['statusCode'] == 423
+    body = _body(resp)
+    assert (body['table'], body['id'], body['locked_by'], body['locked_id']) == (
+        'requirements', 5002, 'step', 701)
+    assert 'seated on step 701' in body['message']
+    body = _body(plan_lock_guard_delete(Conn(), 'requirements', 't.id = %s',
+                                        [5003], USER))
+    assert (body['locked_by'], body['locked_id']) == ('epic', 71)
+
+
+def test_deleting_an_unlocked_seated_or_unseated_requirement_passes():
+    assert plan_lock_guard_delete(Conn(), 'requirements', 't.id = %s', [5001],
+                                  USER) is None
+    assert plan_lock_guard_delete(Conn(), 'requirements', 't.id = %s', [4242],
+                                  USER) is None
+
+
+def test_a_bulk_requirement_delete_is_refused_whole_on_one_locked_seat():
+    resp = plan_lock_guard_delete(Conn(), 'requirements', 't.id IN (%s, %s)',
+                                  [5001, 5003], USER)
+    assert resp['statusCode'] == 423
+
+
+def test_rest_delete_refuses_a_locked_seat_before_the_delete():
+    # The bulk path: the single path's DESC key check needs a real table.
+    from rest_delete import _rest_delete_bulk
+    resp = _rest_delete_bulk('DELETE', GuardConn(), 'requirements',
+                             [{'id': 5003}], USER)
+    assert resp['statusCode'] == 423
+    with pytest.raises(CursorRequested):
+        _rest_delete_bulk('DELETE', GuardConn(), 'requirements', [{'id': 5001}], USER)
+

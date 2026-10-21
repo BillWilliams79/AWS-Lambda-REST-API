@@ -27,6 +27,12 @@ WHAT A LOCK FREEZES — structure AND authoring fields, cascading:
     `completed_at` (complete/reopen). A locked plan can still be orchestrated;
     it cannot be rewritten.
 
+A DELETE THAT CASCADES INTO THE PLAN LAYER IS AUTHORING TOO (req #3706).
+Deleting a requirement removes its step seat (`fk_psr_requirement` is ON
+DELETE CASCADE since migration 20261021060108), so a requirement seated on an
+effectively locked step is refused exactly as unlinking it would be.
+`_CASCADES_INTO` names that one non-plan table.
+
 THE ANSWER IS 423 LOCKED, a JSON object (like the 409 CONFLICT body) carrying
 `table`, `id`, `locked_by` (the OUTERMOST locked level — unlocking the step
 helps nobody while its plan is locked) and `locked_id`, plus a `message` that
@@ -37,7 +43,8 @@ decided without a cursor), one SELECT per request resolves the chain, a
 failure of the check itself is a 500 and never a pass, and a write that
 touches nothing a lock protects — `PUT [{"id": 5, "completed_at": ...}]`,
 `PUT [{"id": 5, "locked": 0}]`, an unauthenticated call, a table not in
-`PLAN_LOCK` — returns before any cursor is opened.
+`PLAN_LOCK` (other than a `_CASCADES_INTO` DELETE) — returns before any cursor
+is opened.
 """
 import pymysql
 
@@ -229,6 +236,43 @@ def resolve_locked_below(cursor, table, where, params, authenticated_user):
     return locked
 
 
+# req #3706 — a table OUTSIDE the plan layer whose DELETE cascades into it:
+# table -> (the plan table its rows are seated in, the column naming them).
+_CASCADES_INTO = {
+    'requirements': ('pipeline_step_requirements', 'requirement_fk'),
+}
+
+
+def resolve_locked_seats(cursor, table, where, params, authenticated_user):
+    """`[(row_id, step_id, level, level_id), ...]` — the `table` rows `where`
+    selects (alias `t`) that are seated on an effectively locked step,
+    `level` the OUTERMOST locked one. Seats in another creator's plan are not
+    returned, as in `resolve_locks`."""
+    child, column = _CASCADES_INTO[table]
+    from_clause, _, levels = _CHAINS[child]
+    columns = ', '.join('%s AS %s_id, %s AS %s_locked' % (id_col, level, lock_col, level)
+                        for level, id_col, lock_col in levels)
+    # The subquery re-binds `t` to `table`, so the caller's `where` reads
+    # exactly as it does against the DELETE itself.
+    cursor.execute(
+        'SELECT DISTINCT t.%s AS seated_id, %s FROM %s '
+        'WHERE t.%s IN (SELECT t.id FROM %s t WHERE %s) AND p.creator_fk = %%s'
+        % (column, columns, from_clause, column, table, where),
+        tuple(params) + (authenticated_user,))
+    locked = []
+    for row in cursor.fetchall():
+        if isinstance(row, dict):
+            row = [row['seated_id']] + [v for level, _, _ in levels
+                                        for v in (row['%s_id' % level],
+                                                  row['%s_locked' % level])]
+        pairs = list(zip(levels, row[1::2], row[2::2]))
+        for (level, _, _), level_id, flag in pairs:
+            if flag:
+                locked.append((row[0], pairs[-1][1], level, level_id))
+                break
+    return locked
+
+
 def _in_clause(n):
     return '(' + ', '.join(['%s'] * n) + ')'
 
@@ -256,6 +300,16 @@ def _locked_response(table, locked, method, adding=None, below=False):
     else:
         message = ('%s %s is locked by %s %s — unlock it first'
                    % (table, row_id, level, level_id))
+    print('HTTP %s refused: %s' % (method, message))
+    return compose_rest_response(423, '', {
+        'error': 'LOCKED', 'table': table, 'id': row_id,
+        'locked_by': level, 'locked_id': level_id, 'message': message})
+
+
+def _seated_response(table, seated, method):
+    row_id, step_id, level, level_id = seated[0]
+    message = ('cannot delete %s %s: it is seated on step %s, locked by %s %s'
+               ' — unlock it first' % (table, row_id, step_id, level, level_id))
     print('HTTP %s refused: %s' % (method, message))
     return compose_rest_response(423, '', {
         'error': 'LOCKED', 'table': table, 'id': row_id,
@@ -327,8 +381,21 @@ def plan_lock_guard_delete(conn, table, where, params, authenticated_user,
     """423 when a DELETE would remove an effectively locked plan-layer row
     (or a link/edge under a locked step), 500 when the check failed, else
     None. `where` names the deleting request's own filters against alias `t`
-    — the keys have already been validated against `DESC` by the caller."""
-    if authenticated_user is None or table not in PLAN_LOCK:
+    — the keys have already been validated against `DESC` by the caller.
+
+    A table in `_CASCADES_INTO` (req #3706) is asked whether any row it would
+    delete is seated on a locked step, since the cascade would unlink it."""
+    if authenticated_user is None:
+        return None
+    if table in _CASCADES_INTO:
+        try:
+            with conn.cursor() as cursor:
+                seated = resolve_locked_seats(cursor, table, where, params,
+                                              authenticated_user)
+        except pymysql.Error as exc:
+            return _check_failed(method, exc)
+        return _seated_response(table, seated, method) if seated else None
+    if table not in PLAN_LOCK:
         return None
     try:
         with conn.cursor() as cursor:
