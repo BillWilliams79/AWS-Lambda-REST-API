@@ -213,12 +213,16 @@ class TestWholePlanCompose:
         derived = body['derived']
         assert 'withheld' not in derived
         assert derived['display_order'] == [plan['step_a'], plan['step_b'], plan['step_gate']]
-        by_id = {row['id']: row['state'] for row in derived['rows']}
-        # req_a is `development` -> its step is running; req_b is `authoring`
-        # -> pending; the gate waits on both -> pending.
-        assert by_id[plan['step_a']] == 'running'
-        assert by_id[plan['step_b']] == 'pending'
-        assert by_id[plan['step_gate']] == 'pending'
+        by_id = {row['id']: row for row in derived['rows']}
+        # A step has no state (req #3750) — it carries its open work. req_a is
+        # `development` and req_b `authoring`, both open; the gate holds
+        # nothing of its own and waits on both.
+        assert by_id[plan['step_a']]['open_req_ids'] == [plan['req_a']]
+        assert by_id[plan['step_b']]['open_req_ids'] == [plan['req_b']]
+        assert by_id[plan['step_gate']]['open_req_ids'] == []
+        assert by_id[plan['step_gate']]['gate_open'] is False
+        assert all('state' not in row for row in derived['rows'])
+        assert all('completed_at' not in step for step in body['steps'])
 
     def test_missing_pipeline_is_404(self, owner):
         resp = _get(owner, 'pipeline_compose', 999999999)
@@ -318,15 +322,14 @@ def two_epic_plan(owner):
         ids[key] = int(extract_id(resp))
 
     resp = owner('POST', '/darwin_dev/pipeline_steps',
-                body={'epic_fk': ids['epic_a'], 'title': 'A step', 'run': 'auto',
-                      'completed_at': '2026-08-01 00:00:00'})
+                body={'epic_fk': ids['epic_a'], 'title': 'A step', 'run': 'auto'})
     ids['step_a'] = int(extract_id(resp))
     resp = owner('POST', '/darwin_dev/pipeline_steps',
                 body={'epic_fk': ids['epic_b'], 'title': 'B step', 'run': 'auto'})
     ids['step_b'] = int(extract_id(resp))
 
     resp = owner('POST', '/darwin_dev/requirements', body={
-        'title': 'two-epic requirement', 'requirement_status': 'authoring',
+        'title': 'two-epic requirement', 'requirement_status': 'swarm_ready',
         'category_fk': ids['category'], 'coordination_type': 'deployed',
         'ai_model': 'sonnet', 'effort': 'high'})
     ids['req'] = int(extract_id(resp))
@@ -346,6 +349,8 @@ def test_epic_scoped_reports_out_of_scope_never_dangling(owner, two_epic_plan):
 
 
 def test_whole_plan_sees_the_same_edge_as_an_ordinary_satisfied_gate(owner, two_epic_plan):
+    # Step A holds no work, so it holds nothing (req #3750) — B's gate is open
+    # and B's launch-ready requirement makes it eligible.
     resp = _get(owner, 'pipeline_compose', two_epic_plan['pipeline'])
     body = json.loads(resp['body'])
     derived = body['derived']
@@ -355,8 +360,8 @@ def test_whole_plan_sees_the_same_edge_as_an_ordinary_satisfied_gate(owner, two_
 
 
 # ---------------------------------------------------------------------------
-# req #3597 (the user's amendment): a step CLOSED BY HAND blocks everything
-# downstream — across epics too. The epic-scoped route must see a checkpoint
+# req #3597 (the user's amendment) / #3649 / #3750: a CHECKPOINT holding open
+# work blocks everything downstream — across epics too. The epic-scoped route must see a checkpoint
 # in another epic, and must not ship the plan graph it read to find it.
 # ---------------------------------------------------------------------------
 
@@ -378,10 +383,18 @@ def checkpoint_plan(owner):
             'category_fk': ids['category'], 'sort_order': order, 'closed': '0'})
         assert resp['statusCode'] == 200, resp
         ids[key] = int(extract_id(resp))
-    # An OPEN checkpoint in epic A: no links, no completed_at.
+    # A HOLDING checkpoint in epic A: flag on (the default) with work in
+    # development. An empty checkpoint would hold nothing (req #3750).
     resp = owner('POST', '/darwin_dev/pipeline_steps',
                 body={'epic_fk': ids['epic_a'], 'title': 'checkpoint', 'run': 'manual'})
     ids['checkpoint'] = int(extract_id(resp))
+    resp = owner('POST', '/darwin_dev/requirements', body={
+        'title': 'checkpoint work', 'requirement_status': 'development',
+        'category_fk': ids['category'], 'coordination_type': 'implemented',
+        'ai_model': 'sonnet', 'effort': 'high'})
+    ids['work'] = int(extract_id(resp))
+    owner('POST', '/darwin_dev/pipeline_step_requirements',
+         body={'step_fk': ids['checkpoint'], 'requirement_fk': ids['work']})
     resp = owner('POST', '/darwin_dev/pipeline_steps',
                 body={'epic_fk': ids['epic_b'], 'title': 'held work', 'run': 'auto'})
     ids['held'] = int(extract_id(resp))
@@ -416,32 +429,31 @@ def test_whole_plan_read_holds_the_same_step(owner, checkpoint_plan):
     assert row['launch_candidate'] is False
 
 
-def test_epic_scoped_read_holds_behind_another_epics_checkpoint_with_work(owner, checkpoint_plan):
-    """req #3649: the outside checkpoint carries WORK (a swarm_ready link),
-    so the plan graph must carry its requirement rows for the derivation to
-    say whether it is done; a `checkpoint=0` outside step holds nothing."""
+def test_epic_scoped_read_releases_when_the_checkpoints_work_closes(owner, checkpoint_plan):
+    """req #3649/#3750: the outside checkpoint holds while its WORK is open,
+    so the plan graph must carry its requirement rows; its work going
+    terminal releases the hold, and a `checkpoint=0` outside step holds
+    nothing whatever its work says."""
     ids = checkpoint_plan
-    resp = owner('POST', '/darwin_dev/requirements', body={
-        'title': 'checkpoint work', 'requirement_status': 'swarm_ready',
-        'category_fk': ids['category'], 'coordination_type': 'implemented',
-        'ai_model': 'sonnet', 'effort': 'high'})
-    work = int(extract_id(resp))
-    owner('POST', '/darwin_dev/pipeline_step_requirements',
-          body={'step_fk': ids['checkpoint'], 'requirement_fk': work})
     held = lambda: next(r for r in json.loads(_get(
         owner, 'pipeline_compose_epic', ids['epic_b'])['body'])['derived']['rows']
         if r['id'] == ids['held'])
     assert held()['checkpoint_blocked_by'] == [ids['checkpoint']]
-    # The work going terminal releases it.
-    owner('PUT', '/darwin_dev/requirements', body=[{'id': work, 'requirement_status': 'met'}])
-    assert held()['checkpoint_blocked_by'] == []
-    assert held()['launch_candidate'] is True
-    # Back to open work, flag OFF: a priority, no hold.
-    owner('PUT', '/darwin_dev/requirements',
-          body=[{'id': work, 'requirement_status': 'swarm_ready'}])
-    owner('PUT', '/darwin_dev/pipeline_steps', body=[{'id': ids['checkpoint'], 'checkpoint': 0}])
-    assert held()['checkpoint_blocked_by'] == []
-    assert held()['gate_open'] is False
-    owner('DELETE', '/darwin_dev/pipeline_step_requirements',
-          body={'step_fk': ids['checkpoint'], 'requirement_fk': work})
-    owner('DELETE', '/darwin_dev/requirements', body={'id': work})
+    try:
+        # The work going terminal releases it.
+        owner('PUT', '/darwin_dev/requirements',
+              body=[{'id': ids['work'], 'requirement_status': 'met'}])
+        assert held()['checkpoint_blocked_by'] == []
+        assert held()['launch_candidate'] is True
+        # Back to open work, flag OFF: a priority, no hold.
+        owner('PUT', '/darwin_dev/requirements',
+              body=[{'id': ids['work'], 'requirement_status': 'development'}])
+        owner('PUT', '/darwin_dev/pipeline_steps',
+              body=[{'id': ids['checkpoint'], 'checkpoint': 0}])
+        assert held()['checkpoint_blocked_by'] == []
+        assert held()['gate_open'] is False
+    finally:
+        owner('PUT', '/darwin_dev/requirements',
+              body=[{'id': ids['work'], 'requirement_status': 'development'}])
+        owner('PUT', '/darwin_dev/pipeline_steps',
+              body=[{'id': ids['checkpoint'], 'checkpoint': 1}])
