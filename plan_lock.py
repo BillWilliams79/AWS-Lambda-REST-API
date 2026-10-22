@@ -23,8 +23,8 @@ WHAT A LOCK FREEZES — structure AND authoring fields, cascading:
     machine_fk, execution_mode, and the parent columns a move rewrites.
   * NOT frozen: the lock itself (so it can be lifted through the same call),
     and orchestration/lifecycle state — `pipeline_status` with its derived
-    `started_at`/`completed_at`, `epic_status`, `closed`, and a step's
-    `completed_at` (complete/reopen). A locked plan can still be orchestrated;
+    `started_at`/`completed_at`, `epic_status`, `closed`. A step carries no
+    lifecycle state at all (req #3750). A locked plan can still be orchestrated;
     it cannot be rewritten.
 
 A DELETE THAT CASCADES INTO THE PLAN LAYER IS AUTHORING TOO (req #3706).
@@ -41,8 +41,7 @@ helps nobody while its plan is locked) and `locked_id`, plus a `message` that
 THE SHAPE IS `parent_reference_guard`'s: planning is PURE (what to look up,
 decided without a cursor), one SELECT per request resolves the chain, a
 failure of the check itself is a 500 and never a pass, and a write that
-touches nothing a lock protects — `PUT [{"id": 5, "completed_at": ...}]`,
-`PUT [{"id": 5, "locked": 0}]`, an unauthenticated call, a table not in
+touches nothing a lock protects — `PUT [{"id": 5, "locked": 0}]`, an unauthenticated call, a table not in
 `PLAN_LOCK` (other than a `_CASCADES_INTO` DELETE) — returns before any cursor
 is opened.
 """
@@ -64,7 +63,7 @@ PLAN_LOCK = {
         'unlocked': frozenset({'locked', 'epic_status', 'closed'})},
     'pipeline_steps': {
         'parent': ('epic_fk', 'epics'),
-        'unlocked': frozenset({'locked', 'completed_at'})},
+        'unlocked': frozenset({'locked'})},
     'pipeline_step_requirements': {
         'parent': ('step_fk', 'pipeline_steps'),
         'unlocked': frozenset()},
@@ -130,9 +129,8 @@ def plan_lock_lookups(table, bodies, method):
     canonical id strings. `refusal` is `(400, 'BAD REQUEST')` for an id MySQL
     would silently coerce (the req #3122 rule, via `_reference_value`).
 
-    Decided without a cursor, so the common PUTs — `completed_at` from
-    complete_pipeline_step, `locked` itself, a lifecycle status — cost no
-    read at all.
+    Decided without a cursor, so the common PUTs — `locked` itself, a
+    lifecycle status — cost no read at all.
     """
     if table not in PLAN_LOCK:
         return [], [], None

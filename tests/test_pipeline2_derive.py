@@ -13,9 +13,8 @@ Two things this tier is uniquely able to prove:
   * **A deleted field never reappears.** A field that silently survives on a
     derived row is req #3349's own stated failure mode — see the
     "deleted fields" block below.
-  * **The epic-scoped state-banding self-check**, including the amended
-    three-step case (`memory/pipeline-2-visualizer-design.md` § 5.3) that a
-    global-vs-scoped confusion would otherwise hide.
+  * **A step has no state** (req #3750): every question about a step is
+    asked of its requirements through `open_req_ids`.
 
 ## The corpus, re-pointed at one target (req #3367 deliverable 6)
 
@@ -39,11 +38,10 @@ Translated and covered by a test in this file:
   `empty-plan` → `test_empty_plan_derives_cleanly`;
   `single-step-linkless-unstamped`, `single-step-linkless-stamped`,
     `rule1-terminal-status-matrix` →
-    `test_derive_step_state_done_running_pending`,
-    `test_derive_step_state_with_no_gating_requirements_reads_completed_at`,
-    `test_all_container_links_derive_from_completion_stamp_never_running`;
-  `tracking-container-exemption` → `test_tracking_requirement_never_gates`,
-    `test_all_container_links_derive_from_completion_stamp_never_running`;
+    `test_open_requirement_ids_is_gating_work_not_yet_terminal`,
+    `test_a_step_holding_nothing_has_no_open_work_and_no_state` (req #3750:
+    there is no stamp and no step state — the stamped case is gone);
+  `tracking-container-exemption` → `test_tracking_requirement_is_never_open_work`;
   `tracking-flag-coercion` → `test_tracking_flag_coercion_matrix`;
   `requirement-counts-tracking-and-terminal-statuses`,
     `requirement-counts-deferred-completes-epic`,
@@ -56,15 +54,16 @@ Translated and covered by a test in this file:
   `eligibility-step-gates`, `eligibility-time-gate-passed`,
     `eligibility-time-gate-pending`, `time-gate-timestamp-formats`,
     `time-gate-with-no-clock`, `time-gate-non-canonical-spellings-are-not-passed` →
-    `test_eligibility_requires_every_dependency_done`,
+    `test_eligibility_requires_every_dependency_clear`,
     `test_eligibility_consults_not_before_against_the_payload_clock`,
-    `test_eligibility_is_false_for_a_non_pending_row` (the timestamp-grammar
+    `test_eligibility_requires_launch_ready_work` (the timestamp-grammar
     hazards themselves are `_to_epoch`'s, restated verbatim from 1.0's
     already-tested `_TIMESTAMP_RE` — module docstring "changed" item 3);
-  `topological-order-diamond`, `state-bands-outrank-stored-order`,
-    `banding-inversion-forced-by-topology-is-not-a-violation` →
-    `test_three_step_single_epic_case_still_reports_amended_acceptance` and
-    the `display_order`/`verify_order` tests around it;
+  `topological-order-diamond` → `test_display_order_has_no_state_band` and
+    the `display_order`/`verify_order` tests around it
+    (`state-bands-outrank-stored-order` and
+    `banding-inversion-forced-by-topology-is-not-a-violation` are retired with
+    step state, req #3750);
   `cycle-detection` → `test_cycle_within_one_epic_is_detected_and_falls_back_to_stored_order`;
   `duplicate-step-ids` → `test_duplicate_step_id_is_reported`;
   `dangling-dependency` →
@@ -101,8 +100,8 @@ Translated and covered by a test in this file:
     `test_started_epics_order_by_earliest_activity_ahead_of_unstarted`;
   `serial-turn-follows-the-epic-sort-order` → `test_turn_suppression_appends_to_pause_suppression`
     plus the sort-order tests above (both mechanisms read the same `epic_order`);
-  `epic-sort-order-does-not-outrank-a-state-band` →
-    `test_epic_sort_order_does_not_outrank_a_within_epic_state_band`.
+  `epic-sort-order-does-not-outrank-a-state-band` — retired with step state
+    (req #3750): there is no state band for sort order to outrank.
 
 Structurally N/A — the SCENARIO cannot occur in 2.0, not merely untested:
   `batch-splits-on-machine`, `batch-splits-on-run-mode-and-gate`,
@@ -124,9 +123,8 @@ Structurally N/A — the SCENARIO cannot occur in 2.0, not merely untested:
 
 Verified rather than redone (module docstring item 6's own claim, checked
 against this mapping): every 1.0 case whose behaviour survives in 2.0 now has
-a 2.0-shaped test above it; three gaps the check surfaced —
-`test_empty_plan_derives_cleanly`, `test_tracking_flag_coercion_matrix`,
-`test_epic_sort_order_does_not_outrank_a_within_epic_state_band` — are added
+a 2.0-shaped test above it; the gaps the check surfaced —
+`test_empty_plan_derives_cleanly`, `test_tracking_flag_coercion_matrix` — are added
 at the end of this file rather than left as a silent hole.
 """
 
@@ -157,15 +155,13 @@ def _epic(id, pipeline_fk=900, sort_order=None, title=None):
 
 
 def _step(id, epic_fk, title=None, run='auto', not_before=None, notes=None,
-         completed_at=None, create_ts='2026-08-01 00:00:00', checkpoint=0,
-         locked=0):
+         create_ts='2026-08-01 00:00:00', checkpoint=0, locked=0):
     # `checkpoint=0` here, against the column's DEFAULT 1 (req #3649): these
     # fixtures were written for steps that are launch PRIORITIES, and the
     # checkpoint tests below say `checkpoint=1` where they mean it.
     return {'id': id, 'epic_fk': epic_fk, 'title': title or f'step {id}',
             'run': run, 'checkpoint': checkpoint, 'locked': locked,
-            'not_before': not_before, 'notes': notes,
-            'completed_at': completed_at, 'creator_fk': _SUB,
+            'not_before': not_before, 'notes': notes, 'creator_fk': _SUB,
             'create_ts': create_ts, 'update_ts': create_ts}
 
 
@@ -227,11 +223,11 @@ def test_build_plan_rows_has_no_legacy_or_leaked_fields():
     for row in deriv.build_plan_rows(model):
         assert set(row) == {
             'id', 'title', 'run', 'checkpoint', 'locked', 'notes',
-            'completed_at', 'state', 'epic_id',
+            'open_req_ids', 'epic_id',
             'req_ids', 'tracking_req_ids', 'unresolved_req_ids',
             'launch_req_ids', 'launch_excluded', 'launch_block',
             'swarm_start_command', 'no_launch_reason', 'dep_ids',
-            '_create_ts', '_not_before'}
+            '_create_ts', '_started', '_not_before'}
 
 
 # COVERS: DRV-021
@@ -330,7 +326,7 @@ def test_step_deps_are_plain_edges_with_no_condition_kind():
 
 
 # ---------------------------------------------------------------------------
-# Item 4 — display order is a tree walk, epic-scoped state-banding
+# Item 4 — display order is a tree walk (no state band, req #3750)
 # ---------------------------------------------------------------------------
 
 # COVERS: DRV-007
@@ -357,14 +353,13 @@ def test_manual_sort_order_wins_over_derived_order():
     model = {
         'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active',
                     'execution_mode': 'parallel'},
-        # epic 90 started (a done step) so would derive FIRST; epic 91 is
-        # unstarted and would derive LAST. A manual order on 91 overrides that.
+        # epic 90 started (its step's work is met) so would derive FIRST;
+        # epic 91 is unstarted and would derive LAST. A manual order on 91
+        # overrides that.
         'epics': [_epic(90), _epic(91, sort_order=1)],
-        'steps': [
-            _step(9001, 90, completed_at='2026-08-01 00:00:00'),
-            _step(9101, 91),
-        ],
-        'step_requirements': [], 'step_deps': [], 'requirements': [],
+        'steps': [_step(9001, 90), _step(9101, 91)],
+        'step_requirements': [{'step_fk': 9001, 'requirement_fk': 1}],
+        'step_deps': [], 'requirements': [_req(1, status='met')],
     }
     rows = deriv.build_plan_rows(model)
     ordered = deriv.display_order(rows, model['epics'])
@@ -377,16 +372,19 @@ def test_started_epics_order_by_earliest_activity_ahead_of_unstarted():
                     'execution_mode': 'parallel'},
         'epics': [_epic(90), _epic(91), _epic(92)],
         'steps': [
-            # epic 90: unstarted (all pending) -> creation order (id)
+            # epic 90: unstarted (no work begun) -> creation order (id)
             _step(9001, 90),
-            # epic 91: started later
-            _step(9101, 91, completed_at='2026-08-05 00:00:00',
-                 create_ts='2026-08-02 00:00:00'),
-            # epic 92: started earliest
-            _step(9201, 92, completed_at='2026-08-05 00:00:00',
-                 create_ts='2026-08-01 00:00:00'),
+            # epic 91: started later (work in development)
+            _step(9101, 91, create_ts='2026-08-02 00:00:00'),
+            # epic 92: started earliest (work met)
+            _step(9201, 92, create_ts='2026-08-01 00:00:00'),
         ],
-        'step_requirements': [], 'step_deps': [], 'requirements': [],
+        'step_requirements': [{'step_fk': 9001, 'requirement_fk': 1},
+                              {'step_fk': 9101, 'requirement_fk': 2},
+                              {'step_fk': 9201, 'requirement_fk': 3}],
+        'step_deps': [],
+        'requirements': [_req(1, status='swarm_ready'),
+                         _req(2, status='development'), _req(3, status='met')],
     }
     rows = deriv.build_plan_rows(model)
     ordered = deriv.display_order(rows, model['epics'])
@@ -395,179 +393,38 @@ def test_started_epics_order_by_earliest_activity_ahead_of_unstarted():
 
 
 # COVERS: DRV-020
-def test_three_step_single_epic_case_still_reports_amended_acceptance():
-    """The amended acceptance criterion, verbatim:
-    `1 pending, 2 pending, 3 done depending on 2` in ONE epic must still
-    report a state-banding violation
-    (memory/pipeline-2-visualizer-design.md § 5.3)."""
+def test_display_order_has_no_state_band():
+    """Req #3750: a step has no state, so finished work does not float above
+    unfinished work. Among rows whose dependencies have rendered, the order is
+    the latest dependency's position, then epic, then run mode, then id."""
     model = {
         'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active',
                     'execution_mode': 'parallel'},
         'epics': [_epic(90)],
-        'steps': [
-            _step(1, 90),
-            _step(2, 90),
-            _step(3, 90, completed_at='2026-08-01 00:00:00'),
-        ],
-        'step_requirements': [], 'requirements': [],
-        'step_deps': [{'id': 1, 'step_fk': 3, 'dep_step_fk': 2}],
+        'steps': [_step(1, 90), _step(2, 90), _step(3, 90, run='manual'),
+                  _step(4, 90)],
+        'step_requirements': [{'step_fk': 1, 'requirement_fk': 10},
+                              {'step_fk': 4, 'requirement_fk': 40}],
+        'requirements': [_req(10, status='swarm_ready'), _req(40, status='met')],
+        'step_deps': [{'id': 1, 'step_fk': 2, 'dep_step_fk': 1}],
     }
-    rows = deriv.build_plan_rows(model)
-    by_id = {r['id']: r for r in rows}
-    # The CHECK still reports the greedy order this criterion was written
-    # against: `1` is held up for nobody, so `3` below it is avoidable.
-    violations, _ = deriv.verify_order([by_id[1], by_id[2], by_id[3]])
-    banding = [v for v in violations if v['invariant'] == 'state-banding']
-    assert banding, ('the amended acceptance criterion requires this case to '
-                     'still report — see visualizer-design.md § 5.3')
-    assert set(banding[0]['step_ids']) == {3, 1}
-    # req #3626 — and the ORDER no longer produces it: `display_order` lifts
-    # `2, 3` above `1`, so the inversion never renders.
-    ordered = deriv.display_order(rows, model['epics'])
-    assert [r['id'] for r in ordered['rows']] == [2, 3, 1]
-    violations, _ = deriv.verify_order(ordered['rows'])
-    assert [v for v in violations if v['invariant'] == 'state-banding'] == []
+    ordered = deriv.display_order(deriv.build_plan_rows(model), model['epics'])
+    # 4 (all work met) does NOT jump ahead; 3 (manual) after the auto roots.
+    assert [r['id'] for r in ordered['rows']] == [1, 4, 3, 2]
+    assert 'banding_settled' not in ordered
 
 
-# req #3626 — a done step waiting on a pending dependency (a step inserted in
-# front of finished work). Shaped on darwin_dev pipeline 7, epic 11: done 304 ->
-# pending 447, done 305 -> pending 449, done 303 -> pending 450, beside an
-# unrelated running 102 and an unrelated pending 200.
-def _done_waiting_model():
-    return {
-        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active',
-                    'execution_mode': 'parallel'},
-        'epics': [_epic(90)],
-        'steps': [
-            _step(100, 90, completed_at='2026-08-01 00:00:00'),
-            _step(102, 90),
-            _step(200, 90),
-            _step(303, 90, completed_at='2026-08-01 00:00:00'),
-            _step(304, 90, completed_at='2026-08-01 00:00:00'),
-            _step(305, 90, completed_at='2026-08-01 00:00:00'),
-            _step(447, 90), _step(449, 90), _step(450, 90),
-        ],
-        'step_requirements': [{'step_fk': 102, 'requirement_fk': 9}],
-        'requirements': [{'id': 9, 'title': 'r', 'requirement_status': 'development',
-                          'tracking': 0}],
-        'step_deps': [
-            {'id': 1, 'step_fk': 102, 'dep_step_fk': 100},
-            {'id': 2, 'step_fk': 304, 'dep_step_fk': 447},
-            {'id': 3, 'step_fk': 305, 'dep_step_fk': 449},
-            {'id': 4, 'step_fk': 303, 'dep_step_fk': 450},
-        ],
-    }
+def test_verify_order_has_no_banding_invariant():
+    """The state-banding and banding-unsettled invariants went with step state
+    (req #3750); topology is still checked."""
+    model = _basic_model()
+    by_id = {r['id']: r for r in deriv.build_plan_rows(model)}
+    violations, _ = deriv.verify_order([by_id[9003], by_id[9001], by_id[9002]])
+    kinds = {v['invariant'] for v in violations}
+    assert kinds == {'topology'}
+    assert not deriv.derive_plan2(model, now='2026-08-09T00:00:00Z')['violations']
 
 
-def test_done_step_waiting_on_a_pending_dependency_is_not_a_violation():
-    model = _done_waiting_model()
-    plan = deriv.derive_plan2(model, now='2026-10-18T00:00:00Z')
-    states = {r['id']: r['state'] for r in plan['rows']}
-    assert states[102] == 'running' and states[447] == 'pending'
-    assert [v for v in plan['violations'] if v['invariant'] == 'state-banding'] == []
-    order = [r['id'] for r in plan['rows']]
-    # Each held-up pending dependency renders ahead of the unrelated pending
-    # 200, directly above the done step waiting on it.
-    assert order == [100, 102, 447, 304, 449, 305, 450, 303, 200]
-
-
-def test_forced_inversion_done_below_running_because_its_dep_is_pending():
-    """Lifting 304 above running 102 means lifting pending 447 above it too —
-    one inversion for another, so it is not avoidable."""
-    by_id = {r['id']: r for r in deriv.build_plan_rows(_done_waiting_model())}
-    rows = [by_id[i] for i in (100, 102, 447, 304)]
-    violations, _ = deriv.verify_order(rows)
-    assert [v for v in violations if v['invariant'] == 'state-banding'] == []
-
-
-def test_forced_inversion_two_held_up_clusters_cannot_both_come_first():
-    by_id = {r['id']: r for r in deriv.build_plan_rows(_done_waiting_model())}
-    rows = [by_id[i] for i in (447, 304, 449, 305)]
-    violations, _ = deriv.verify_order(rows)
-    assert [v for v in violations if v['invariant'] == 'state-banding'] == []
-
-
-def test_done_step_below_an_unrelated_pending_row_still_reports():
-    """304 below the unrelated pending 200 was avoidable (447, 304 could have
-    rendered first), and so is a done step with no pending dependency at all
-    below a held-up one."""
-    by_id = {r['id']: r for r in deriv.build_plan_rows(_done_waiting_model())}
-    violations, _ = deriv.verify_order([by_id[i] for i in (200, 447, 304)])
-    banding = [v for v in violations if v['invariant'] == 'state-banding']
-    assert banding and set(banding[0]['step_ids']) == {304, 200}
-    violations, _ = deriv.verify_order([by_id[i] for i in (447, 100, 304)])
-    banding = [v for v in violations if v['invariant'] == 'state-banding']
-    assert banding and set(banding[0]['step_ids']) == {100, 447}
-
-
-def test_inversions_the_review_found_hidden_still_report_and_are_rendered_away():
-    """Two shapes a pairwise excuse silenced (req #3626 code review). Each is
-    avoidable, so the check reports it when handed the bad order, and
-    `display_order` never renders it."""
-    cross = {
-        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active',
-                    'execution_mode': 'parallel'},
-        'epics': [_epic(90, sort_order=1), _epic(91, sort_order=2)],
-        'steps': [_step(3, 90, completed_at='2026-08-01 00:00:00'), _step(4, 90),
-                  _step(5, 90, completed_at='2026-08-01 00:00:00'), _step(7, 91)],
-        'step_requirements': [{'step_fk': 4, 'requirement_fk': 9}],
-        'requirements': [{'id': 9, 'title': 'r', 'requirement_status': 'development',
-                          'tracking': 0}],
-        'step_deps': [{'id': 1, 'step_fk': 4, 'dep_step_fk': 3},
-                      {'id': 2, 'step_fk': 5, 'dep_step_fk': 3},
-                      {'id': 3, 'step_fk': 5, 'dep_step_fk': 7}],
-    }
-    nested = {
-        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active',
-                    'execution_mode': 'parallel'},
-        'epics': [_epic(90)],
-        'steps': [_step(1, 90, completed_at='2026-08-01 00:00:00'),
-                  _step(2, 90, completed_at='2026-08-01 00:00:00'),
-                  _step(3, 90, completed_at='2026-08-01 00:00:00'),
-                  _step(5, 90, completed_at='2026-08-01 00:00:00'),
-                  _step(7, 90), _step(8, 90)],
-        'step_requirements': [], 'requirements': [],
-        'step_deps': [{'id': 1, 'step_fk': 2, 'dep_step_fk': 8},
-                      {'id': 2, 'step_fk': 5, 'dep_step_fk': 2},
-                      {'id': 3, 'step_fk': 5, 'dep_step_fk': 7}],
-    }
-    for model, bad, pair in ((cross, (3, 4, 7, 5), {5, 4}),
-                             (nested, (1, 3, 7, 8, 2, 5), {2, 7})):
-        by_id = {r['id']: r for r in deriv.build_plan_rows(model)}
-        violations, _ = deriv.verify_order([by_id[i] for i in bad])
-        banding = [v for v in violations if v['invariant'] == 'state-banding']
-        assert banding and set(banding[0]['step_ids']) == pair
-        plan = deriv.derive_plan2(model, now='2026-10-18T00:00:00Z')
-        assert [v for v in plan['violations'] if v['invariant'] == 'state-banding'] == []
-        assert [r['id'] for r in plan['rows']] != list(bad)
-
-
-# COVERS: DRV-020
-def test_epic_scoping_produces_zero_false_violations_across_epics():
-    """Measurement D (visualizer-design.md § 5.2): a finished epic's done
-    steps rendering above an unrelated epic's still-pending work must NOT be
-    reported — that is what containment asks for, and a global check would
-    wrongly flag it (measurement C, 15 false violations on the live plan)."""
-    model = {
-        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active',
-                    'execution_mode': 'parallel'},
-        'epics': [_epic(90, sort_order=1), _epic(91, sort_order=2)],
-        'steps': [
-            # epic 90: fully done
-            _step(9001, 90, completed_at='2026-08-01 00:00:00'),
-            _step(9002, 90, completed_at='2026-08-01 00:00:00'),
-            # epic 91: still has pending work
-            _step(9101, 91),
-        ],
-        'step_requirements': [], 'step_deps': [], 'requirements': [],
-    }
-    rows = deriv.build_plan_rows(model)
-    ordered = deriv.display_order(rows, model['epics'])
-    violations, _ = deriv.verify_order(ordered['rows'])
-    assert [v for v in violations if v['invariant'] == 'state-banding'] == []
-
-
-# COVERS: DRV-012
 def test_cycle_within_one_epic_is_detected_and_falls_back_to_stored_order():
     model = {
         'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active',
@@ -613,15 +470,14 @@ def test_dangling_dependency_is_detected_and_reported():
 def test_cross_epic_dependency_edge_is_legal_and_respected_topologically():
     """Stage-2 gate delta (req #3336, 2026-08-08): cross-epic edges are
     LEGAL, reversing the original body text. A step in epic 91 gated on a
-    still-pending step in epic 90 must never render before it, and the
-    epic-scoped banding check must not false-positive on the crossing."""
+    step in epic 90 must never render before it."""
     model = {
         'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active',
                     'execution_mode': 'parallel'},
         'epics': [_epic(90, sort_order=1), _epic(91, sort_order=2)],
         'steps': [
-            _step(9001, 90),                    # pending, gates 9101
-            _step(9101, 91),                     # pending, depends on 9001
+            _step(9001, 90),                    # gates 9101
+            _step(9101, 91),                     # depends on 9001
         ],
         'step_requirements': [], 'requirements': [],
         'step_deps': [{'id': 1, 'step_fk': 9101, 'dep_step_fk': 9001}],
@@ -633,42 +489,43 @@ def test_cross_epic_dependency_edge_is_legal_and_respected_topologically():
         'a row must never render before a dependency, even across an epic'
     violations, _ = deriv.verify_order(ordered['rows'])
     assert [v for v in violations if v['invariant'] == 'topology'] == []
-    assert [v for v in violations if v['invariant'] == 'state-banding'] == []
 
 
 # ---------------------------------------------------------------------------
-# derive_step_state — unchanged rule, restated
+# open_requirement_ids — a step has no state, only open work (req #3750)
 # ---------------------------------------------------------------------------
 
 # COVERS: DRV-009
-def test_derive_step_state_done_running_pending():
-    step = {'completed_at': None}
-    assert deriv.derive_step_state(step, [_req(1, status='development')]) == deriv.STEP_RUNNING
-    assert deriv.derive_step_state(step, [_req(1, status='met')]) == deriv.STEP_DONE
-    assert deriv.derive_step_state(step, [_req(1, status='authoring')]) == deriv.STEP_PENDING
+def test_open_requirement_ids_is_gating_work_not_yet_terminal():
+    reqs = {r['id']: r for r in (
+        _req(1, status='development'), _req(2, status='swarm_ready'),
+        _req(3, status='authoring'), _req(4, status='met'),
+        _req(5, status='deferred'), _req(6, status='wontfix'))}
+    assert deriv.open_requirement_ids([1, 2, 3, 4, 5, 6], [], reqs) == [1, 2, 3]
+
+
+# COVERS: DRV-009, DRV-010
+def test_tracking_requirement_is_never_open_work():
+    reqs = {1: _req(1, status='development', tracking=1)}
+    assert deriv.open_requirement_ids([1], [1], reqs) == []
 
 
 # COVERS: DRV-011
-def test_derive_step_state_with_no_gating_requirements_reads_completed_at():
-    assert deriv.derive_step_state({'completed_at': None}, []) == deriv.STEP_PENDING
-    assert deriv.derive_step_state({'completed_at': '2026-08-01'}, []) == deriv.STEP_DONE
+def test_a_step_holding_nothing_has_no_open_work_and_no_state():
+    model = _basic_model()
+    model['requirements'] = [_req(5010, status='development'), _req(5011, status='met')]
+    rows = {r['id']: r for r in deriv.build_plan_rows(model)}
+    assert rows[9001]['open_req_ids'] == [5010]
+    assert rows[9002]['open_req_ids'] == []
+    assert rows[9003]['open_req_ids'] == []          # holds nothing
+    for row in rows.values():
+        assert 'state' not in row and 'completed_at' not in row
 
 
-# COVERS: DRV-009
-def test_tracking_requirement_never_gates():
-    step = {'completed_at': None}
-    reqs = [_req(1, status='development', tracking=1)]
-    assert deriv.derive_step_state(step, reqs) == deriv.STEP_PENDING
-
-
-# COVERS: DRV-010
-def test_all_container_links_derive_from_completion_stamp_never_running():
-    """A step whose links are ALL tracking containers falls through to its
-    own `completed_at` stamp exactly as a link-less step does — Complete or
-    Scheduled, NEVER Running, even though a container sits in `development`."""
-    reqs = [_req(1, status='development', tracking=1)]
-    assert deriv.derive_step_state({'completed_at': None}, reqs) == deriv.STEP_PENDING
-    assert deriv.derive_step_state({'completed_at': '2026-08-01'}, reqs) == deriv.STEP_DONE
+def test_an_unresolved_requirement_counts_as_open_work():
+    """Holding is the safe direction: a checkpoint that cannot see its work
+    keeps holding."""
+    assert deriv.open_requirement_ids([77], [], {}) == [77]
 
 
 # ---------------------------------------------------------------------------
@@ -714,7 +571,7 @@ def test_derive_plan2_shape_is_compact_ids_and_enums_only():
     plan = deriv.derive_plan2(model, now='2026-08-09T00:00:00Z')
     assert set(plan) == {
         'now', 'epic_order', 'display_order', 'rows', 'pause', 'serial',
-        'eligible_step_ids', 'top_up_step_ids', 'launch_candidate_step_ids',
+        'eligible_step_ids', 'launch_candidate_step_ids',
         'launch_queue',
         'violations', 'cycle_detected', 'cycle_step_ids',
         'duplicate_step_ids', 'unresolved_req_ids', 'out_of_scope_dep_ids',
@@ -723,8 +580,7 @@ def test_derive_plan2_shape_is_compact_ids_and_enums_only():
         assert set(entry) == {'step_id', 'requirement_id'}
     for row in plan['rows']:
         assert set(row) == {
-            'id', 'state', 'run', 'checkpoint', 'locked', 'eligible',
-            'top_up_eligible',
+            'id', 'run', 'checkpoint', 'locked', 'eligible', 'open_req_ids',
             'gate_open', 'launch_candidate', 'checkpoint_blocked_by',
             'epic_id', 'dep_ids',
             'out_of_scope_dep_ids', 'req_ids',
@@ -754,29 +610,35 @@ def test_derive_plan2_unresolved_requirement_is_reported_not_silently_dropped():
 # Eligibility (DRV-005/006) — a plain per-step predicate, no batch term
 # ---------------------------------------------------------------------------
 
-def _pending_row(id, epic_id=90, dep_ids=None, not_before=None):
-    return {'id': id, 'state': deriv.STEP_PENDING, 'dep_ids': dep_ids or [],
-            'epic_id': epic_id, '_not_before': not_before}
+def _row(id, epic_id=90, dep_ids=None, not_before=None, launch_req_ids=(42,),
+         open_req_ids=None):
+    """A derived-row-shaped dict. `open_req_ids` defaults to the launch ids —
+    launch-ready work is open work."""
+    launch = list(launch_req_ids)
+    return {'id': id, 'dep_ids': dep_ids or [], 'epic_id': epic_id,
+            '_not_before': not_before, 'launch_req_ids': launch,
+            'open_req_ids': list(open_req_ids) if open_req_ids is not None else launch}
 
 
-def _done_row(id, epic_id=90):
-    return {'id': id, 'state': deriv.STEP_DONE, 'dep_ids': [], 'epic_id': epic_id,
-            '_not_before': None}
+NOW = '2026-08-09T00:00:00Z'
 
 
 # COVERS: DRV-005
-def test_eligibility_requires_every_dependency_done():
-    dep = _pending_row(1)
-    row = _pending_row(2, dep_ids=[1])
+def test_eligibility_requires_every_dependency_clear():
+    """A dependency is CLEAR when it holds no open work (req #3750)."""
+    dep = _row(1)                                   # holds open work
+    row = _row(2, dep_ids=[1])
     by_id = {1: dep, 2: row}
-    assert deriv.eligibility(row, by_id, now='2026-08-09T00:00:00Z') is False
-    by_id[1] = _done_row(1)
-    assert deriv.eligibility(row, by_id, now='2026-08-09T00:00:00Z') is True
+    assert deriv.eligibility(row, by_id, now=NOW) is False
+    by_id[1] = _row(1, launch_req_ids=(), open_req_ids=())
+    assert deriv.eligibility(row, by_id, now=NOW) is True
+    # An unknown dependency is never clear.
+    assert deriv.eligibility(_row(3, dep_ids=[99]), by_id, now=NOW) is False
 
 
 # COVERS: DRV-005, DRV-006
 def test_eligibility_consults_not_before_against_the_payload_clock():
-    row = _pending_row(1, not_before='2026-08-10T00:00:00Z')
+    row = _row(1, not_before='2026-08-10T00:00:00Z')
     by_id = {1: row}
     # the gate has not passed yet relative to this `now`
     assert deriv.eligibility(row, by_id, now='2026-08-09T00:00:00Z') is False
@@ -786,102 +648,39 @@ def test_eligibility_consults_not_before_against_the_payload_clock():
     assert deriv.eligibility(row, by_id, now=None) is False
 
 
-def test_eligibility_is_false_for_a_non_pending_row():
-    row = _done_row(1)
-    assert deriv.eligibility(row, {1: row}, now='2026-08-09T00:00:00Z') is False
+def test_eligibility_requires_launch_ready_work():
+    """No state to test — the requirements decide. A step with nothing
+    launch-ready is never eligible, whatever its gate says."""
+    row = _row(1, launch_req_ids=(), open_req_ids=(7,))
+    assert deriv.eligibility(row, {1: row}, now=NOW) is False
 
 
 def test_derive_plan2_eligible_step_ids_reflects_the_dep_graph():
     model = _basic_model()
-    model['requirements'] = [_req(5010, status='met'), _req(5011, status='met')]
-    plan = deriv.derive_plan2(model, now='2026-08-09T00:00:00Z')
-    # 9001/9002 are done (met requirements); 9003 gates on both -> eligible.
+    model['step_requirements'].append({'step_fk': 9003, 'requirement_fk': 5012})
+    model['requirements'] = [_req(5010, status='met'), _req(5011, status='met'),
+                             _req(5012, status='swarm_ready')]
+    plan = deriv.derive_plan2(model, now=NOW)
+    # 9001/9002 hold no open work, so 9003's gate is open and it has work.
     assert plan['eligible_step_ids'] == [9003]
-    row = next(r for r in plan['rows'] if r['id'] == 9003)
-    assert row['eligible'] is True
+    # Reopen work on 9002: the gate closes again — nothing was stored.
+    model['requirements'][1]['requirement_status'] = 'development'
+    plan = deriv.derive_plan2(model, now=NOW)
+    assert plan['eligible_step_ids'] == []
 
 
 # ---------------------------------------------------------------------------
-# Top-up eligibility (DRV-026, req #3507) — may a RUNNING step gain work?
+# The old "top-up" case (DRV-026, req #3507) — now just `eligible`
 # ---------------------------------------------------------------------------
 #
-# THE MEASURED CASE, 2026-08-14: plan 7 step 310 was `running` because
-# requirement #3503 had reached `development`; #3506 was then linked onto it,
-# stayed `swarm_ready` and in `launch_req_ids` for over 24 h, and was never
-# once evaluated — `eligibility` is False for every non-pending row and the
-# engine's launch loop is gated on it before req #3195's new-ids diff.
-
-def _running_row(id, epic_id=90, dep_ids=None, not_before=None,
-                 launch_req_ids=(3506,)):
-    return {'id': id, 'state': deriv.STEP_RUNNING, 'dep_ids': dep_ids or [],
-            'epic_id': epic_id, '_not_before': not_before,
-            'launch_req_ids': list(launch_req_ids)}
-
-
-NOW = '2026-08-09T00:00:00Z'
-
+# THE MEASURED CASE, 2026-08-14: plan 7 step 310 had requirement #3503 in
+# `development` when #3506 was linked onto it, and #3506 sat `swarm_ready`
+# for over 24 h because only a PENDING step could be `eligible`. With no step
+# state (req #3750) there is nothing to split on: the step holds launch-ready
+# work and its gate is open, so it is eligible.
 
 # COVERS: DRV-026
-def test_top_up_eligibility_admits_a_running_step_carrying_launchable_work():
-    row = _running_row(310)
-    assert deriv.top_up_eligibility(row, {310: row}, now=NOW) is True
-
-
-# COVERS: DRV-026
-def test_top_up_eligibility_refuses_a_running_step_with_nothing_launchable():
-    """The conjunct that keeps the engine quiet. Without it every running step
-    in every plan is a top-up candidate with nothing to command, and the
-    engine's gate sentinel draws a `close this step` line about work in
-    flight."""
-    row = _running_row(310, launch_req_ids=())
-    assert deriv.top_up_eligibility(row, {310: row}, now=NOW) is False
-
-
-# COVERS: DRV-026
-def test_top_up_eligibility_is_disjoint_from_eligibility_on_every_state():
-    """The two predicates answer different questions and are never both true —
-    that is what lets a consumer union them without double-counting, and what
-    keeps an eligible-now ring off a step that has already started."""
-    pending = _pending_row(1)
-    pending['launch_req_ids'] = [3506]
-    running = _running_row(2)
-    done = {'id': 3, 'state': deriv.STEP_DONE, 'dep_ids': [], 'epic_id': 90,
-            '_not_before': None, 'launch_req_ids': [3506]}
-    by_id = {1: pending, 2: running, 3: done}
-    assert (deriv.eligibility(pending, by_id, NOW),
-            deriv.top_up_eligibility(pending, by_id, NOW)) == (True, False)
-    assert (deriv.eligibility(running, by_id, NOW),
-            deriv.top_up_eligibility(running, by_id, NOW)) == (False, True)
-    # A `done` step's new work is a REOPEN, which is a plan mutation and the
-    # Primary's decision — never a launch this module may imply.
-    assert (deriv.eligibility(done, by_id, NOW),
-            deriv.top_up_eligibility(done, by_id, NOW)) == (False, False)
-
-
-# COVERS: DRV-026
-def test_top_up_eligibility_asks_the_same_gate_question_as_eligibility():
-    """A dependency that has REGRESSED closes the gate again, so the step is
-    no longer reported `top_up_eligible` (running WITH its gate open). Since
-    req #3597 that withholds nothing — `launch_candidacy` admits its work —
-    but the REPORT stays the gate question."""
-    dep = _pending_row(1)
-    row = _running_row(2, dep_ids=[1])
-    by_id = {1: dep, 2: row}
-    assert deriv.top_up_eligibility(row, by_id, now=NOW) is False
-    by_id[1] = _done_row(1)
-    assert deriv.top_up_eligibility(row, by_id, now=NOW) is True
-    # ...and the time gate, on the same clock, with the same safe direction.
-    gated = _running_row(3, not_before='2026-08-10T00:00:00Z')
-    assert deriv.top_up_eligibility(gated, {3: gated}, now=NOW) is False
-    assert deriv.top_up_eligibility(gated, {3: gated}, now=None) is False
-    assert deriv.top_up_eligibility(
-        gated, {3: gated}, now='2026-08-11T00:00:00Z') is True
-
-
-# COVERS: DRV-026
-def test_derive_plan2_reports_the_measured_case_as_a_top_up():
-    """End to end over a composed-read-shaped model: a step running on one
-    requirement in `development`, carrying a second that is `swarm_ready`."""
+def test_work_in_flight_beside_launch_ready_work_is_eligible():
     model = _basic_model()
     model['step_requirements'].append({'step_fk': 9001, 'requirement_fk': 5012})
     model['requirements'] = [_req(5010, status='development'),
@@ -889,30 +688,22 @@ def test_derive_plan2_reports_the_measured_case_as_a_top_up():
                              _req(5012, status='swarm_ready')]
     plan = deriv.derive_plan2(model, now=NOW)
     row = next(r for r in plan['rows'] if r['id'] == 9001)
-    assert row['state'] == deriv.STEP_RUNNING
-    # BEFORE req #3507 this row was invisible to the engine's launch loop:
-    # `eligible` False and no other field said there was anything to launch.
-    assert row['eligible'] is False
-    assert row['top_up_eligible'] is True
+    assert row['eligible'] is True
     assert row['launch_req_ids'] == [5012]
+    assert row['open_req_ids'] == [5010, 5012]
     assert row['swarm_start_command'] == '/swarm-start 5012'
-    assert plan['top_up_step_ids'] == [9001]
-    # ...and `eligible_step_ids` is untouched by any of it.
-    assert 9001 not in plan['eligible_step_ids']
+    assert 'top_up_eligible' not in row and 'top_up_step_ids' not in plan
 
 
 # COVERS: DRV-026
-def test_derive_plan2_top_up_step_ids_is_empty_when_nothing_is_launchable():
-    """A running step whose only requirement IS the one being worked emits
-    nothing — the steady state of every plan, and the volume guarantee."""
+def test_work_in_flight_alone_is_not_eligible():
+    """The steady state of every plan, and the volume guarantee: a step whose
+    only requirement IS the one being worked has nothing to command."""
     model = _basic_model()
     model['requirements'] = [_req(5010, status='development'),
                              _req(5011, status='met')]
     plan = deriv.derive_plan2(model, now=NOW)
-    row = next(r for r in plan['rows'] if r['id'] == 9001)
-    assert row['state'] == deriv.STEP_RUNNING
-    assert row['top_up_eligible'] is False
-    assert plan['top_up_step_ids'] == []
+    assert plan['eligible_step_ids'] == []
 
 
 # ---------------------------------------------------------------------------
@@ -925,8 +716,8 @@ def test_derive_plan2_top_up_step_ids_is_empty_when_nothing_is_launchable():
 # step 316 was running — held, with two slots free, and launched by hand.
 
 def _plan10_model():
-    """Plan 10's shape on 2026-10-17: 313 done; 315 depends on 313 and was
-    RE-OPENED by added work while its dependent 316 runs; 314 depends on 316
+    """Plan 10's shape on 2026-10-17: 313's work is met; 315 depends on 313
+    and gained new work while its dependent 316 has work in development; 314 depends on 316
     (gate closed) and carries launch-ready work; 317 depends on 314 — a
     further-downstream gated step, also carrying launch-ready work."""
     return {
@@ -963,38 +754,28 @@ def _plan10_model():
 
 # COVERS: DRV-027
 def test_launch_candidacy_ignores_dependencies():
-    dep = _pending_row(1)
-    row = _pending_row(2, dep_ids=[1])
-    row['launch_req_ids'] = [42]
+    dep = _row(1)                                   # holds open work
+    row = _row(2, dep_ids=[1])
     assert deriv.eligibility(row, {1: dep, 2: row}, now=NOW) is False
     assert deriv.launch_candidacy(row, now=NOW) is True
-    running = _running_row(3, dep_ids=[1])
-    assert deriv.top_up_eligibility(running, {1: dep, 3: running}, NOW) is False
-    assert deriv.launch_candidacy(running, now=NOW) is True
 
 
 # COVERS: DRV-027
 def test_launch_candidacy_keeps_the_unchanged_conjuncts():
-    """No launchable work, a done step, or an unpassed TIME gate: not a
-    candidate. A time gate is a person's "not before", not a dependency."""
-    empty = _pending_row(1)
-    empty['launch_req_ids'] = []
+    """No launchable work, or an unpassed TIME gate: not a candidate. A time
+    gate is a person's "not before", not a dependency."""
+    empty = _row(1, launch_req_ids=())
     assert deriv.launch_candidacy(empty, now=NOW) is False
-    done = _done_row(2)
-    done['launch_req_ids'] = [42]
-    assert deriv.launch_candidacy(done, now=NOW) is False
-    timed = _running_row(3, not_before='2026-08-10T00:00:00Z')
+    timed = _row(3, not_before='2026-08-10T00:00:00Z')
     assert deriv.launch_candidacy(timed, now=NOW) is False
     assert deriv.launch_candidacy(timed, now=None) is False
     assert deriv.launch_candidacy(timed, now='2026-08-11T00:00:00Z') is True
 
 
-# COVERS: DRV-027
 def test_derive_plan2_plan10_every_launch_ready_step_is_a_candidate():
     plan = deriv.derive_plan2(_plan10_model(), now=NOW)
     rows = {r['id']: r for r in plan['rows']}
-    assert [rows[i]['state'] for i in (313, 315, 316, 314, 317)] == [
-        'done', 'pending', 'running', 'pending', 'pending']
+    assert rows[313]['open_req_ids'] == []          # its work is met
     # The gate is still REPORTED, and still draws the eligible-now ring.
     assert rows[315]['gate_open'] is True and rows[315]['eligible'] is True
     assert rows[314]['gate_open'] is False and rows[314]['eligible'] is False
@@ -1002,7 +783,7 @@ def test_derive_plan2_plan10_every_launch_ready_step_is_a_candidate():
     # ...but it no longer decides candidacy.
     assert {i for i, r in rows.items() if r['launch_candidate']} == {315, 314, 317}
     assert rows[316]['launch_candidate'] is False   # nothing launch-ready
-    assert rows[313]['launch_candidate'] is False   # done
+    assert rows[313]['launch_candidate'] is False   # nothing launch-ready
 
 
 # COVERS: DRV-027
@@ -1031,22 +812,23 @@ def test_launch_candidate_step_ids_puts_gate_open_ahead_of_display_order():
 
 
 # The user's amendment (2026-10-17): a CHECKPOINT blocks everything downstream
-# of it until it is done. Since req #3649 a checkpoint is the step's own
-# `checkpoint` column (default ON), with or without work — not an inference
-# from "has no work requirement".
+# of it. Since req #3649 a checkpoint is the step's own `checkpoint` column
+# (default ON); since req #3750 it holds while it holds OPEN WORK — a step has
+# no state and is never completed by hand.
 
-def _checkpoint_model(checkpoint_done=False):
-    """Step 1 is a CHECKPOINT (flag on, no links). Step 2 (running work) and
-    step 4 (launch-ready) depend on it directly; step 3 (launch-ready) depends
-    on 2, so it is two edges below the checkpoint. Step 5 is unrelated."""
+def _checkpoint_model(checkpoint_open=True):
+    """Step 1 is a CHECKPOINT (flag on) holding requirement 10. Step 2 (work in
+    development) and step 4 (launch-ready) depend on it directly; step 3
+    (launch-ready) depends on 2, two edges below the checkpoint. Step 5 is
+    unrelated."""
     return {
         'pipeline': {'id': 11, 'title': 'Checkpoints',
                      'pipeline_status': 'active', 'execution_mode': 'parallel'},
         'epics': [_epic(110, pipeline_fk=11)],
-        'steps': [_step(1, 110, title='checkpoint', checkpoint=1,
-                        completed_at='2026-10-17 00:00:00' if checkpoint_done else None),
+        'steps': [_step(1, 110, title='checkpoint', checkpoint=1),
                   _step(2, 110), _step(3, 110), _step(4, 110), _step(5, 110)],
         'step_requirements': [
+            {'step_fk': 1, 'requirement_fk': 10},
             {'step_fk': 2, 'requirement_fk': 20},
             {'step_fk': 3, 'requirement_fk': 30},
             {'step_fk': 4, 'requirement_fk': 40},
@@ -1060,7 +842,8 @@ def _checkpoint_model(checkpoint_done=False):
         'requirements': [_req(20, status='development'),
                          _req(30, status='swarm_ready'),
                          _req(40, status='swarm_ready'),
-                         _req(50, status='swarm_ready')],
+                         _req(50, status='swarm_ready'),
+                         _req(10, status='development' if checkpoint_open else 'met')],
     }
 
 
@@ -1068,7 +851,7 @@ def _checkpoint_model(checkpoint_done=False):
 def test_an_open_checkpoint_blocks_everything_downstream_transitively():
     plan = deriv.derive_plan2(_checkpoint_model(), now=NOW)
     rows = {r['id']: r for r in plan['rows']}
-    assert rows[1]['state'] == 'pending'               # the checkpoint, open
+    assert rows[1]['open_req_ids'] == [10]             # the checkpoint holds
     assert rows[4]['launch_candidate'] is False         # one edge below it
     assert rows[4]['checkpoint_blocked_by'] == [1]
     assert rows[3]['launch_candidate'] is False         # two edges below it
@@ -1079,19 +862,37 @@ def test_an_open_checkpoint_blocks_everything_downstream_transitively():
 
 
 # COVERS: DRV-028
-def test_a_completed_checkpoint_blocks_nothing():
-    plan = deriv.derive_plan2(_checkpoint_model(checkpoint_done=True), now=NOW)
+def test_a_checkpoint_whose_work_is_closed_blocks_nothing():
+    plan = deriv.derive_plan2(_checkpoint_model(checkpoint_open=False), now=NOW)
     rows = {r['id']: r for r in plan['rows']}
-    assert rows[1]['state'] == 'done'
+    assert rows[1]['open_req_ids'] == []
     assert rows[4]['launch_candidate'] is True
-    assert rows[4]['gate_open'] is True                 # its only dep is done
-    # 3 sits behind running step 2 — an ordinary dependency, so a PRIORITY.
+    assert rows[4]['gate_open'] is True                 # its only dep is clear
+    # 3 sits behind step 2's open work — an ordinary dependency, a PRIORITY.
     assert rows[3]['launch_candidate'] is True
     assert rows[3]['gate_open'] is False
     assert all(r['checkpoint_blocked_by'] == [] for r in plan['rows'])
 
 
 # COVERS: DRV-028
+def test_an_empty_checkpoint_holds_nothing():
+    """Req #3750: a step holding no requirements has no open work, so even
+    with the flag on it holds nothing — nobody has to close it by hand."""
+    model = _checkpoint_model()
+    model['step_requirements'] = [l for l in model['step_requirements']
+                                  if l['step_fk'] != 1]
+    plan = deriv.derive_plan2(model, now=NOW)
+    rows = {r['id']: r for r in plan['rows']}
+    assert rows[1]['checkpoint'] is True and rows[1]['open_req_ids'] == []
+    assert rows[4]['checkpoint_blocked_by'] == []
+    assert rows[4]['launch_candidate'] is True and rows[4]['gate_open'] is True
+    # Seat work on it later and it holds again — on the very next read.
+    model['step_requirements'].append({'step_fk': 1, 'requirement_fk': 10})
+    plan = deriv.derive_plan2(model, now=NOW)
+    rows = {r['id']: r for r in plan['rows']}
+    assert rows[4]['checkpoint_blocked_by'] == [1]
+
+
 def test_a_checkpoint_is_the_column_not_the_link_shape():
     """req #3649: the flag decides, default ON; link shape says nothing."""
     assert deriv.is_checkpoint({'checkpoint': 1}) is True
@@ -1110,21 +911,19 @@ def test_a_checkpoint_is_the_column_not_the_link_shape():
 
 # COVERS: DRV-028
 def test_a_checkpoint_with_work_holds_downstream_until_its_requirements_are_terminal():
-    """The generalisation req #3649 adds: a step WITH work and the flag on
-    holds its transitive downstream until every gating requirement is
-    met/deferred/wontfix — then it holds nothing. `derive_step_state` is the
-    one rule for 'done' in both shapes."""
+    """A step with the flag on holds its transitive downstream while any
+    gating requirement is open — then it holds nothing."""
     model = _checkpoint_model()
-    # Step 2 (running work, one edge under the checkpoint) becomes a
+    # Step 2 (work in development, one edge under the checkpoint) becomes a
     # checkpoint itself; step 3 depends on it.
     model['steps'][1]['checkpoint'] = 1
     plan = deriv.derive_plan2(model, now=NOW)
     rows = {r['id']: r for r in plan['rows']}
-    assert rows[2]['checkpoint'] is True and rows[2]['state'] == 'running'
+    assert rows[2]['checkpoint'] is True and rows[2]['open_req_ids'] == [20]
     assert rows[3]['checkpoint_blocked_by'] == [1, 2]
     assert rows[3]['launch_candidate'] is False
-    # Complete the hand-closed checkpoint; step 2 still holds step 3...
-    model['steps'][0]['completed_at'] = '2026-10-17 00:00:00'
+    # Close the first checkpoint's work; step 2 still holds step 3...
+    model['requirements'][4]['requirement_status'] = 'met'
     plan = deriv.derive_plan2(model, now=NOW)
     rows = {r['id']: r for r in plan['rows']}
     assert rows[3]['checkpoint_blocked_by'] == [2]
@@ -1133,36 +932,33 @@ def test_a_checkpoint_with_work_holds_downstream_until_its_requirements_are_term
     model['requirements'][0]['requirement_status'] = 'met'
     plan = deriv.derive_plan2(model, now=NOW)
     rows = {r['id']: r for r in plan['rows']}
-    assert rows[2]['state'] == 'done'
+    assert rows[2]['open_req_ids'] == []
     assert rows[3]['checkpoint_blocked_by'] == []
     assert rows[3]['launch_candidate'] is True
     assert rows[3]['gate_open'] is True
 
 
 # COVERS: DRV-028
-def test_a_no_work_step_with_the_flag_off_is_a_priority_not_a_hold():
-    """A link-less step with `checkpoint=0`: nothing closes it but
-    `complete_pipeline_step`, and it holds NOTHING — its dependants are
-    past-gate launch candidates, exactly like work behind ordinary work."""
+def test_a_step_with_the_flag_off_is_a_priority_not_a_hold():
+    """`checkpoint=0`: the step holds NOTHING even with open work — its
+    dependants are past-gate launch candidates, like work behind any work."""
     model = _checkpoint_model()
     model['steps'][0]['checkpoint'] = 0
     plan = deriv.derive_plan2(model, now=NOW)
     rows = {r['id']: r for r in plan['rows']}
-    assert rows[1]['state'] == 'pending' and rows[1]['checkpoint'] is False
+    assert rows[1]['open_req_ids'] == [10] and rows[1]['checkpoint'] is False
     for sid in (3, 4):
         assert rows[sid]['checkpoint_blocked_by'] == [], sid
         assert rows[sid]['launch_candidate'] is True, sid
         assert rows[sid]['gate_open'] is False, sid
-    # The step itself still gets the eligible-now ring (close it by hand).
-    assert 1 in plan['eligible_step_ids']
 
 
 # COVERS: DRV-028
-def test_an_open_checkpoint_above_a_DONE_step_still_holds_eligible_and_top_up():
-    """Review C1, measured: checkpoint 10 open, step 11 under it DONE (its
-    requirement set met by hand), 12 pending and 13 running under 11. Their
-    DIRECT deps are done, so before the fix they read `eligible` /
-    `top_up_eligible` and the engine launched straight past the checkpoint."""
+def test_a_holding_checkpoint_above_a_clear_step_still_holds_its_downstream():
+    """Review C1, measured: checkpoint 10 holding, step 11 under it with all
+    its work met, 12 and 13 under 11. Their DIRECT deps are clear, so without
+    the transitive walk they would read `eligible` and the engine would
+    launch straight past the checkpoint."""
     model = {
         'pipeline': {'id': 12, 'title': 'C1', 'pipeline_status': 'active',
                      'execution_mode': 'parallel'},
@@ -1170,10 +966,12 @@ def test_an_open_checkpoint_above_a_DONE_step_still_holds_eligible_and_top_up():
         'steps': [_step(10, 120, checkpoint=1), _step(11, 120), _step(12, 120),
                   _step(13, 120), _step(14, 120, checkpoint=1)],
         'step_requirements': [
+            {'step_fk': 10, 'requirement_fk': 100},
             {'step_fk': 11, 'requirement_fk': 101},
             {'step_fk': 12, 'requirement_fk': 102},
             {'step_fk': 13, 'requirement_fk': 103},
             {'step_fk': 13, 'requirement_fk': 104},
+            {'step_fk': 14, 'requirement_fk': 105},
         ],
         'step_deps': [
             {'id': 1, 'step_fk': 11, 'dep_step_fk': 10},
@@ -1181,29 +979,28 @@ def test_an_open_checkpoint_above_a_DONE_step_still_holds_eligible_and_top_up():
             {'id': 3, 'step_fk': 13, 'dep_step_fk': 11},
             {'id': 4, 'step_fk': 14, 'dep_step_fk': 11},   # a 2nd checkpoint
         ],
-        'requirements': [_req(101, status='met'), _req(102, status='swarm_ready'),
+        'requirements': [_req(100, status='development'),
+                         _req(101, status='met'), _req(102, status='swarm_ready'),
                          _req(103, status='development'),
-                         _req(104, status='swarm_ready')],
+                         _req(104, status='swarm_ready'),
+                         _req(105, status='swarm_ready')],
     }
     plan = deriv.derive_plan2(model, now=NOW)
     rows = {r['id']: r for r in plan['rows']}
-    assert rows[11]['state'] == 'done'
+    assert rows[11]['open_req_ids'] == []
     for sid in (12, 13, 14):
         assert rows[sid]['checkpoint_blocked_by'] == [10], sid
         assert rows[sid]['gate_open'] is False, sid
         assert rows[sid]['eligible'] is False, sid
-        assert rows[sid]['top_up_eligible'] is False, sid
         assert rows[sid]['launch_candidate'] is False, sid
-    # 14 is itself a checkpoint behind an open one: never told to close it yet.
-    assert 14 not in plan['eligible_step_ids']
-    assert plan['eligible_step_ids'] == [10]
+    assert plan['eligible_step_ids'] == []
 
 
 # COVERS: DRV-028
 def test_an_epic_scoped_read_sees_a_checkpoint_in_another_epic():
     """Review I1: the epic-scoped compose supplies `plan_graph` (the rest of
-    the plan's steps, edges, links and tracking ids) so a checkpoint outside
-    the epic holds this epic's step exactly as a whole-plan read does."""
+    the plan's steps, edges, links and requirement statuses) so a checkpoint
+    outside the epic holds this epic's step exactly as a whole-plan read does."""
     model = {
         'pipeline': {'id': 13, 'title': 'I1', 'pipeline_status': 'active',
                      'execution_mode': 'parallel'},
@@ -1212,14 +1009,16 @@ def test_an_epic_scoped_read_sees_a_checkpoint_in_another_epic():
         'step_requirements': [{'step_fk': 2, 'requirement_fk': 20}],
         'step_deps': [{'id': 1, 'step_fk': 2, 'dep_step_fk': 5}],
         'requirements': [_req(20, status='swarm_ready')],
-        # step 5 is a priority step (flag off, work link 50) in epic 130, and
-        # it depends on step 1 — a checkpoint whose only link is a container.
+        # step 5 is a priority step (flag off) in epic 130, and it depends on
+        # step 1 — a checkpoint holding work 900 (and a container, 901).
         'plan_graph': {
-            'steps': [{'id': 1, 'completed_at': None, 'checkpoint': 1},
-                      {'id': 5, 'completed_at': None, 'checkpoint': 0}],
+            'steps': [{'id': 1, 'checkpoint': 1}, {'id': 5, 'checkpoint': 0}],
             'step_deps': [{'step_fk': 5, 'dep_step_fk': 1}],
-            'step_requirements': [{'step_fk': 1, 'requirement_fk': 900}],
+            'step_requirements': [{'step_fk': 1, 'requirement_fk': 900},
+                                  {'step_fk': 1, 'requirement_fk': 901}],
             'requirements': [{'id': 900, 'requirement_status': 'development',
+                              'tracking': 0},
+                             {'id': 901, 'requirement_status': 'development',
                               'tracking': 1}],
         },
     }
@@ -1227,8 +1026,9 @@ def test_an_epic_scoped_read_sees_a_checkpoint_in_another_epic():
     row = plan['rows'][0]
     assert row['checkpoint_blocked_by'] == [1]
     assert row['launch_candidate'] is False
-    # ...and once it is completed, the same read releases the step.
-    model['plan_graph']['steps'][0]['completed_at'] = '2026-10-17 00:00:00'
+    # ...and once its work is terminal, the same read releases the step; the
+    # container never counted.
+    model['plan_graph']['requirements'][0]['requirement_status'] = 'met'
     plan = deriv.derive_plan2(model, now=NOW, epic_scoped=True)
     assert plan['rows'][0]['checkpoint_blocked_by'] == []
     assert plan['rows'][0]['launch_candidate'] is True
@@ -1236,10 +1036,7 @@ def test_an_epic_scoped_read_sees_a_checkpoint_in_another_epic():
 
 # COVERS: DRV-028
 def test_an_epic_scoped_read_holds_behind_another_epics_checkpoint_with_work():
-    """req #3649: an outside checkpoint WITH work is done when its gating
-    requirements are terminal — `completed_at` says nothing about it, so the
-    plan graph carries the requirement rows and the derivation reuses
-    `derive_step_state`."""
+    """An outside checkpoint holds while any gating requirement is open."""
     model = {
         'pipeline': {'id': 14, 'title': 'I1b', 'pipeline_status': 'active',
                      'execution_mode': 'parallel'},
@@ -1249,7 +1046,7 @@ def test_an_epic_scoped_read_holds_behind_another_epics_checkpoint_with_work():
         'step_deps': [{'id': 1, 'step_fk': 2, 'dep_step_fk': 1}],
         'requirements': [_req(20, status='swarm_ready')],
         'plan_graph': {
-            'steps': [{'id': 1, 'completed_at': None, 'checkpoint': 1}],
+            'steps': [{'id': 1, 'checkpoint': 1}],
             'step_deps': [],
             'step_requirements': [{'step_fk': 1, 'requirement_fk': 10},
                                   {'step_fk': 1, 'requirement_fk': 11}],
@@ -1261,26 +1058,26 @@ def test_an_epic_scoped_read_holds_behind_another_epics_checkpoint_with_work():
     plan = deriv.derive_plan2(model, now=NOW, epic_scoped=True)
     assert plan['rows'][0]['checkpoint_blocked_by'] == [1]
     assert plan['rows'][0]['launch_candidate'] is False
-    # A stamp on a step WITH gating work does not finish it...
-    model['plan_graph']['steps'][0]['completed_at'] = '2026-10-17 00:00:00'
-    plan = deriv.derive_plan2(model, now=NOW, epic_scoped=True)
-    assert plan['rows'][0]['checkpoint_blocked_by'] == [1]
-    # ...its last requirement going terminal does.
+    # Its last requirement going terminal releases it.
     model['plan_graph']['requirements'][1]['requirement_status'] = 'wontfix'
     plan = deriv.derive_plan2(model, now=NOW, epic_scoped=True)
     assert plan['rows'][0]['checkpoint_blocked_by'] == []
     assert plan['rows'][0]['launch_candidate'] is True
     # An outside step with the flag OFF never holds, whatever its links say.
-    model['plan_graph']['steps'][0] = {'id': 1, 'completed_at': None,
-                                       'checkpoint': 0}
+    model['plan_graph']['steps'][0] = {'id': 1, 'checkpoint': 0}
     model['plan_graph']['requirements'][1]['requirement_status'] = 'development'
+    plan = deriv.derive_plan2(model, now=NOW, epic_scoped=True)
+    assert plan['rows'][0]['checkpoint_blocked_by'] == []
+    # An outside checkpoint holding NOTHING never holds either.
+    model['plan_graph']['steps'][0] = {'id': 1, 'checkpoint': 1}
+    model['plan_graph']['step_requirements'] = []
     plan = deriv.derive_plan2(model, now=NOW, epic_scoped=True)
     assert plan['rows'][0]['checkpoint_blocked_by'] == []
 
 
 def test_checkpoint_walk_survives_a_cycle_and_an_unseen_dependency():
-    a = {'id': 1, 'dep_ids': [2, 99], 'checkpoint': 0, 'state': 'pending'}
-    b = {'id': 2, 'dep_ids': [1], 'checkpoint': 0, 'state': 'pending'}
+    a = {'id': 1, 'dep_ids': [2, 99], 'checkpoint': 0, 'open_req_ids': [7]}
+    b = {'id': 2, 'dep_ids': [1], 'checkpoint': 0, 'open_req_ids': [8]}
     assert deriv.open_checkpoints_upstream(a, {1: a, 2: b}) == []
     # ...and with the flag on, the cycle still terminates and names the hold.
     b['checkpoint'] = 1
@@ -1401,7 +1198,11 @@ def _paused_model(pipeline_status='active', epic_statuses=(None, None)):
             {**_epic(91), 'epic_status': epic_statuses[1] or 'active'},
         ],
         'steps': [_step(9001, 90), _step(9101, 91)],
-        'step_requirements': [], 'step_deps': [], 'requirements': [],
+        'step_requirements': [{'step_fk': 9001, 'requirement_fk': 71},
+                              {'step_fk': 9101, 'requirement_fk': 72}],
+        'step_deps': [],
+        'requirements': [_req(71, status='swarm_ready'),
+                         _req(72, status='swarm_ready')],
     }
 
 
@@ -1427,7 +1228,7 @@ def test_launch_suppression_leaves_eligible_unchanged():
     model = _paused_model(epic_statuses=('paused', 'active'))
     plan = deriv.derive_plan2(model, now='2026-08-09T00:00:00Z')
     row = next(r for r in plan['rows'] if r['id'] == 9001)
-    assert row['eligible'] is True                 # no deps, no time gate
+    assert row['eligible'] is True                 # work, no deps, no time gate
     assert row['launch_suppressed'] is True         # but its epic is paused
     assert 9001 in plan['eligible_step_ids']         # eligibility is untouched
 
@@ -1507,28 +1308,6 @@ def test_whole_plan_read_still_reports_a_genuinely_dangling_dependency():
 
 
 # ---------------------------------------------------------------------------
-# The state-banding closure must be GLOBAL even though the comparison is
-# epic-scoped — regression coverage for a code-review finding: an earlier
-# version computed `depends_on` per epic, which cannot see a transitive
-# dependency path that leaves and re-enters an epic through another one.
-# ---------------------------------------------------------------------------
-
-def test_banding_closure_sees_a_transitive_path_through_another_epic():
-    """1 depends on 2 (epic 91), which depends on 3 (epic 90, same epic as
-    1). Topological order is [3, 2, 1]. Within epic 90's own two rows
-    ([3, 1] in that relative order), 1 (done) renders below 3 (pending) —
-    which LOOKS like an avoidable inversion unless the closure can see that
-    1 transitively depends on 3 through 2, which lives in epic 91."""
-    row1 = {'id': 1, 'state': deriv.STEP_DONE, 'epic_id': 90, 'dep_ids': [2]}
-    row2 = {'id': 2, 'state': deriv.STEP_PENDING, 'epic_id': 91, 'dep_ids': [3]}
-    row3 = {'id': 3, 'state': deriv.STEP_PENDING, 'epic_id': 90, 'dep_ids': []}
-    rows = [row3, row2, row1]                     # the topological order
-    violations, out_of_scope = deriv.verify_order(rows)
-    assert out_of_scope == []
-    assert [v for v in violations if v['invariant'] == 'state-banding'] == []
-
-
-# ---------------------------------------------------------------------------
 # Serial execution (gate delta, req #3388) — restated for 2.0
 #
 # The verification register has NO DRV-* entry for this at all (on any
@@ -1538,19 +1317,20 @@ def test_banding_closure_sees_a_transitive_path_through_another_epic():
 # ---------------------------------------------------------------------------
 
 def _serial_model(execution_mode='serial'):
-    """Three epics in turn order 90 -> 91 -> 92. Epic 90 is fully done,
-    epic 91 has pending work (live), epic 92 is untouched (waiting)."""
+    """Three epics in turn order 90 -> 91 -> 92. Epic 90 holds no open work
+    (its turn is over), epic 91 holds open work (live), epic 92 too (waiting)."""
     return {
         'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active',
                     'execution_mode': execution_mode},
         'epics': [_epic(90, sort_order=1), _epic(91, sort_order=2),
                  _epic(92, sort_order=3)],
-        'steps': [
-            _step(9001, 90, completed_at='2026-08-01 00:00:00'),
-            _step(9101, 91),
-            _step(9201, 92),
-        ],
-        'step_requirements': [], 'step_deps': [], 'requirements': [],
+        'steps': [_step(9001, 90), _step(9101, 91), _step(9201, 92)],
+        'step_requirements': [{'step_fk': 9001, 'requirement_fk': 1},
+                              {'step_fk': 9101, 'requirement_fk': 2},
+                              {'step_fk': 9201, 'requirement_fk': 3}],
+        'step_deps': [],
+        'requirements': [_req(1, status='met'), _req(2, status='swarm_ready'),
+                         _req(3, status='swarm_ready')],
     }
 
 
@@ -1690,33 +1470,3 @@ def test_tracking_flag_coercion_matrix():
         assert deriv.is_tracking_requirement({'tracking': value}) is False, value
 
 
-def test_epic_sort_order_does_not_outrank_a_within_epic_state_band():
-    """`pipeline_conformance.json` case
-    `epic-sort-order-does-not-outrank-a-state-band`, translated: `sort_order`
-    is a CLUSTERING signal between epics (`display_order`'s epic_order), never
-    an override of the state-banding invariant WITHIN an epic. An epic given
-    `sort_order=1` (so it renders first) whose own steps still violate banding
-    must report that violation regardless of its position."""
-    model = {
-        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active',
-                    'execution_mode': 'parallel'},
-        'epics': [_epic(90, sort_order=1), _epic(91, sort_order=2)],
-        'steps': [
-            _step(1, 90), _step(2, 90),
-            _step(3, 90, completed_at='2026-08-01 00:00:00'),
-            _step(9101, 91),
-        ],
-        'step_requirements': [], 'requirements': [],
-        'step_deps': [{'id': 1, 'step_fk': 3, 'dep_step_fk': 2}],
-    }
-    plan = deriv.derive_plan2(model, now='2026-08-09T00:00:00Z')
-    assert plan['epic_order'] == [90, 91], "sort_order still clusters the epics"
-    # req #3626 renders `2, 3` above `1`, so the derived order holds no
-    # inversion to report; the check is asserted on the inverted order itself.
-    by_id = {r['id']: r for r in deriv.build_plan_rows(model)}
-    violations, _ = deriv.verify_order(
-        [by_id[1], by_id[2], by_id[3], by_id[9101]])
-    banding = [v for v in violations if v['invariant'] == 'state-banding']
-    assert banding, ("sort_order must not suppress a genuine within-epic "
-                     "banding violation")
-    assert set(banding[0]['step_ids']) == {3, 1}
