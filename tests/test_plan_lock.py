@@ -81,7 +81,7 @@ def _set_locked(owner, table, row_id, flag):
     assert resp['statusCode'] in (200, 204), resp
 
 
-def test_a_locked_step_refuses_authoring_but_takes_the_lock_and_completed_at(owner, plan):
+def test_a_locked_step_refuses_authoring_but_takes_the_lock(owner, plan):
     _set_locked(owner, 'pipeline_steps', plan['a2'], 1)
     try:
         resp = _put(owner, 'pipeline_steps', {'id': plan['a2'], 'title': 'renamed'})
@@ -94,11 +94,6 @@ def test_a_locked_step_refuses_authoring_but_takes_the_lock_and_completed_at(own
         for field in ({'checkpoint': 0}, {'run': 'manual'}, {'notes': 'x'},
                       {'not_before': '2026-12-01 00:00:00'}):
             assert _put(owner, 'pipeline_steps', {'id': plan['a2'], **field})['statusCode'] == 423, field
-        # Lifecycle still writes.
-        resp = _put(owner, 'pipeline_steps', {'id': plan['a2'], 'completed_at': '2026-10-19 00:00:00'})
-        assert resp['statusCode'] in (200, 204), resp
-        resp = _put(owner, 'pipeline_steps', {'id': plan['a2'], 'completed_at': 'NULL'})
-        assert resp['statusCode'] in (200, 204), resp
         # No child under it: a link, an edge.
         resp = owner('POST', '/darwin_dev/pipeline_step_requirements',
                      body={'step_fk': plan['a2'], 'requirement_fk': plan['req_free']})

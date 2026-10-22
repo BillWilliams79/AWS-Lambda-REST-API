@@ -5,8 +5,8 @@
 locked ancestor, accepts no authoring — no child created, deleted or moved,
 no requirement linked or unlinked, no dependency edge, no title/notes/run/
 checkpoint/not_before/sort_order — while the lock itself and lifecycle state
-(`pipeline_status`, `epic_status`, `closed`, a step's `completed_at`) still
-write. The answer is 423 LOCKED with an object body naming the OUTERMOST
+(`pipeline_status`, `epic_status`, `closed`) still write. A step has no
+lifecycle state (req #3750). The answer is 423 LOCKED with an object body naming the OUTERMOST
 locked level.
 
 Three properties, each held here:
@@ -14,8 +14,7 @@ Three properties, each held here:
 * **The cascade is derived from one SELECT**, and the verdict names the
   outermost lock (unlocking a step helps nobody while its plan is locked).
 * **Nothing a lock does not protect opens a cursor** — the `ExplodingConn`
-  routes: `completed_at` from complete_pipeline_step, `locked` itself, a
-  lifecycle status, an unauthenticated call, a table outside the plan layer.
+  routes: `locked` itself, a lifecycle status, an unauthenticated call, a table outside the plan layer.
 * **The wiring is real**: `rest_post` / `rest_put` / `rest_delete` reach the
   guard through their real entry points, asserted both ways — a protected
   write is refused with 423 and never reaches the statement, a permitted
@@ -177,8 +176,7 @@ def _body(resp):
 # ---------------------------------------------------------------------------
 
 def test_a_put_writing_only_unlocked_keys_plans_no_lookup():
-    for table, body in (('pipeline_steps', {'id': 701, 'completed_at': 'x'}),
-                        ('pipeline_steps', {'id': 701, 'locked': 0}),
+    for table, body in (('pipeline_steps', {'id': 701, 'locked': 0}),
                         ('epics', {'id': 71, 'epic_status': 'paused', 'closed': 1}),
                         ('pipelines', {'id': 8, 'pipeline_status': 'completed',
                                        'started_at': 'x', 'completed_at': 'y'}),
@@ -338,7 +336,6 @@ def test_a_move_into_a_locked_destination_is_423():
 
 def test_the_lock_itself_and_lifecycle_state_write_without_a_cursor():
     for table, body in (('pipeline_steps', {'id': 710, 'locked': 0}),
-                        ('pipeline_steps', {'id': 800, 'completed_at': '2026-10-19 00:00:00'}),
                         ('epics', {'id': 80, 'epic_status': 'paused'}),
                         ('epics', {'id': 71, 'closed': 1, 'locked': 1}),
                         ('pipelines', {'id': 8, 'pipeline_status': 'paused',
@@ -407,11 +404,7 @@ def test_rest_put_refuses_a_locked_step_before_the_update():
     assert _body(resp)['locked_by'] == 'epic'
 
 
-def test_rest_put_lets_a_lifecycle_write_on_a_locked_step_reach_the_update():
-    with pytest.raises(CursorRequested):
-        rest_put('PUT', GuardConn(), 'darwin_dev', 'pipeline_steps',
-                 [{'id': 710, 'completed_at': '2026-10-19 00:00:00'}],
-                 authenticated_user=USER)
+def test_rest_put_lets_the_lock_itself_on_a_locked_step_reach_the_update():
     with pytest.raises(CursorRequested):
         rest_put('PUT', GuardConn(), 'darwin_dev', 'pipeline_steps',
                  [{'id': 710, 'locked': 0}], authenticated_user=USER)

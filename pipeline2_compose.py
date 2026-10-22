@@ -241,7 +241,7 @@ _PIPELINE_COLUMNS = ('id', 'title', 'description', 'pipeline_status',
 _EPIC_COLUMNS = ('id', 'pipeline_fk', 'title', 'description', 'epic_status',
                  'locked', 'sort_order', 'category_fk', 'closed')
 _STEP_COLUMNS = ('id', 'epic_fk', 'title', 'run', 'checkpoint', 'locked',
-                 'not_before', 'notes', 'completed_at', 'creator_fk',
+                 'not_before', 'notes', 'creator_fk',
                  'create_ts', 'update_ts')
 # `checkpoint` and the three `locked` flags: req #3649 (migration
 # 20261019100448). `checkpoint` feeds the derivation's hold walk; `locked` is
@@ -351,8 +351,9 @@ def compose_pipeline2_epic(conn, epic_id, authenticated_user):
     PLUS UP TO FOUR LIGHT READS OF THE REST OF THE PLAN'S GRAPH (req #3597,
     the user's amendment: a step closed by hand blocks everything downstream).
     A checkpoint in ANOTHER epic must hold this epic's steps exactly as a
-    whole-plan read holds them, and only the plan's step ids, `completed_at`,
-    dependency edges, links and tracking flags can say where one is. Same
+    whole-plan read holds them, and only the plan's step ids, checkpoint
+    flags, dependency edges, links and requirement statuses can say where one
+    is and whether it still holds open work. Same
     invocation, so still ONE gateway round trip; ids and timestamps only.
     The graph feeds the derivation and is then DROPPED — it is not part of
     the response shape."""
@@ -418,7 +419,7 @@ def _plan_graph_outside_epic(cursor, pipeline_id, epic_id, authenticated_user):
     graph = {'steps': [], 'step_deps': [], 'step_requirements': [],
              'requirements': []}
     graph['steps'] = _select(
-        cursor, ('id', 'completed_at', 'checkpoint'), 'pipeline_steps',
+        cursor, ('id', 'checkpoint'), 'pipeline_steps',
         'epic_fk IN (SELECT id FROM epics WHERE pipeline_fk = %s '
         'AND creator_fk = %s) AND epic_fk <> %s AND creator_fk = %s',
         (pipeline_id, authenticated_user, epic_id, authenticated_user),
@@ -430,7 +431,7 @@ def _plan_graph_outside_epic(cursor, pipeline_id, epic_id, authenticated_user):
     graph['step_deps'] = _select(cursor, ('step_fk', 'dep_step_fk'),
                                  'pipeline_step_deps', f'step_fk IN {in_clause}',
                                  ids)                                         # read 8
-    # Only a CHECKPOINT's done-ness matters to the walk (req #3649): a
+    # Only a CHECKPOINT's open work matters to the walk (req #3649): a
     # non-checkpoint outside step contributes its edges for traversal and
     # nothing else, so its links are not read.
     checkpoint_ids = tuple(sorted(s['id'] for s in graph['steps']
@@ -443,9 +444,9 @@ def _plan_graph_outside_epic(cursor, pipeline_id, epic_id, authenticated_user):
     req_ids = sorted({link['requirement_fk']
                       for link in graph['step_requirements']})
     if req_ids:
-        # A checkpoint WITH work is done when every gating requirement is
-        # terminal, which `completed_at` cannot say — so the derivation gets
-        # the rows `derive_step_state` needs, not just the tracking ids.
+        # A checkpoint holds while any gating requirement is not terminal
+        # (req #3750), so the derivation gets the rows
+        # `open_requirement_ids` needs, not just the tracking ids.
         graph['requirements'] = _select(
             cursor, ('id', 'requirement_status', 'tracking'), 'requirements',
             f"id IN {_in_clause(len(req_ids))} AND creator_fk = %s",

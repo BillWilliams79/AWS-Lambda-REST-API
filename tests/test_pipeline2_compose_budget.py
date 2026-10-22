@@ -17,8 +17,8 @@ import pipeline2_compose as pc                          # noqa: E402
 
 def _fake_composed(step_count=3, notes_len=10, derived_bytes=200):
     steps = [{'id': i, 'epic_fk': 1, 'title': f's{i}', 'run': 'auto',
-             'not_before': None, 'notes': 'x' * notes_len,
-             'completed_at': None} for i in range(1, step_count + 1)]
+             'not_before': None, 'notes': 'x' * notes_len}
+             for i in range(1, step_count + 1)]
     return {
         'pipeline': {'id': 1, 'title': 'p', 'step_count': step_count},
         'epics': [{'id': 1, 'pipeline_fk': 1, 'title': 'e'}],
