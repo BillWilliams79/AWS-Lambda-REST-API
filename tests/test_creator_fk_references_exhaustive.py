@@ -102,6 +102,9 @@ def _required_columns(table, seed):
         'epics': {'title': f'{seed}-p2epic'},
         'recurring_tasks': {'description': f'{seed}-rt', 'recurrence': 'daily',
                             'anchor_date': '2026-07-27'},
+        # Req #3815. `bundle` is the one NOT NULL, no-default column besides
+        # the reference; its UNIQUE (requirement_fk) is what `_drop` is for.
+        'requirement_debug_captures': {'bundle': '{}', 'bundle_bytes': 2},
         'requirements': {'title': f'{seed}-req', 'ai_model': 'opus',
                          'effort': 'high'},
         # No NOT NULL columns of their own, but `rest_post` 400s an EMPTY body
@@ -140,11 +143,11 @@ def test_the_matrix_is_the_whole_registry():
     # 41 at #3224's three `orchestration_claims` columns, 45 at #3337's four
     # Pipeline 2.0 plan-layer columns. Found already red at 48 when #3350
     # landed (this file had drifted, undetected because nobody re-ran it): 47
-    # from req #3369's two `orchestration_claims.pipeline2_fk`/`.initiative2_fk`, 48
+    # from req #3369's two `orchestration_claims.pipeline2_fk`/`.epic2_fk`, 48
     # from req #3202's one `swarm_completes.machine_fk` — neither accompanied
     # by an update here, and `swarm_completes` had no body template at all
     # (see `_required_columns`). #3350 fixes both gaps AND adds its own two
-    # `swarm_sessions` 2.0 attribution siblings (pipeline2_fk/initiative2_fk — no
+    # `swarm_sessions` 2.0 attribution siblings (pipeline2_fk/epic2_fk — no
     # new parent tables, both already built for #3337's own
     # pipeline2_initiatives/pipeline2_steps entries), landing on 50. Req #3355 drops
     # the retired middle tier — both the requirement's reference column AND its
@@ -165,7 +168,10 @@ def test_the_matrix_is_the_whole_registry():
     # TRIPLES 40 -> 51, and four new PARENTS (engine_states,
     # orchestration_claims, engine_decision_records, and epics — which
     # no registered column referenced before engine_outcomes.epic_fk) — 21 -> 25.
-    assert len(TRIPLES) == 51, f'expected 51 registered columns, generated {len(TRIPLES)}'
+    #
+    # Req #3815 adds `requirement_debug_captures.requirement_fk` — TRIPLES
+    # 51 -> 52; `requirements` was already a PARENT, so PARENTS stays 25.
+    assert len(TRIPLES) == 52, f'expected 52 registered columns, generated {len(TRIPLES)}'
     assert len(PARENTS) == 25, PARENTS
     assert ('test_runs', 'test_plan_fk', 'test_plans') in TRIPLES
 
@@ -378,10 +384,11 @@ def _count_referencing(conn, table, column, value):
 def _drop(conn, table, row_id):
     """Remove a row a case created, so the next case can create the same shape.
 
-    Four tables put a UNIQUE key ON their reference columns —
+    Five tables put a UNIQUE key ON their reference columns —
     `builds (branch_fk, position)`, `customer_releases (customer_fk, build_fk)`,
-    `test_results (test_run_fk, test_case_fk)` and, since req #3224,
-    `orchestration_claims (pipeline_fk, initiative_key)` — so two cases writing the
+    `test_results (test_run_fk, test_case_fk)`, since req #3224
+    `orchestration_claims (pipeline_fk, initiative_key)` and since req #3815
+    `requirement_debug_captures (requirement_fk)` — so two cases writing the
     identical owned row collide on 1062 rather than testing anything. Deleting
     between cases is simpler and more honest than manufacturing a pool of spare
     parents whose only purpose is to dodge a UNIQUE key.
