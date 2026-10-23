@@ -250,6 +250,15 @@ CREATOR_FK_TABLES = frozenset({
     # a creator_fk. They inherit ownership from their step, in JUNCTION_OWNERSHIP
     # below.
     'pipelines', 'epics', 'pipeline_steps',
+    # Req #3756 — Orchestration Engine 2's data contract (migration
+    # 20261022073056). All five carry a NOT NULL creator_fk, on the same terms as
+    # `orchestration_claims`: membership is what lets rest_post inject it, and an
+    # unscoped read would publish where every user's engine runs and what it
+    # decided. `engine_inputs` is keyed (creator_fk, content_hash) for the same
+    # reason — a hash shared across tenants would answer "does anyone else hold
+    # this exact plan payload" with a 409.
+    'engine_states', 'engine_heartbeats', 'engine_decision_records',
+    'engine_outcomes', 'engine_inputs',
 })
 
 PROFILE_TABLE = 'profiles'
@@ -526,6 +535,27 @@ CREATOR_TABLE_REFERENCES = {
         ('pipeline_fk', 'pipelines'),             # CASCADE, req #3369
         ('epic_fk', 'epics'),                     # CASCADE, req #3369
     ),
+    'engine_decision_records': (                             # req #3756
+        # `claim_id` is HISTORY, deliberately not an FK: a claim row is deleted
+        # on release, and a record must keep naming the claim it was made under.
+        ('pipeline_fk', 'pipelines'),                        # CASCADE
+        ('epic_fk', 'epics'),                                # CASCADE
+        ('machine_fk', 'machines'),                          # CASCADE
+    ),
+    'engine_heartbeats': (                                   # req #3756
+        ('engine_state_fk', 'engine_states'),                # CASCADE
+        ('claim_fk', 'orchestration_claims'),                # SET NULL
+    ),
+    'engine_outcomes': (                                     # req #3756
+        ('record_fk', 'engine_decision_records'),            # CASCADE
+        ('requirement_fk', 'requirements'),                  # CASCADE
+        ('step_fk', 'pipeline_steps'),                       # SET NULL
+    ),
+    'engine_states': (                                       # req #3756
+        ('pipeline_fk', 'pipelines'),                        # CASCADE
+        ('epic_fk', 'epics'),                                # CASCADE
+        ('machine_fk', 'machines'),                          # CASCADE
+    ),
     'epics': (                                     # req #3337
         ('pipeline_fk', 'pipelines'),              # CASCADE
         ('category_fk', 'categories'),                       # RESTRICT
@@ -664,6 +694,12 @@ ENUM_COLUMNS = {
     'branches': frozenset({'branch_type'}),
     'build_projects': frozenset({'project_status'}),
     'categories': frozenset({'sort_mode'}),
+    # req #3756 — Engine 2. `verdict` is OK or an ENGINE_HOLD verdict name;
+    # `input_kind` is which decide() input first stored the content.
+    'engine_decision_records': frozenset({'verdict'}),
+    'engine_inputs': frozenset({'input_kind'}),
+    'engine_outcomes': frozenset({'outcome_state'}),
+    'engine_states': frozenset({'desired_state', 'actual_state'}),
     'machines': frozenset({'platform', 'arch'}),
     'map_runs': frozenset({'source'}),
     'epics': frozenset({'epic_status'}),

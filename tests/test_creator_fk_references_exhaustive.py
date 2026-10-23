@@ -20,6 +20,7 @@ missing NOT NULL, not a second foreign reference, not an FK typo.
 
 Needs `darwin_dev` (`. exports.sh`); skips cleanly without it.
 """
+import hashlib
 import json
 import os
 import sys
@@ -69,6 +70,20 @@ def _required_columns(table, seed):
         'builds': {'position': 1, 'build_number': 1},
         'categories': {'category_name': f'{seed}-cat'[:32]},
         'customer_releases': {},
+        # Req #3756 — Engine 2. A record's only required non-reference columns
+        # are its hashes, seq, verdict and JSON body; the hash is UNIQUE per
+        # creator, so it is derived from the seed (see `_own_body` for why a
+        # case row never collides with the graph's own record).
+        'engine_decision_records': {
+            'record_hash': 'sha256:' + hashlib.sha256(seed.encode()).hexdigest(),
+            'seq': 1, 'verdict': 'OK', 'record': '{}',
+            'plan_payload_hash': _ZERO_HASH, 'capacity_hash': _ZERO_HASH,
+            'claims_hash': _ZERO_HASH, 'clock_hash': _ZERO_HASH},
+        # Every other column defaults; `rest_post` refuses an EMPTY body, and
+        # the references the test adds make it non-empty.
+        'engine_heartbeats': {},
+        'engine_outcomes': {},
+        'engine_states': {},
         'dev_servers': {'port': 3000 + (seed_int(seed) % 8), 'pid': 999000,
                         'workspace_path': f'/tmp/{seed}'},
         'map_runs': {'run_id': seed_int(seed), 'activity_id': f'{seed}-act',
@@ -108,6 +123,9 @@ def _required_columns(table, seed):
     }[table]
 
 
+_ZERO_HASH = 'sha256:' + '0' * 64
+
+
 def seed_int(seed):
     """A small stable int from a seed string, for UNIQUE-keyed columns."""
     return abs(hash(seed)) % 100000 + 1
@@ -140,8 +158,15 @@ def test_the_matrix_is_the_whole_registry():
     # `orchestration_claims` attribution columns (-4) — TRIPLES 47 -> 40.
     # `epics` and `pipelines` were PARENTS of nothing but each other and those
     # attribution columns, so PARENTS 23 -> 21.
-    assert len(TRIPLES) == 40, f'expected 40 registered columns, generated {len(TRIPLES)}'
-    assert len(PARENTS) == 21, PARENTS
+    #
+    # Req #3756 adds Engine 2's eleven: engine_decision_records (pipeline,
+    # epic, machine), engine_heartbeats (engine state, claim), engine_outcomes
+    # (record, requirement, step), engine_states (pipeline, epic, machine) —
+    # TRIPLES 40 -> 51, and four new PARENTS (engine_states,
+    # orchestration_claims, engine_decision_records, and pipeline_steps — which
+    # no registered column referenced before engine_outcomes.step_fk) — 21 -> 25.
+    assert len(TRIPLES) == 51, f'expected 51 registered columns, generated {len(TRIPLES)}'
+    assert len(PARENTS) == 25, PARENTS
     assert ('test_runs', 'test_plan_fk', 'test_plans') in TRIPLES
 
 
@@ -166,6 +191,10 @@ def test_every_table_in_the_registry_has_a_body_template():
 # and customers from their children. branches<->builds is the one cycle, and
 # deleting builds first is safe because branches.parent_build_fk is SET NULL.
 PURGE_ORDER = (
+    # req #3756 — Engine 2. Leaves first: outcomes point at records, heartbeats
+    # at states and claims; all four must go before pipelines/machines.
+    'engine_outcomes', 'engine_heartbeats', 'engine_decision_records',
+    'engine_states',
     'agent_telemetry_row_docs', 'agent_telemetry_rows', 'agent_telemetry_runs',
     'customer_releases', 'dev_servers', 'swarm_undos', 'swarm_completes',
     # req #3224/#3369. `machine_fk` is RESTRICT (like the five other tables
@@ -245,6 +274,17 @@ def _build_graph(invoke, seed):
     post('agent_telemetry_runs', req('agent_telemetry_runs'))
     post('pipelines', req('pipelines'))
 
+    # Req #3756 — Engine 2's parents, all one level under pipelines + machines.
+    # Each is WHOLE-PLAN (epic NULL) on purpose: a case row names the epic too
+    # (`_own_body`), so it never collides with these on the scope keys.
+    post('orchestration_claims', {'pipeline_fk': ids['pipelines'],
+                                  'machine_fk': ids['machines']})
+    post('engine_states', {'pipeline_fk': ids['pipelines'],
+                           'machine_fk': ids['machines']})
+    post('engine_decision_records', dict(req('engine_decision_records'),
+                                         pipeline_fk=ids['pipelines'],
+                                         machine_fk=ids['machines']))
+
     # One level down.
     post('categories', dict(req('categories'), project_fk=ids['projects']))
     post('areas', dict(req('areas'), domain_fk=ids['domains']))
@@ -318,6 +358,12 @@ def _own_body(table, ids, seed):
     # row that has to survive.)
     if table == 'builds':
         body['position'] = body['build_number'] = 1000 + seed_int(seed) % 8000
+    # The graph's own record holds the hash its seed derives; a case row takes
+    # a distinct one so the per-creator UNIQUE hash never fires instead of the
+    # guard under test.
+    if table == 'engine_decision_records':
+        body['record_hash'] = ('sha256:'
+                               + hashlib.sha256(f'case-{seed}'.encode()).hexdigest())
     return body
 
 
