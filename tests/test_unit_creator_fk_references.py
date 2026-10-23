@@ -20,7 +20,7 @@ rule from `schema.sql` gives **40 columns across 26 tables** (36 when #3125
 shipped; req #3186's two `swarm_sessions` attribution FKs and req #3224's three
 `orchestration_claims` ones are the proof the mechanism works — they failed this
 test until registered; req #3355 dropped the retired middle tier, and req #3356 dropped the
-whole 1.0 plan layer, taking `epics`, `pipelines` and `pipeline_steps` off the
+whole 1.0 plan layer, taking `initiatives`, `pipelines` and `pipeline_steps` off the
 table count along with 1.0's two `swarm_sessions` and two `orchestration_claims`
 attribution columns). A hand-counted
 security boundary drifts silently — `test_every_cross_tenant_fk_column_is_registered`
@@ -164,7 +164,7 @@ def test_the_ddl_and_the_registry_agree_on_which_tables_carry_creator_fk(creator
 
     Already covered from the darwin-mcp side; asserted here because every test
     below reads it as the definition of "creator-scoped". Derived from
-    schema.sql, so it fails helpfully if pipeline2_pipelines/_epics/_steps are
+    schema.sql, so it fails helpfully if pipeline2_pipelines/_initiatives/_steps are
     missing, or if either pipeline2_ edge table (no creator_fk) is wrongly
     present.
     """
@@ -245,7 +245,7 @@ def test_orchestration_claims_pipeline2_columns_are_registered():
     """`pipeline2_fk` / `epic2_fk` (req #3369, migration 20260809024954) — the
     schema-shape half of "orchestration claims serve both eras". Without this
     registration a 2.0 claim naming a foreign creator's `pipeline2_pipelines` /
-    `pipeline2_epics` row would be the exact grief-lock req #3125 exists to
+    `pipeline2_initiatives` row would be the exact grief-lock req #3125 exists to
     close, on the table whose own job is refusing exactly this kind of
     cross-tenant collision. `test_every_cross_tenant_fk_column_is_registered`
     already re-derives this from `schema.sql` on every run and would fail the
@@ -255,7 +255,7 @@ def test_orchestration_claims_pipeline2_columns_are_registered():
     """
     covered = creator_table_reference_columns('orchestration_claims')
     assert ('pipeline_fk', 'pipelines') in covered
-    assert ('epic_fk', 'epics') in covered
+    assert ('initiative_fk', 'initiatives') in covered
 
 
 def test_unchecked_creator_references_is_a_written_down_exemption_set():

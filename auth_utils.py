@@ -242,14 +242,14 @@ CREATOR_FK_TABLES = frozenset({
     # two orchestrators believe they both hold a scope.
     'orchestration_claims',
     # Req #3337 — Pipeline 2.0 plan layer (migration 20260808115509). The plan,
-    # its epics and its steps each carry a NOT NULL creator_fk, so membership
+    # its initiatives and its steps each carry a NOT NULL creator_fk, so membership
     # here is what makes the generic passthrough work at all, exactly as for
     # `orchestration_claims` above.
     #
     # pipeline_step_requirements and pipeline_step_deps stay OUT: neither has
     # a creator_fk. They inherit ownership from their step, in JUNCTION_OWNERSHIP
     # below.
-    'pipelines', 'epics', 'pipeline_steps',
+    'pipelines', 'initiatives', 'pipeline_steps',
     # Req #3756 — Orchestration Engine 2's data contract (migration
     # 20261022073056). All five carry a NOT NULL creator_fk, on the same terms as
     # `orchestration_claims`: membership is what lets rest_post inject it, and an
@@ -533,13 +533,13 @@ CREATOR_TABLE_REFERENCES = {
         # (migration 20260812175325).
         ('machine_fk', 'machines'),                          # RESTRICT
         ('pipeline_fk', 'pipelines'),             # CASCADE, req #3369
-        ('epic_fk', 'epics'),                     # CASCADE, req #3369
+        ('initiative_fk', 'initiatives'),                     # CASCADE, req #3369
     ),
     'engine_decision_records': (                             # req #3756
         # `claim_id` is HISTORY, deliberately not an FK: a claim row is deleted
         # on release, and a record must keep naming the claim it was made under.
         ('pipeline_fk', 'pipelines'),                        # CASCADE
-        ('epic_fk', 'epics'),                                # CASCADE
+        ('initiative_fk', 'initiatives'),                                # CASCADE
         ('machine_fk', 'machines'),                          # CASCADE
     ),
     'engine_heartbeats': (                                   # req #3756
@@ -553,10 +553,10 @@ CREATOR_TABLE_REFERENCES = {
     ),
     'engine_states': (                                       # req #3756
         ('pipeline_fk', 'pipelines'),                        # CASCADE
-        ('epic_fk', 'epics'),                                # CASCADE
+        ('initiative_fk', 'initiatives'),                                # CASCADE
         ('machine_fk', 'machines'),                          # CASCADE
     ),
-    'epics': (                                     # req #3337
+    'initiatives': (                                     # req #3337
         ('pipeline_fk', 'pipelines'),              # CASCADE
         ('category_fk', 'categories'),                       # RESTRICT
     ),
@@ -564,7 +564,7 @@ CREATOR_TABLE_REFERENCES = {
         ('machine_fk', 'machines'),                          # RESTRICT
     ),
     'pipeline_steps': (                                     # req #3337
-        ('epic_fk', 'epics'),                      # CASCADE
+        ('initiative_fk', 'initiatives'),                      # CASCADE
     ),
     'recurring_tasks': (
         ('area_fk', 'areas'),                                # CASCADE
@@ -583,7 +583,7 @@ CREATOR_TABLE_REFERENCES = {
         # dropped at req #3356 (migration 20260812175325); the 2.0 pair below
         # is the surviving attribution.
         ('pipeline_fk', 'pipelines'),             # SET NULL  (req #3350)
-        ('epic_fk', 'epics'),                     # SET NULL  (req #3350)
+        ('initiative_fk', 'initiatives'),                     # SET NULL  (req #3350)
     ),
     'swarm_completes': (
         # req #3202, migration 20260809002208. The one envelope context column
@@ -702,7 +702,7 @@ ENUM_COLUMNS = {
     'engine_states': frozenset({'desired_state', 'actual_state'}),
     'machines': frozenset({'platform', 'arch'}),
     'map_runs': frozenset({'source'}),
-    'epics': frozenset({'epic_status'}),
+    'initiatives': frozenset({'initiative_status'}),
     'pipelines': frozenset({'pipeline_status', 'execution_mode'}),
     'pipeline_steps': frozenset({'run'}),
     'profiles': frozenset({'theme_mode'}),

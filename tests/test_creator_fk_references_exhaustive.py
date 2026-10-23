@@ -90,15 +90,15 @@ def _required_columns(table, seed):
                      'activity_name': 'ride', 'start_time': '2026-07-27 00:00:00',
                      'run_time_sec': 1, 'distance_mi': 1},
         # Req #3224. NO required non-reference columns: `polls` and `claimed_at`
-        # carry DEFAULTs, `epic2_key` is GENERATED, and `creator_fk` is forced
+        # carry DEFAULTs, `initiative_key` is GENERATED, and `creator_fk` is forced
         # from the token — so the body is exactly the three references the test
-        # adds. Its UNIQUE (pipeline2_fk, epic2_key) is why `_drop` matters here,
+        # adds. Its UNIQUE (pipeline2_fk, initiative_key) is why `_drop` matters here,
         # like the three tables named in that function.
         'orchestration_claims': {},
         # Req #3337. The only NOT NULL, no-default, non-reference column each of
         # the three carries is `title`.
         'pipelines': {'title': f'{seed}-p2pipeline'},
-        'epics': {'title': f'{seed}-p2epic'},
+        'initiatives': {'title': f'{seed}-p2initiative'},
         'pipeline_steps': {'title': f'{seed}-p2step'},
         'recurring_tasks': {'description': f'{seed}-rt', 'recurrence': 'daily',
                             'anchor_date': '2026-07-27'},
@@ -146,22 +146,22 @@ def test_the_matrix_is_the_whole_registry():
     # (see `_required_columns`). #3350 fixes both gaps AND adds its own two
     # `swarm_sessions` 2.0 attribution siblings (pipeline2_fk/epic2_fk — no
     # new parent tables, both already built for #3337's own
-    # pipeline2_epics/pipeline2_steps entries), landing on 50. Req #3355 drops
+    # pipeline2_initiatives/pipeline2_steps entries), landing on 50. Req #3355 drops
     # the retired middle tier — both the requirement's reference column AND its
-    # own `('category_fk', 'categories')`/`('epic_fk', 'epics')` entry — taking
+    # own `('category_fk', 'categories')`/`('initiative_fk', 'initiatives')` entry — taking
     # TRIPLES to 47 and, since that tier was itself a PARENT of nothing else
     # registered, PARENTS to 23.
     #
     # Req #3356 drops the whole 1.0 plan layer (migration 20260812175325): the
-    # `epics`, `pipelines` and `pipeline_steps` registry entries go with their
+    # `initiatives`, `pipelines` and `pipeline_steps` registry entries go with their
     # tables (-3 columns), and so do 1.0's two `swarm_sessions` and two
     # `orchestration_claims` attribution columns (-4) — TRIPLES 47 -> 40.
-    # `epics` and `pipelines` were PARENTS of nothing but each other and those
+    # `initiatives` and `pipelines` were PARENTS of nothing but each other and those
     # attribution columns, so PARENTS 23 -> 21.
     #
     # Req #3756 adds Engine 2's eleven: engine_decision_records (pipeline,
-    # epic, machine), engine_heartbeats (engine state, claim), engine_outcomes
-    # (record, requirement, step), engine_states (pipeline, epic, machine) —
+    # initiative, machine), engine_heartbeats (engine state, claim), engine_outcomes
+    # (record, requirement, step), engine_states (pipeline, initiative, machine) —
     # TRIPLES 40 -> 51, and four new PARENTS (engine_states,
     # orchestration_claims, engine_decision_records, and pipeline_steps — which
     # no registered column referenced before engine_outcomes.step_fk) — 21 -> 25.
@@ -203,7 +203,7 @@ PURGE_ORDER = (
     # only this safety-net sweep for rows a test case creates and does not
     # itself `_drop`.
     'orchestration_claims',
-    'pipeline_steps', 'epics', 'pipelines',
+    'pipeline_steps', 'initiatives', 'pipelines',
     'test_results', 'test_runs', 'test_plans', 'test_cases',
     'requirements',
     'tasks', 'recurring_tasks', 'areas', 'domains',
@@ -275,7 +275,7 @@ def _build_graph(invoke, seed):
     post('pipelines', req('pipelines'))
 
     # Req #3756 — Engine 2's parents, all one level under pipelines + machines.
-    # Each is WHOLE-PLAN (epic NULL) on purpose: a case row names the epic too
+    # Each is WHOLE-PLAN (initiative NULL) on purpose: a case row names the initiative too
     # (`_own_body`), so it never collides with these on the scope keys.
     post('orchestration_claims', {'pipeline_fk': ids['pipelines'],
                                   'machine_fk': ids['machines']})
@@ -297,14 +297,14 @@ def _build_graph(invoke, seed):
     post('test_cases', dict(req('test_cases'), category_fk=ids['categories']))
     post('recurring_tasks', dict(req('recurring_tasks'), area_fk=ids['areas']))
     post('builds', dict(req('builds'), branch_fk=ids['branches']))
-    post('epics', dict(req('epics'),
+    post('initiatives', dict(req('initiatives'),
                                  pipeline_fk=ids['pipelines'],
                                  category_fk=ids['categories']))
 
     # Three.
     post('requirements', dict(req('requirements'), category_fk=ids['categories']))
     post('test_runs', dict(req('test_runs'), test_plan_fk=ids['test_plans']))
-    post('pipeline_steps', dict(req('pipeline_steps'), epic_fk=ids['epics']))
+    post('pipeline_steps', dict(req('pipeline_steps'), initiative_fk=ids['initiatives']))
 
     missing = [p for p in PARENTS if p not in ids]
     assert not missing, f'{seed} graph is missing parent rows for {missing}'
@@ -381,7 +381,7 @@ def _drop(conn, table, row_id):
     Four tables put a UNIQUE key ON their reference columns —
     `builds (branch_fk, position)`, `customer_releases (customer_fk, build_fk)`,
     `test_results (test_run_fk, test_case_fk)` and, since req #3224,
-    `orchestration_claims (pipeline_fk, epic_key)` — so two cases writing the
+    `orchestration_claims (pipeline_fk, initiative_key)` — so two cases writing the
     identical owned row collide on 1062 rather than testing anything. Deleting
     between cases is simpler and more honest than manufacturing a pool of spare
     parents whose only purpose is to dodge a UNIQUE key.
@@ -415,7 +415,7 @@ def test_post_naming_a_victim_parent_is_refused(triple, victim_graph,
                                                 attacker_graph, db_connection):
     """40 cases (four of them #3337's, two of them req #3369's, one req #3202's,
     two more #3350's, against a
-    victim-owned pipeline2_pipelines -> pipeline2_epics chain built by
+    victim-owned pipeline2_pipelines -> pipeline2_initiatives chain built by
     `_build_graph`). The attacker's own, otherwise-valid row, aimed at the
     victim.
 

@@ -77,8 +77,8 @@ def _teardown_plan(cur, creator):
     """The plan half of a creator's teardown, in FK-safe order.
 
     Deps before steps (`dep_step_fk` is RESTRICT), links before requirements
-    (`requirement_fk` is RESTRICT), epics before categories
-    (`epics.category_fk` is RESTRICT). Anything else and the DELETE
+    (`requirement_fk` is RESTRICT), initiatives before categories
+    (`initiatives.category_fk` is RESTRICT). Anything else and the DELETE
     fails on a constraint rather than cleaning up.
     """
     cur.execute("DELETE FROM pipeline_step_deps WHERE step_fk IN "
@@ -86,7 +86,7 @@ def _teardown_plan(cur, creator):
     cur.execute("DELETE FROM pipeline_step_requirements WHERE step_fk IN "
                 "(SELECT id FROM pipeline_steps WHERE creator_fk = %s)", (creator,))
     cur.execute("DELETE FROM pipeline_steps WHERE creator_fk = %s", (creator,))
-    cur.execute("DELETE FROM epics WHERE creator_fk = %s", (creator,))
+    cur.execute("DELETE FROM initiatives WHERE creator_fk = %s", (creator,))
     cur.execute("DELETE FROM pipelines WHERE creator_fk = %s", (creator,))
     cur.execute("DELETE FROM requirements WHERE creator_fk = %s", (creator,))
     cur.execute("DELETE FROM categories WHERE creator_fk = %s", (creator,))
@@ -110,7 +110,7 @@ def _purge(conn, creator):
 # ---------------------------------------------------------------------------
 
 def _build_plan(post, label):
-    """project/category -> pipeline -> epic -> 3 steps -> 1 dep edge -> requirement -> 1 link.
+    """project/category -> pipeline -> initiative -> 3 steps -> 1 dep edge -> requirement -> 1 link.
 
     Built through the REST API rather than raw SQL on purpose: it is simultaneously
     the regression guard that an OWNER can still create every one of these rows.
@@ -136,17 +136,17 @@ def _build_plan(post, label):
     assert resp['statusCode'] == 200, f'{label} pipeline POST: {resp}'
     ids['pipeline'] = extract_id(resp)
 
-    # 2.0 containment: a step belongs to an epic, and the epic to the plan. There
-    # is no `pipeline_fk` on a step — the plan is derived through the epic.
-    resp = post('/darwin_dev/epics',
-                {'pipeline_fk': ids['pipeline'], 'title': f'{label} epic',
+    # 2.0 containment: a step belongs to an initiative, and the initiative to the plan. There
+    # is no `pipeline_fk` on a step — the plan is derived through the initiative.
+    resp = post('/darwin_dev/initiatives',
+                {'pipeline_fk': ids['pipeline'], 'title': f'{label} initiative',
                  'category_fk': ids['category']})
-    assert resp['statusCode'] == 200, f'{label} epic POST: {resp}'
-    ids['epic'] = extract_id(resp)
+    assert resp['statusCode'] == 200, f'{label} initiative POST: {resp}'
+    ids['initiative'] = extract_id(resp)
 
     for key in ('step_a', 'step_b', 'step_c'):
         resp = post('/darwin_dev/pipeline_steps',
-                    {'epic_fk': ids['epic'], 'title': f'{label} {key}',
+                    {'initiative_fk': ids['initiative'], 'title': f'{label} {key}',
                      'run': 'auto'})
         assert resp['statusCode'] == 200, f'{label} {key} POST: {resp}'
         ids[key] = extract_id(resp)

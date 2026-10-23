@@ -109,12 +109,12 @@ empty.
 `CREATOR_TABLE_REFERENCES` is the fourth registry: **51 columns across 30
 tables** — every `*_fk` on a `creator_fk`-bearing table whose target is also
 creator-scoped. (36 at req #3125; req #3186 added `swarm_sessions.pipeline_fk`
-and `.epic_fk`; req #3224 added `orchestration_claims.pipeline_fk`, `.epic_fk`
+and `.initiative_fk`; req #3224 added `orchestration_claims.pipeline_fk`, `.initiative_fk`
 and `.machine_fk`; req #3337 added four Pipeline 2.0 plan-layer columns;
 req #3369 added `orchestration_claims.pipeline2_fk` and `.epic2_fk`; req #3202
 added `swarm_completes.machine_fk`; req #3350 added `swarm_sessions.pipeline2_fk`
 and `.epic2_fk`; req #3355 dropped the retired middle tier's entry
-(`category_fk`, `epic_fk`) and the requirement's reference to it, migration
+(`category_fk`, `initiative_fk`) and the requirement's reference to it, migration
 20260811033413; req #3356
 dropped the whole 1.0 plan layer, migration 20260812175325 — the `epics`,
 `pipelines` and `pipeline_steps` entries with their tables, plus 1.0's two

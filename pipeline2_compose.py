@@ -9,12 +9,12 @@ call — because "no JOIN" is a property of the generic table gateway, not of
 Lambda-Rest itself.
 
 Mirrors `darwin-mcp/services/pipelines2.py`'s (pre-#3367) `get_pipeline2_composed`
-/ `get_pipeline2_epic_composed` read shape and tier-skip logic EXACTLY, so the
+/ `get_pipeline2_initiative_composed` read shape and tier-skip logic EXACTLY, so the
 payload this emits is what those functions used to build by hand over six
 gateway round trips — byte-compatible, so a consumer cannot tell which
 produced it. That module is now a ONE-CALL passthrough to this route.
 
-    {pipeline, epics[], steps[], step_requirements[], step_deps[],
+    {pipeline, initiatives[], steps[], step_requirements[], step_deps[],
      requirements[], derived{}}
 
 `pipeline2_derive.derive_plan2` (moved here from darwin-mcp by this same
@@ -24,7 +24,7 @@ WITHHELD stub exactly as darwin-mcp's `_derive` guard did.
 
 Scoping mirrors what the generic gateway already does for every read of a
 `CREATOR_FK_TABLES` table (`rest_get_table.py`): every `pipelines` /
-`epics` / `pipeline_steps` / `requirements` SELECT carries
+`initiatives` / `pipeline_steps` / `requirements` SELECT carries
 `creator_fk = %s` explicitly, not merely inherited through containment — the
 same defense-in-depth the generic gateway gave for free, replicated by hand
 because this route bypasses it. `pipeline_step_requirements` and
@@ -137,9 +137,9 @@ def withheld(reason_code, *, rows_complete, message):
     }
 
 
-def _derive(model, *, epic_scoped=False):
+def _derive(model, *, initiative_scoped=False):
     try:
-        return pipeline2_derive.derive_plan2(model, epic_scoped=epic_scoped)
+        return pipeline2_derive.derive_plan2(model, initiative_scoped=initiative_scoped)
     except Exception as e:                                 # noqa: BLE001
         print(f"pipeline2_derive.derive_plan2 failed: {e}")
         return withheld(
@@ -149,7 +149,7 @@ def _derive(model, *, epic_scoped=False):
                      "absent. Do not sequence or launch from this response."))
 
 
-def _bounded(uri, composed, *, epic_scoped=False):
+def _bounded(uri, composed, *, initiative_scoped=False):
     """The THREE-REGIME budget ladder — byte-identical logic to darwin-mcp's
     (pre-#3367) `server._bounded_plan2`. See that function's (moved) docstring
     reasoning in the git history; restated briefly here:
@@ -167,10 +167,10 @@ def _bounded(uri, composed, *, epic_scoped=False):
         return composed
 
     escape_hatch = (
-        "" if epic_scoped else
-        " Read the epic-scoped route for a smaller, complete slice of one "
-        "epic if you need `derived` for it.")
-    count_field = "`epics[0].step_count`" if epic_scoped else "`pipeline.step_count`"
+        "" if initiative_scoped else
+        " Read the initiative-scoped route for a smaller, complete slice of one "
+        "initiative if you need `derived` for it.")
+    count_field = "`initiatives[0].step_count`" if initiative_scoped else "`pipeline.step_count`"
 
     if payload_bytes(composed) <= PAYLOAD_BUDGET_BYTES:
         return composed
@@ -238,9 +238,9 @@ def _bounded(uri, composed, *, epic_scoped=False):
 _PIPELINE_COLUMNS = ('id', 'title', 'description', 'pipeline_status',
                      'execution_mode', 'locked', 'machine_fk', 'creator_fk',
                      'started_at', 'completed_at', 'create_ts', 'update_ts')
-_EPIC_COLUMNS = ('id', 'pipeline_fk', 'title', 'description', 'epic_status',
+_INITIATIVE_COLUMNS = ('id', 'pipeline_fk', 'title', 'description', 'initiative_status',
                  'locked', 'sort_order', 'category_fk', 'closed')
-_STEP_COLUMNS = ('id', 'epic_fk', 'title', 'run', 'checkpoint', 'locked',
+_STEP_COLUMNS = ('id', 'initiative_fk', 'title', 'run', 'checkpoint', 'locked',
                  'not_before', 'notes', 'creator_fk',
                  'create_ts', 'update_ts')
 # `checkpoint` and the three `locked` flags: req #3649 (migration
@@ -295,17 +295,17 @@ def compose_pipeline2(conn, pipeline_id, authenticated_user):
             return None
         pipeline = pipelines[0]
 
-        epics = _select(cursor, _EPIC_COLUMNS, 'epics',
+        initiatives = _select(cursor, _INITIATIVE_COLUMNS, 'initiatives',
                         'pipeline_fk = %s AND creator_fk = %s',
                         (pipeline_id, authenticated_user), order_by='id ASC')  # read 2
 
         steps = []
-        if epics:
-            epic_ids = sorted(e['id'] for e in epics)
+        if initiatives:
+            initiative_ids = sorted(e['id'] for e in initiatives)
             steps = _select(
                 cursor, _STEP_COLUMNS, 'pipeline_steps',
-                f'epic_fk IN {_in_clause(len(epic_ids))} AND creator_fk = %s',
-                tuple(epic_ids) + (authenticated_user,), order_by='id ASC')    # read 3
+                f'initiative_fk IN {_in_clause(len(initiative_ids))} AND creator_fk = %s',
+                tuple(initiative_ids) + (authenticated_user,), order_by='id ASC')    # read 3
         pipeline['step_count'] = len(steps)
 
         links, deps = [], []
@@ -328,7 +328,7 @@ def compose_pipeline2(conn, pipeline_id, authenticated_user):
                 tuple(requirement_ids) + (authenticated_user,), order_by='id ASC')  # read 6
 
     model = {
-        'pipeline': pipeline, 'epics': epics, 'steps': steps,
+        'pipeline': pipeline, 'initiatives': initiatives, 'steps': steps,
         'step_requirements': links, 'step_deps': deps,
         'requirements': requirements,
     }
@@ -342,15 +342,15 @@ def compose_pipeline2(conn, pipeline_id, authenticated_user):
     return _bounded(f"pipeline2_compose/{pipeline_id}", model)
 
 
-def compose_pipeline2_epic(conn, epic_id, authenticated_user):
-    """THE epic-scoped composed render. Same shape, narrowed to one epic —
-    six reads, not five, because the epic's own row AND the pipeline's own
+def compose_pipeline2_initiative(conn, initiative_id, authenticated_user):
+    """THE initiative-scoped composed render. Same shape, narrowed to one initiative —
+    six reads, not five, because the initiative's own row AND the pipeline's own
     row are both required (two independent pause scopes). Returns None when
     not found / not owned.
 
     PLUS UP TO FOUR LIGHT READS OF THE REST OF THE PLAN'S GRAPH (req #3597,
     the user's amendment: a step closed by hand blocks everything downstream).
-    A checkpoint in ANOTHER epic must hold this epic's steps exactly as a
+    A checkpoint in ANOTHER initiative must hold this initiative's steps exactly as a
     whole-plan read holds them, and only the plan's step ids, checkpoint
     flags, dependency edges, links and requirement statuses can say where one
     is and whether it still holds open work. Same
@@ -358,27 +358,27 @@ def compose_pipeline2_epic(conn, epic_id, authenticated_user):
     The graph feeds the derivation and is then DROPPED — it is not part of
     the response shape."""
     with conn.cursor(pymysql.cursors.DictCursor) as cursor:
-        epics = _select(cursor, _EPIC_COLUMNS, 'epics',
+        initiatives = _select(cursor, _INITIATIVE_COLUMNS, 'initiatives',
                         'id = %s AND creator_fk = %s',
-                        (epic_id, authenticated_user))                        # read 1
-        if not epics:
+                        (initiative_id, authenticated_user))                        # read 1
+        if not initiatives:
             return None
-        epic = epics[0]
+        initiative = initiatives[0]
 
         pipelines = _select(cursor, _PIPELINE_COLUMNS, 'pipelines',
                             'id = %s AND creator_fk = %s',
-                            (epic['pipeline_fk'], authenticated_user))        # read 2
+                            (initiative['pipeline_fk'], authenticated_user))        # read 2
         if not pipelines:
             raise ValueError(
-                f"Pipeline2 epic {epic_id} names pipeline_fk="
-                f"{epic['pipeline_fk']!r}, which does not resolve for this "
+                f"Pipeline2 initiative {initiative_id} names pipeline_fk="
+                f"{initiative['pipeline_fk']!r}, which does not resolve for this "
                 "creator. Data integrity issue — report it.")
         pipeline = pipelines[0]
 
         steps = _select(cursor, _STEP_COLUMNS, 'pipeline_steps',
-                        'epic_fk = %s AND creator_fk = %s',
-                        (epic_id, authenticated_user), order_by='id ASC')     # read 3
-        epic['step_count'] = len(steps)
+                        'initiative_fk = %s AND creator_fk = %s',
+                        (initiative_id, authenticated_user), order_by='id ASC')     # read 3
+        initiative['step_count'] = len(steps)
 
         links, deps = [], []
         if steps:
@@ -399,30 +399,30 @@ def compose_pipeline2_epic(conn, epic_id, authenticated_user):
                 f"id IN {_in_clause(len(requirement_ids))} AND creator_fk = %s",
                 tuple(requirement_ids) + (authenticated_user,), order_by='id ASC')  # read 6
 
-        plan_graph = _plan_graph_outside_epic(cursor, pipeline['id'], epic_id,
+        plan_graph = _plan_graph_outside_initiative(cursor, pipeline['id'], initiative_id,
                                               authenticated_user)
 
     model = {
-        'pipeline': pipeline, 'epics': [epic], 'steps': steps,
+        'pipeline': pipeline, 'initiatives': [initiative], 'steps': steps,
         'step_requirements': links, 'step_deps': deps,
         'requirements': requirements, 'plan_graph': plan_graph,
     }
-    model['derived'] = _derive(model, epic_scoped=True)
+    model['derived'] = _derive(model, initiative_scoped=True)
     model.pop('plan_graph')
-    return _bounded(f"pipeline2_compose_epic/{epic_id}", model, epic_scoped=True)
+    return _bounded(f"pipeline2_compose_initiative/{initiative_id}", model, initiative_scoped=True)
 
 
-def _plan_graph_outside_epic(cursor, pipeline_id, epic_id, authenticated_user):
-    """The plan's steps OUTSIDE this epic, as the derivation's checkpoint walk
+def _plan_graph_outside_initiative(cursor, pipeline_id, initiative_id, authenticated_user):
+    """The plan's steps OUTSIDE this initiative, as the derivation's checkpoint walk
     needs them (`pipeline2_derive.plan_graph_outside`). Reads 7-10, each
     skipped when the one before it finds nothing."""
     graph = {'steps': [], 'step_deps': [], 'step_requirements': [],
              'requirements': []}
     graph['steps'] = _select(
         cursor, ('id', 'checkpoint'), 'pipeline_steps',
-        'epic_fk IN (SELECT id FROM epics WHERE pipeline_fk = %s '
-        'AND creator_fk = %s) AND epic_fk <> %s AND creator_fk = %s',
-        (pipeline_id, authenticated_user, epic_id, authenticated_user),
+        'initiative_fk IN (SELECT id FROM initiatives WHERE pipeline_fk = %s '
+        'AND creator_fk = %s) AND initiative_fk <> %s AND creator_fk = %s',
+        (pipeline_id, authenticated_user, initiative_id, authenticated_user),
         order_by='id ASC')                                                    # read 7
     if not graph['steps']:
         return graph
