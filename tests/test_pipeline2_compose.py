@@ -196,7 +196,7 @@ class TestWholePlanCompose:
         for row in body['requirements']:
             assert set(row) == {'id', 'title', 'requirement_status', 'coordination_type',
                                 'ai_model', 'effort', 'machine_fk', 'tracking',
-                                'started_at', 'completed_at'}
+                                'started_at', 'completed_at', 'deferred_at'}
             assert 'description' not in row
 
     def test_steps_have_no_state_column_and_initiative_fk_not_pipeline_fk(self, owner, plan):
