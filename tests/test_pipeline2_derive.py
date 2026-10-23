@@ -224,7 +224,7 @@ def test_build_plan_rows_has_no_legacy_or_leaked_fields():
         assert set(row) == {
             'id', 'title', 'run', 'checkpoint', 'locked', 'notes',
             'open_req_ids', 'initiative_id',
-            'req_ids', 'tracking_req_ids', 'unresolved_req_ids',
+            'req_ids', 'gating_req_ids', 'tracking_req_ids', 'unresolved_req_ids',
             'launch_req_ids', 'launch_excluded', 'launch_block',
             'swarm_start_command', 'no_launch_reason', 'dep_ids',
             '_create_ts', '_started', '_not_before'}
@@ -573,7 +573,7 @@ def test_derive_plan2_shape_is_compact_ids_and_enums_only():
         'now', 'initiative_order', 'display_order', 'rows', 'pause', 'serial',
         'eligible_epic_ids', 'launch_candidate_epic_ids',
         'launch_queue',
-        'violations', 'cycle_detected', 'cycle_epic_ids',
+        'violations', 'stall_evidence', 'cycle_detected', 'cycle_epic_ids',
         'duplicate_epic_ids', 'unresolved_req_ids', 'out_of_scope_dep_ids',
         'requirement_counts'}
     for entry in plan['launch_queue']:
@@ -583,7 +583,8 @@ def test_derive_plan2_shape_is_compact_ids_and_enums_only():
             'id', 'run', 'checkpoint', 'locked', 'eligible', 'open_req_ids',
             'gate_open', 'launch_candidate', 'checkpoint_blocked_by',
             'initiative_id', 'dep_ids',
-            'out_of_scope_dep_ids', 'req_ids',
+            'out_of_scope_dep_ids', 'req_ids', 'gating_req_ids', 'not_before',
+            'stall_req_ids',
             'tracking_req_ids', 'unresolved_req_ids', 'launch_req_ids',
             'launch_excluded', 'launch_block', 'swarm_start_command',
             'no_launch_reason', 'launch_suppressed', 'suppressed_by'}
@@ -1470,3 +1471,109 @@ def test_tracking_flag_coercion_matrix():
         assert deriv.is_tracking_requirement({'tracking': value}) is False, value
 
 
+
+
+
+# ---------------------------------------------------------------------------
+# Engine 2's three plan facts (req #3757, rule R1)
+# ---------------------------------------------------------------------------
+
+def _stall_model(status='development', started_at='2026-08-09T00:00:00', evidence=None):
+    model = _basic_model()
+    model['requirements'] = [dict(_req(5010, status=status), started_at=started_at),
+                             _req(5011)]
+    if evidence is not None:
+        model['work_evidence'] = evidence
+    return model
+
+
+def _rows(plan):
+    return {row['id']: row for row in plan['rows']}
+
+
+def test_gating_req_ids_are_the_seated_requirements_minus_containers():
+    model = _basic_model()
+    model['epic_requirements'].append({'epic_fk': 9001, 'requirement_fk': 5012})
+    model['requirements'].append(dict(_req(5012), tracking=1))
+    rows = _rows(deriv.derive_plan2(model, now='2026-08-09T00:00:00Z'))
+    assert rows[9001]['gating_req_ids'] == [5010]
+    assert rows[9001]['req_ids'] == [5010, 5012]
+    assert rows[9003]['gating_req_ids'] == []
+
+
+def test_not_before_is_public_as_iso_utc():
+    model = _basic_model()
+    model['epics'][0]['not_before'] = '2026-08-10 12:30:00'
+    rows = _rows(deriv.derive_plan2(model, now='2026-08-09T00:00:00Z'))
+    assert rows[9001]['not_before'] == '2026-08-10T12:30:00Z'
+    assert rows[9002]['not_before'] is None
+
+
+def test_an_unworked_development_requirement_past_the_grace_is_stalled():
+    plan = deriv.derive_plan2(
+        _stall_model(evidence={'live_req_ids': [], 'primary_req_ids': []}),
+        now='2026-08-09T01:00:00Z')
+    assert plan['stall_evidence'] == 'complete'
+    assert _rows(plan)[9001]['stall_req_ids'] == [5010]
+
+
+def test_a_live_session_or_open_primary_record_is_not_a_stall():
+    for evidence in ({'live_req_ids': [5010], 'primary_req_ids': []},
+                     {'live_req_ids': [], 'primary_req_ids': [5010]}):
+        plan = deriv.derive_plan2(_stall_model(evidence=evidence), now='2026-08-09T01:00:00Z')
+        assert _rows(plan)[9001]['stall_req_ids'] == []
+
+
+def test_a_requirement_just_moved_to_development_is_inside_the_grace():
+    plan = deriv.derive_plan2(
+        _stall_model(started_at='2026-08-09T00:58:00',
+                     evidence={'live_req_ids': [], 'primary_req_ids': []}),
+        now='2026-08-09T01:00:00Z')
+    assert _rows(plan)[9001]['stall_req_ids'] == []
+
+
+def test_unread_evidence_claims_no_stall_and_says_so():
+    plan = deriv.derive_plan2(_stall_model(), now='2026-08-09T01:00:00Z')
+    assert plan['stall_evidence'] == 'unavailable'
+    assert _rows(plan)[9001]['stall_req_ids'] == []
+
+
+def test_work_evidence_retires_a_primary_record_by_link_or_later_launch():
+    starts = [
+        {'id': 10, 'arguments': 'primary req#5010', 'linked_session_count': 0},
+        {'id': 11, 'arguments': ' primary req#5011 ', 'linked_session_count': 1},
+        {'id': 12, 'arguments': 'primary req#5012', 'linked_session_count': 0},
+        {'id': 13, 'arguments': '5012 5013', 'linked_session_count': 2},
+    ]
+    evidence = deriv.work_evidence(['requirement:7', 'requirement:x', None], starts)
+    assert evidence == {'live_req_ids': [7], 'primary_req_ids': [5010]}
+
+
+def test_a_requirement_on_two_epics_is_a_violation():
+    model = _basic_model()
+    model['epic_requirements'].append({'epic_fk': 9002, 'requirement_fk': 5010})
+    plan = deriv.derive_plan2(model, now='2026-08-09T00:00:00Z')
+    seat = [v for v in plan['violations'] if v['invariant'] == 'one-epic-per-requirement']
+    assert seat == [{'invariant': 'one-epic-per-requirement', 'epic_ids': [9001, 9002],
+                     'requirement_id': 5010, 'message': seat[0]['message']}]
+
+
+def test_a_container_on_two_epics_is_not_a_violation():
+    model = _basic_model()
+    model['requirements'][0]['tracking'] = 1
+    model['epic_requirements'].append({'epic_fk': 9002, 'requirement_fk': 5010})
+    plan = deriv.derive_plan2(model, now='2026-08-09T00:00:00Z')
+    assert not [v for v in plan['violations'] if v['invariant'] == 'one-epic-per-requirement']
+
+
+def test_an_initiative_read_reports_a_seat_in_another_initiative():
+    """An initiative-scoped read carries its requirements' seats on the plan's
+    other epics (`plan_graph.outside_seats`), so a double seat across
+    initiatives is reported in both scopes."""
+    model = _basic_model()
+    model['plan_graph'] = {'epics': [{'id': 9100, 'checkpoint': 0}], 'epic_deps': [],
+                           'epic_requirements': [], 'requirements': [],
+                           'outside_seats': [{'epic_fk': 9100, 'requirement_fk': 5010}]}
+    plan = deriv.derive_plan2(model, now='2026-08-09T00:00:00Z', initiative_scoped=True)
+    seat = [v for v in plan['violations'] if v['invariant'] == 'one-epic-per-requirement']
+    assert [(v['requirement_id'], v['epic_ids']) for v in seat] == [(5010, [9001, 9100])]

@@ -283,6 +283,59 @@ def _in_clause(n):
     return '(' + ','.join(['%s'] * n) + ')'
 
 
+def _outside_seats(cursor, plan_graph, requirement_ids):
+    """This initiative's requirements' seats on the plan's OTHER epics (req
+    #3757) — what `seat_violations` needs to report a double seat across
+    initiatives. One light SELECT, none when either side is empty; the outside
+    epic ids are already scoped by `creator_fk` in `plan_graph`."""
+    outside_ids = sorted(e['id'] for e in plan_graph.get('epics') or [])
+    if not outside_ids or not requirement_ids:
+        return []
+    return _select(cursor, _LINK_COLUMNS, 'epic_requirements',
+                   f"epic_fk IN {_in_clause(len(outside_ids))} "
+                   f"AND requirement_fk IN {_in_clause(len(requirement_ids))}",
+                   tuple(outside_ids) + tuple(requirement_ids))
+
+
+def _work_evidence(cursor, requirements, authenticated_user):
+    """Who is working each `development` requirement (req #3757) — the stall
+    evidence `pipeline2_derive.stall_requirement_ids` reads, so the engine
+    computes no stall of its own (rule R1). Two light SELECTs, same invocation,
+    and none at all when nothing in the read is in `development`.
+
+    Returns None when either read fails: the derivation then says
+    `stall_evidence: unavailable` rather than reporting every unworked
+    requirement as stalled — or none of them as fine. The rows feed the
+    derivation and are dropped from the response, like `plan_graph`."""
+    developing = [r['id'] for r in requirements
+                  if r.get('requirement_status') == 'development']
+    if not developing:
+        return {'live_req_ids': [], 'primary_req_ids': []}
+    refs = ['requirement:%d' % rid for rid in developing]
+    statuses = pipeline2_derive.LIVE_SESSION_STATUSES
+    try:
+        sessions = _select(
+            cursor, ('source_ref',), 'swarm_sessions',
+            f"creator_fk = %s AND swarm_status IN {_in_clause(len(statuses))} "
+            f"AND source_ref IN {_in_clause(len(refs))}",
+            (authenticated_user,) + tuple(statuses) + tuple(refs))
+        tag = pipeline2_derive.PRIMARY_START_TAG + '%'
+        starts = _select(
+            cursor, ('id', 'arguments',
+                     '(SELECT COUNT(*) FROM swarm_start_sessions l '
+                     'WHERE l.swarm_start_fk = s.id) AS linked_session_count'),
+            'swarm_starts s',
+            # Every primary birth record, and every start after the oldest one
+            # (a later start naming its requirement retires it).
+            "s.creator_fk = %s AND s.id >= (SELECT COALESCE(MIN(p.id), 2147483647) "
+            "FROM swarm_starts p WHERE p.creator_fk = %s AND TRIM(p.arguments) LIKE %s)",
+            (authenticated_user, authenticated_user, tag), order_by='s.id ASC')
+    except pymysql.Error as e:
+        print(f"pipeline2_compose work evidence read failed: {e}")
+        return None
+    return pipeline2_derive.work_evidence([r.get('source_ref') for r in sessions], starts)
+
+
 # ---------------------------------------------------------------------------
 # The two composed reads
 # ---------------------------------------------------------------------------
@@ -329,13 +382,15 @@ def compose_pipeline2(conn, pipeline_id, authenticated_user):
                 cursor, _REQUIREMENT_COLUMNS, 'requirements',
                 f"id IN {_in_clause(len(requirement_ids))} AND creator_fk = %s",
                 tuple(requirement_ids) + (authenticated_user,), order_by='id ASC')  # read 6
+        evidence = _work_evidence(cursor, requirements, authenticated_user)
 
     model = {
         'pipeline': pipeline, 'initiatives': initiatives, 'epics': epics,
         'epic_requirements': links, 'epic_deps': deps,
-        'requirements': requirements,
+        'requirements': requirements, 'work_evidence': evidence,
     }
     model['derived'] = _derive(model)
+    model.pop('work_evidence')
     # `uri` only ever surfaces inside a truncation marker's `resource` field
     # (regime C, `_bounded`) — nothing parses it. It is the ROUTE's own
     # identifier, not `darwin://pipeline2/{id}`: this payload now serves the
@@ -404,14 +459,18 @@ def compose_pipeline2_initiative(conn, initiative_id, authenticated_user):
 
         plan_graph = _plan_graph_outside_initiative(cursor, pipeline['id'], initiative_id,
                                               authenticated_user)
+        plan_graph['outside_seats'] = _outside_seats(cursor, plan_graph, requirement_ids)
+        evidence = _work_evidence(cursor, requirements, authenticated_user)
 
     model = {
         'pipeline': pipeline, 'initiatives': [initiative], 'epics': epics,
         'epic_requirements': links, 'epic_deps': deps,
         'requirements': requirements, 'plan_graph': plan_graph,
+        'work_evidence': evidence,
     }
     model['derived'] = _derive(model, initiative_scoped=True)
     model.pop('plan_graph')
+    model.pop('work_evidence')
     return _bounded(f"pipeline2_compose_initiative/{initiative_id}", model, initiative_scoped=True)
 
 
