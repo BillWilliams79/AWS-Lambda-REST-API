@@ -194,6 +194,8 @@ __all__ = [
     'launch_candidacy', 'is_checkpoint',
     'open_checkpoints_upstream', 'plan_graph_outside',
     'pause_state', 'serial_state', 'requirement_counts', 'derive_plan2',
+    'LIVE_SESSION_STATUSES', 'PRIMARY_START_TAG', 'STALL_GRACE_SECONDS',
+    'work_evidence', 'stall_requirement_ids', 'seat_violations',
 ]
 
 # Requirement statuses that are no longer open work. Byte-identical to
@@ -236,6 +238,34 @@ PAUSED_STATUS = 'paused'
 # written before this column existed a meaning for.
 MODE_PARALLEL = 'parallel'
 MODE_SERIAL = 'serial'
+
+# ---------------------------------------------------------------------------
+# Stall evidence (req #3757) — "is anybody working this?", answered HERE so the
+# engine computes nothing about the plan (rule R1, `memory/engine-rules.md`).
+# The predicate is `scripts/swarm/pipeline_regression.worked_requirement_ids`
+# (req #3290) restated over rows the composing route reads in the same
+# invocation: a live session names the requirement in `source_ref`, or an
+# OPEN primary birth record does. The two are kept apart there for a
+# diagnostic; here only their union matters, because a requirement either
+# of them covers is not stalled.
+# ---------------------------------------------------------------------------
+
+# Every swarm session status that is NOT finished. Same list as
+# `pipeline_regression.LIVE_SESSION_STATUSES`.
+LIVE_SESSION_STATUSES = ('starting', 'waiting', 'planning', 'active', 'review',
+                         'completing')
+
+# The tag `primary-start-record.sh` writes into `swarm_starts.arguments` for a
+# `/primary-ai-swarm-start` birth record — the only mark of primary-executed
+# work (`pipeline_regression.PRIMARY_START_TAG`).
+PRIMARY_START_TAG = 'primary req#'
+
+# How long a requirement must have been in `development` before nobody working
+# it is a stall. `session-init.sh` writes `development` BEFORE it creates the
+# session, so a requirement read the instant after a launch is legitimately
+# unworked. The old engine got the same effect by only judging requirements it
+# had watched past its announce window.
+STALL_GRACE_SECONDS = 300
 
 # Statuses that say a requirement's work has begun — the initiative-order proxy's
 # "started" test (`_initiative_block_order`).
@@ -481,6 +511,10 @@ def build_plan_rows(model):
                                                  reqs_by_id),
             'initiative_id': epic.get('initiative_fk'),
             'req_ids': req_ids,
+            # req #3757 — the epic's GATING set: every seated requirement but
+            # the tracking containers, unresolved ones included (holding is the
+            # safe direction). The engine reads it instead of re-deriving it.
+            'gating_req_ids': [rid for rid in req_ids if rid not in tracking_set],
             'tracking_req_ids': tracking_ids,
             'unresolved_req_ids': unresolved,
             'launch_req_ids': launch_ids,
@@ -497,9 +531,9 @@ def build_plan_rows(model):
             # in `derive_plan2`'s own row projection, matching 1.0's compact-
             # block discipline, `test_the_derived_block_is_compact_ids_and_
             # enums_only`'s 2.0 counterpart). `_not_before` is the raw gate
-            # `eligibility()` resolves into the public boolean `eligible` —
-            # the raw value itself is item 3's `time_deps` deletion target
-            # and must not reappear on the public row.
+            # `eligibility()` resolves into the public boolean `eligible`.
+            # The public row carries it too, as `not_before` (req #3757 —
+            # Engine 2's NOT_BEFORE detail, rule R1), normalised to ISO UTC.
             '_create_ts': epic.get('create_ts'),
             '_started': started,
             '_not_before': epic.get('not_before'),
@@ -1295,6 +1329,155 @@ def requirement_counts(model):
 
 
 # ---------------------------------------------------------------------------
+# Engine 2's three plan facts (req #3757) — rule R1: a fact the engine needs is
+# added to the derivation, never computed beside it
+# ---------------------------------------------------------------------------
+
+def _session_requirement_id(source_ref):
+    """`requirement:<id>` -> id, else None (`pipeline_regression.session_requirement_id`)."""
+    if not isinstance(source_ref, str) or not source_ref.startswith('requirement:'):
+        return None
+    try:
+        return int(source_ref.split(':', 1)[1])
+    except ValueError:
+        return None
+
+
+def _primary_requirement_id(arguments):
+    """The requirement a primary birth record is for; None for a worker launch
+    or an unreadable id (`pipeline_regression.primary_start_requirement_id`)."""
+    if not isinstance(arguments, str):
+        return None
+    text = arguments.strip()
+    if not text.startswith(PRIMARY_START_TAG):
+        return None
+    rest = text[len(PRIMARY_START_TAG):].split()
+    try:
+        return int(rest[0]) if rest else None
+    except ValueError:
+        return None
+
+
+def _named_requirement_ids(arguments):
+    """Every requirement id a `swarm_starts.arguments` value names."""
+    if not isinstance(arguments, str):
+        return set()
+    text = arguments.strip()
+    if text.startswith(PRIMARY_START_TAG):
+        text = text[len(PRIMARY_START_TAG):]
+    found = set()
+    for token in text.split():
+        try:
+            found.add(int(token))
+        except ValueError:
+            continue
+    return found
+
+
+def work_evidence(session_refs, start_rows):
+    """`{live_req_ids, primary_req_ids}` from the rows the composing route read.
+
+    `session_refs` are the `source_ref` values of LIVE sessions. `start_rows`
+    are `swarm_starts` rows (`id`, `arguments`, `linked_session_count`) — every
+    primary birth record and every row after the oldest of them. A primary
+    record is OPEN while no session is linked to it and no LATER start names
+    its requirement (`pipeline_regression.open_primary_requirement_ids`, req
+    #3290: the closeout's link is best-effort, so a later launch also retires
+    it)."""
+    live = sorted({rid for rid in (_session_requirement_id(r) for r in session_refs or ())
+                   if rid is not None})
+    rows = [r for r in start_rows or () if isinstance(r, dict) and isinstance(r.get('id'), int)]
+    primary = set()
+    for row in rows:
+        rid = _primary_requirement_id(row.get('arguments'))
+        if rid is None or (row.get('linked_session_count') or 0) != 0:
+            continue
+        later = any(other['id'] > row['id'] and rid in _named_requirement_ids(other.get('arguments'))
+                    for other in rows)
+        if not later:
+            primary.add(rid)
+    return {'live_req_ids': live, 'primary_req_ids': sorted(primary)}
+
+
+def _evidence(model):
+    """The work evidence the composing route attached, or None when it could
+    not be read (or this caller supplied none)."""
+    evidence = model.get('work_evidence')
+    if not isinstance(evidence, dict):
+        return None
+    live, primary = evidence.get('live_req_ids'), evidence.get('primary_req_ids')
+    if not isinstance(live, list) or not isinstance(primary, list):
+        return None
+    return {'live': set(live), 'primary': set(primary)}
+
+
+def stall_requirement_ids(row, reqs_by_id, evidence, now):
+    """`stall_req_ids` for one row: its gating requirements at `development`
+    that NOBODY is working — no live session and no open primary birth record —
+    and that have been in `development` past `STALL_GRACE_SECONDS` (a missing
+    `started_at` counts as past it). Empty when the evidence is unavailable:
+    `stall_evidence` says so, and an unread sweep never claims a stall."""
+    if evidence is None:
+        return []
+    now_epoch = _to_epoch(now)
+    stalled = []
+    for rid in row.get('gating_req_ids') or []:
+        req = reqs_by_id.get(rid) or {}
+        if req.get('requirement_status') != 'development':
+            continue
+        if rid in evidence['live'] or rid in evidence['primary']:
+            continue
+        started = _to_epoch(req.get('started_at'))
+        if started is not None and now_epoch is not None \
+                and now_epoch - started < STALL_GRACE_SECONDS:
+            continue
+        stalled.append(rid)
+    return stalled
+
+
+def seat_violations(model):
+    """`one-epic-per-requirement` — a work requirement seated on more than one
+    epic would be announced, and launched, once per seat. The junction's key
+    permits it, so the derivation reports it (retirement map item 4, req #3757).
+    Tracking containers are never launched and are not counted."""
+    reqs_by_id = _index_by_id(model.get('requirements'))
+    epic_ids = {e.get('id') for e in model.get('epics') or []}
+    # An initiative-scoped read also carries this initiative's requirements'
+    # seats in the plan's OTHER initiatives (`plan_graph.outside_seats`), so a
+    # double seat across initiatives is reported in both scopes.
+    outside = list((model.get('plan_graph') or {}).get('outside_seats') or [])
+    epic_ids |= {link.get('epic_fk') for link in outside}
+    seats = {}
+    for link in list(model.get('epic_requirements') or []) + outside:
+        rid, eid = link.get('requirement_fk'), link.get('epic_fk')
+        if eid not in epic_ids or is_tracking_requirement(reqs_by_id.get(rid)):
+            continue
+        if eid not in seats.setdefault(rid, []):
+            seats[rid].append(eid)
+    return [{'invariant': 'one-epic-per-requirement',
+             'epic_ids': sorted(eids, key=_id_sort_key), 'requirement_id': rid,
+             'message': (f"requirement {rid} is seated on epics "
+                         f"{', '.join(str(e) for e in sorted(eids, key=_id_sort_key))} "
+                         "— it would be launched once per seat")}
+            for rid, eids in sorted(seats.items(), key=lambda kv: _id_sort_key(kv[0]))
+            if len(eids) > 1]
+
+
+def _public_time(value):
+    """A stored timestamp as the payload carries it: ISO-8601 UTC with `Z`."""
+    if value is None or value == '':
+        return None
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None).isoformat(timespec='seconds') + 'Z'
+    text = str(value).strip().replace(' ', 'T')
+    if len(text) == 10:
+        text += 'T00:00:00'
+    if _to_epoch(text) is None:
+        return text
+    return text if text.endswith(('Z', 'z')) or '+' in text[10:] or '-' in text[10:] else text + 'Z'
+
+
+# ---------------------------------------------------------------------------
 # The whole derivation, in one call
 # ---------------------------------------------------------------------------
 
@@ -1346,6 +1529,9 @@ def derive_plan2(model, now=None, initiative_scoped=False):
     # pause and a turn must name both (matches 1.0's ordering, req #3388).
     serial = serial_state(model, rows, ordered['initiative_order'])
     violations = violations + serial_deadlocks(rows, ordered['initiative_order'], serial['serial'])
+    violations = violations + seat_violations(model)
+    evidence = _evidence(model)
+    reqs_by_id = _index_by_id(model.get('requirements'))
 
     by_id = {row['id']: row for row in rows}
     # The user's amendment to req #3597 — ONE checkpoint walk per row, cached
@@ -1412,6 +1598,12 @@ def derive_plan2(model, now=None, initiative_scoped=False):
             # `out_of_scope_dep_ids` by hand to find the honest reason.
             'out_of_scope_dep_ids': [d for d in row['dep_ids'] if d in out_of_scope_set],
             'req_ids': row['req_ids'],
+            # req #3757 — the three facts Engine 2 reads instead of computing
+            # them (rule R1): the gating set, the epic's own start time, and
+            # the gating requirements nobody is working.
+            'gating_req_ids': row['gating_req_ids'],
+            'not_before': _public_time(row['_not_before']),
+            'stall_req_ids': stall_requirement_ids(row, reqs_by_id, evidence, now),
             'tracking_req_ids': row['tracking_req_ids'],
             'unresolved_req_ids': row['unresolved_req_ids'],
             'launch_req_ids': row['launch_req_ids'],
@@ -1432,6 +1624,10 @@ def derive_plan2(model, now=None, initiative_scoped=False):
         # requirement (`launch_queue`): the engine ranks by position here.
         'launch_queue': queue,
         'violations': violations,
+        # req #3757 — whether `stall_req_ids` could be answered: `complete`
+        # when the work evidence was read, `unavailable` when it was not (every
+        # row's `stall_req_ids` is then empty, which is NOT an all-clear).
+        'stall_evidence': 'complete' if evidence is not None else 'unavailable',
         'cycle_detected': ordered['cycle_detected'],
         'cycle_epic_ids': ordered['cycle_epic_ids'],
         'duplicate_epic_ids': ordered['duplicate_epic_ids'],
