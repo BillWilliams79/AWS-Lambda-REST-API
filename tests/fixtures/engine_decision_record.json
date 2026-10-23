@@ -1,496 +1,496 @@
 {
- "inputs": {
-  "sha256:5b605443e6d589720145e0a4e03edb1533af414d3bf8099b6034b631a20cca15": {
-   "derived": {
-    "cycle_detected": false,
-    "cycle_step_ids": [],
-    "display_order": [
-     101
-    ],
-    "duplicate_step_ids": [],
-    "eligible_step_ids": [
-     101
-    ],
-    "initiative_order": [
-     90
-    ],
-    "launch_candidate_step_ids": [
-     101
-    ],
-    "launch_queue": [
-     {
-      "requirement_id": 3004,
-      "step_id": 101
-     },
-     {
-      "requirement_id": 3001,
-      "step_id": 101
-     },
-     {
-      "requirement_id": 3002,
-      "step_id": 101
-     },
-     {
-      "requirement_id": 3003,
-      "step_id": 101
-     }
-    ],
-    "now": "2026-10-22T08:01:00Z",
-    "out_of_scope_dep_ids": [],
-    "pause": {
-     "paused_initiative_ids": [],
-     "pipeline_paused": false,
-     "pipeline_status": "active",
-     "suppressed_step_ids": []
-    },
-    "requirement_counts": {
-     "by_initiative": [
-      {
-       "initiative_id": 90,
-       "met": 0,
-       "total": 4
-      }
-     ],
-     "overall": {
-      "met": 0,
-      "total": 4
-     }
-    },
-    "rows": [
-     {
-      "checkpoint": true,
-      "checkpoint_blocked_by": [],
-      "dep_ids": [],
-      "eligible": true,
-      "gate_open": true,
-      "id": 101,
-      "initiative_id": 90,
-      "launch_block": null,
-      "launch_candidate": true,
-      "launch_excluded": [],
-      "launch_req_ids": [
-       3001,
-       3002,
-       3003,
-       3004
-      ],
-      "launch_suppressed": false,
-      "locked": false,
-      "no_launch_reason": null,
-      "open_req_ids": [
-       3001,
-       3002,
-       3003,
-       3004
-      ],
-      "out_of_scope_dep_ids": [],
-      "req_ids": [
-       3001,
-       3002,
-       3003,
-       3004
-      ],
-      "run": "auto",
-      "suppressed_by": [],
-      "swarm_start_command": "/swarm-start 3001 3002 3003 3004",
-      "tracking_req_ids": [],
-      "unresolved_req_ids": []
-     }
-    ],
-    "serial": {
-     "closed_initiative_ids": [],
-     "execution_mode": "parallel",
-     "held_step_ids": [],
-     "initiative_order": [
-      90
-     ],
-     "live_initiative_id": 90,
-     "serial": false,
-     "waiting_initiative_ids": []
-    },
-    "unresolved_req_ids": [],
-    "violations": []
-   },
-   "initiatives": [
-    {
-     "closed": 0,
-     "id": 90,
-     "initiative_status": "active",
-     "locked": 0,
-     "pipeline_fk": 900,
-     "sort_order": null,
-     "title": "Initiative 90"
-    }
-   ],
-   "pipeline": {
-    "execution_mode": "parallel",
-    "id": 900,
-    "locked": 0,
-    "machine_fk": null,
-    "pipeline_status": "active",
-    "step_count": 1,
-    "title": "Scenario plan"
-   },
-   "requirements": [
-    {
-     "ai_model": "opus",
-     "completed_at": null,
-     "coordination_type": "implemented",
-     "effort": "high",
-     "id": 3001,
-     "machine_fk": null,
-     "requirement_status": "swarm_ready",
-     "started_at": null,
-     "title": "Requirement 3001",
-     "tracking": 0
-    },
-    {
-     "ai_model": "opus",
-     "completed_at": null,
-     "coordination_type": "implemented",
-     "effort": "high",
-     "id": 3002,
-     "machine_fk": null,
-     "requirement_status": "swarm_ready",
-     "started_at": null,
-     "title": "Requirement 3002",
-     "tracking": 0
-    },
-    {
-     "ai_model": "opus",
-     "completed_at": null,
-     "coordination_type": "implemented",
-     "effort": "high",
-     "id": 3003,
-     "machine_fk": null,
-     "requirement_status": "swarm_ready",
-     "started_at": null,
-     "title": "Requirement 3003",
-     "tracking": 0
-    },
-    {
-     "ai_model": "opus",
-     "completed_at": null,
-     "coordination_type": "deployed",
-     "effort": "high",
-     "id": 3004,
-     "machine_fk": null,
-     "requirement_status": "swarm_ready",
-     "started_at": null,
-     "title": "Requirement 3004",
-     "tracking": 0
-    }
-   ],
-   "step_deps": [],
-   "step_requirements": [
-    {
-     "requirement_fk": 3001,
-     "step_fk": 101
-    },
-    {
-     "requirement_fk": 3002,
-     "step_fk": 101
-    },
-    {
-     "requirement_fk": 3003,
-     "step_fk": 101
-    },
-    {
-     "requirement_fk": 3004,
-     "step_fk": 101
-    }
-   ],
-   "steps": [
-    {
-     "checkpoint": 1,
-     "create_ts": "2026-10-21T09:00:41",
-     "id": 101,
-     "initiative_fk": 90,
-     "locked": 0,
-     "not_before": null,
-     "notes": null,
-     "run": "auto",
-     "title": "Step 101"
-    }
-   ]
-  },
-  "sha256:8f442c0b8c78e8642f9f429e63d060a409d02bead7a9a24acaa473e7cb7d0613": {
-   "cut": 0,
-   "cycle": {
-    "now": "2026-10-22T08:00:00Z",
-    "seq": 1,
-    "verdict": "OK",
-    "verdict_detail": null
-   },
-   "debounce": {},
-   "events": [],
-   "id": "sha256:8f442c0b8c78e8642f9f429e63d060a409d02bead7a9a24acaa473e7cb7d0613",
-   "inputs": {
-    "capacity": "sha256:444eaae2846de9eed2df2ce8014d9bb5bea8349609890842c82dd5bcc706ca2c",
-    "claims": "sha256:f44bc3d6d7108cb063c52414b615f1b6de7313f6f31bce8f9b4256bd0a7ffa77",
-    "clock": "sha256:f95d2ef5020a865d486b1b759774ae25bbef87efa86aa7bd8b163f76bf0d4d7b",
-    "plan_payload": "sha256:0a6290e753d9c3c3594ae3cf0fe9aecb6f5a0eba392c4bad773e02f17c77cf6c",
-    "prior_record": null
-   },
-   "limits": {
-    "ceiling": 4,
-    "free": 0,
-    "in_flight_req_ids": [],
-    "live": 4,
-    "reserved": 0
-   },
-   "location": {
-    "claim_id": 1,
-    "engine_pid": 5101,
-    "machine_fk": 1,
-    "role": "lead",
-    "scope": {
-     "initiative_id": null,
-     "pipeline_id": 900
-    },
-    "terminal_pid": 4101
-   },
-   "observed": {
-    "drained_since": null,
-    "stalled": [],
-    "status": {
-     "3001": "swarm_ready",
-     "3002": "swarm_ready",
-     "3003": "swarm_ready",
-     "3004": "swarm_ready"
-    },
-    "steps": {
-     "101": [
-      3001,
-      3002,
-      3003,
-      3004
-     ]
-    },
-    "violations": []
-   },
-   "outcomes": {},
-   "prior_id": null,
-   "queue": [
-    {
-     "code": "CAPACITY",
-     "detail": null,
-     "requirement_id": 3004,
-     "step_id": 101
-    },
-    {
-     "code": "CAPACITY",
-     "detail": null,
-     "requirement_id": 3001,
-     "step_id": 101
-    },
-    {
-     "code": "CAPACITY",
-     "detail": null,
-     "requirement_id": 3002,
-     "step_id": 101
-    },
-    {
-     "code": "CAPACITY",
-     "detail": null,
-     "requirement_id": 3003,
-     "step_id": 101
-    }
-   ],
-   "schema": "engine2.decision_record/1",
-   "steps": [
-    {
-     "code": "CAPACITY",
-     "detail": null,
-     "initiative_id": 90,
-     "items": [
-      {
-       "code": "CAPACITY",
-       "requirement_id": 3004
-      },
-      {
-       "code": "CAPACITY",
-       "requirement_id": 3001
-      },
-      {
-       "code": "CAPACITY",
-       "requirement_id": 3002
-      },
-      {
-       "code": "CAPACITY",
-       "requirement_id": 3003
-      }
-     ],
-     "step_id": 101
-    }
-   ]
-  },
-  "sha256:b7bb84a85c9c9e8ff4e760aff1bf55164b8d0032248cdd8e154c7f0eede0701b": {
-   "now": "2026-10-22T08:01:00Z"
-  },
-  "sha256:c154fef3631103098948d6a8df861ee1bef089d4492f766077620b91df6187c4": {
-   "ceiling": 4,
-   "live": 2,
-   "reserved_elsewhere": 0
-  },
-  "sha256:f44bc3d6d7108cb063c52414b615f1b6de7313f6f31bce8f9b4256bd0a7ffa77": {
-   "live": [
-    {
-     "id": 1,
-     "initiative_fk": null,
-     "machine_fk": 1,
-     "pipeline_fk": 900,
-     "stale": false
-    }
-   ],
-   "own": {
-    "claim_id": 1,
-    "engine_pid": 5101,
-    "initiative_id": null,
-    "machine_fk": 1,
-    "pipeline_id": 900,
-    "terminal_pid": 4101
-   },
-   "proven": true
-  }
- },
- "record": {
-  "cut": 2,
-  "cycle": {
-   "now": "2026-10-22T08:01:00Z",
-   "seq": 2,
-   "verdict": "OK",
-   "verdict_detail": null
-  },
-  "debounce": {
-   "3001": {
-    "announced_at": "2026-10-22T08:01:00Z",
-    "attempts": 1,
-    "step_id": 101
-   },
-   "3004": {
-    "announced_at": "2026-10-22T08:01:00Z",
-    "attempts": 1,
-    "step_id": 101
-   }
-  },
-  "events": [],
-  "id": "sha256:eb83e0c5fd09532cea9ee6a1682c5f5f9291cbcad9361cbcd04283cc86e74aee",
   "inputs": {
-   "capacity": "sha256:c154fef3631103098948d6a8df861ee1bef089d4492f766077620b91df6187c4",
-   "claims": "sha256:f44bc3d6d7108cb063c52414b615f1b6de7313f6f31bce8f9b4256bd0a7ffa77",
-   "clock": "sha256:b7bb84a85c9c9e8ff4e760aff1bf55164b8d0032248cdd8e154c7f0eede0701b",
-   "plan_payload": "sha256:5b605443e6d589720145e0a4e03edb1533af414d3bf8099b6034b631a20cca15",
-   "prior_record": "sha256:8f442c0b8c78e8642f9f429e63d060a409d02bead7a9a24acaa473e7cb7d0613"
+    "sha256:a4c5f3cb40f6cea03fb0a04f0189de86bcbdf6a6321e3037edb4875cd1fcf193": {
+      "cut": 0,
+      "cycle": {
+        "now": "2026-10-22T08:00:00Z",
+        "seq": 1,
+        "verdict": "OK",
+        "verdict_detail": null
+      },
+      "debounce": {},
+      "epics": [
+        {
+          "code": "CAPACITY",
+          "detail": null,
+          "epic_id": 101,
+          "initiative_id": 90,
+          "items": [
+            {
+              "code": "CAPACITY",
+              "requirement_id": 3004
+            },
+            {
+              "code": "CAPACITY",
+              "requirement_id": 3001
+            },
+            {
+              "code": "CAPACITY",
+              "requirement_id": 3002
+            },
+            {
+              "code": "CAPACITY",
+              "requirement_id": 3003
+            }
+          ]
+        }
+      ],
+      "events": [],
+      "id": "sha256:a4c5f3cb40f6cea03fb0a04f0189de86bcbdf6a6321e3037edb4875cd1fcf193",
+      "inputs": {
+        "capacity": "sha256:444eaae2846de9eed2df2ce8014d9bb5bea8349609890842c82dd5bcc706ca2c",
+        "claims": "sha256:f44bc3d6d7108cb063c52414b615f1b6de7313f6f31bce8f9b4256bd0a7ffa77",
+        "clock": "sha256:f95d2ef5020a865d486b1b759774ae25bbef87efa86aa7bd8b163f76bf0d4d7b",
+        "plan_payload": "sha256:01d80bb8d671b644639d929a16d847fde71005d7c28fccb3e8f1a8411e81ffd1",
+        "prior_record": null
+      },
+      "limits": {
+        "ceiling": 4,
+        "free": 0,
+        "in_flight_req_ids": [],
+        "live": 4,
+        "reserved": 0
+      },
+      "location": {
+        "claim_id": 1,
+        "engine_pid": 5101,
+        "machine_fk": 1,
+        "role": "lead",
+        "scope": {
+          "initiative_id": null,
+          "pipeline_id": 900
+        },
+        "terminal_pid": 4101
+      },
+      "observed": {
+        "drained_since": null,
+        "epics": {
+          "101": [
+            3001,
+            3002,
+            3003,
+            3004
+          ]
+        },
+        "stalled": [],
+        "status": {
+          "3001": "swarm_ready",
+          "3002": "swarm_ready",
+          "3003": "swarm_ready",
+          "3004": "swarm_ready"
+        },
+        "violations": []
+      },
+      "outcomes": {},
+      "prior_id": null,
+      "queue": [
+        {
+          "code": "CAPACITY",
+          "detail": null,
+          "epic_id": 101,
+          "requirement_id": 3004
+        },
+        {
+          "code": "CAPACITY",
+          "detail": null,
+          "epic_id": 101,
+          "requirement_id": 3001
+        },
+        {
+          "code": "CAPACITY",
+          "detail": null,
+          "epic_id": 101,
+          "requirement_id": 3002
+        },
+        {
+          "code": "CAPACITY",
+          "detail": null,
+          "epic_id": 101,
+          "requirement_id": 3003
+        }
+      ],
+      "schema": "engine2.decision_record/1"
+    },
+    "sha256:b7bb84a85c9c9e8ff4e760aff1bf55164b8d0032248cdd8e154c7f0eede0701b": {
+      "now": "2026-10-22T08:01:00Z"
+    },
+    "sha256:b9fc8ea41df139953ff2acfdbfac3496530cac5637566f302fc5718fe425232e": {
+      "derived": {
+        "cycle_detected": false,
+        "cycle_epic_ids": [],
+        "display_order": [
+          101
+        ],
+        "duplicate_epic_ids": [],
+        "eligible_epic_ids": [
+          101
+        ],
+        "initiative_order": [
+          90
+        ],
+        "launch_candidate_epic_ids": [
+          101
+        ],
+        "launch_queue": [
+          {
+            "epic_id": 101,
+            "requirement_id": 3004
+          },
+          {
+            "epic_id": 101,
+            "requirement_id": 3001
+          },
+          {
+            "epic_id": 101,
+            "requirement_id": 3002
+          },
+          {
+            "epic_id": 101,
+            "requirement_id": 3003
+          }
+        ],
+        "now": "2026-10-22T08:01:00Z",
+        "out_of_scope_dep_ids": [],
+        "pause": {
+          "paused_initiative_ids": [],
+          "pipeline_paused": false,
+          "pipeline_status": "active",
+          "suppressed_epic_ids": []
+        },
+        "requirement_counts": {
+          "by_initiative": [
+            {
+              "initiative_id": 90,
+              "met": 0,
+              "total": 4
+            }
+          ],
+          "overall": {
+            "met": 0,
+            "total": 4
+          }
+        },
+        "rows": [
+          {
+            "checkpoint": true,
+            "checkpoint_blocked_by": [],
+            "dep_ids": [],
+            "eligible": true,
+            "gate_open": true,
+            "id": 101,
+            "initiative_id": 90,
+            "launch_block": null,
+            "launch_candidate": true,
+            "launch_excluded": [],
+            "launch_req_ids": [
+              3001,
+              3002,
+              3003,
+              3004
+            ],
+            "launch_suppressed": false,
+            "locked": false,
+            "no_launch_reason": null,
+            "open_req_ids": [
+              3001,
+              3002,
+              3003,
+              3004
+            ],
+            "out_of_scope_dep_ids": [],
+            "req_ids": [
+              3001,
+              3002,
+              3003,
+              3004
+            ],
+            "run": "auto",
+            "suppressed_by": [],
+            "swarm_start_command": "/swarm-start 3001 3002 3003 3004",
+            "tracking_req_ids": [],
+            "unresolved_req_ids": []
+          }
+        ],
+        "serial": {
+          "closed_initiative_ids": [],
+          "execution_mode": "parallel",
+          "held_epic_ids": [],
+          "initiative_order": [
+            90
+          ],
+          "live_initiative_id": 90,
+          "serial": false,
+          "waiting_initiative_ids": []
+        },
+        "unresolved_req_ids": [],
+        "violations": []
+      },
+      "epic_deps": [],
+      "epic_requirements": [
+        {
+          "epic_fk": 101,
+          "requirement_fk": 3001
+        },
+        {
+          "epic_fk": 101,
+          "requirement_fk": 3002
+        },
+        {
+          "epic_fk": 101,
+          "requirement_fk": 3003
+        },
+        {
+          "epic_fk": 101,
+          "requirement_fk": 3004
+        }
+      ],
+      "epics": [
+        {
+          "checkpoint": 1,
+          "create_ts": "2026-10-21T09:00:41",
+          "id": 101,
+          "initiative_fk": 90,
+          "locked": 0,
+          "not_before": null,
+          "notes": null,
+          "run": "auto",
+          "title": "Epic 101"
+        }
+      ],
+      "initiatives": [
+        {
+          "closed": 0,
+          "id": 90,
+          "initiative_status": "active",
+          "locked": 0,
+          "pipeline_fk": 900,
+          "sort_order": null,
+          "title": "Initiative 90"
+        }
+      ],
+      "pipeline": {
+        "epic_count": 1,
+        "execution_mode": "parallel",
+        "id": 900,
+        "locked": 0,
+        "machine_fk": null,
+        "pipeline_status": "active",
+        "title": "Scenario plan"
+      },
+      "requirements": [
+        {
+          "ai_model": "opus",
+          "completed_at": null,
+          "coordination_type": "implemented",
+          "effort": "high",
+          "id": 3001,
+          "machine_fk": null,
+          "requirement_status": "swarm_ready",
+          "started_at": null,
+          "title": "Requirement 3001",
+          "tracking": 0
+        },
+        {
+          "ai_model": "opus",
+          "completed_at": null,
+          "coordination_type": "implemented",
+          "effort": "high",
+          "id": 3002,
+          "machine_fk": null,
+          "requirement_status": "swarm_ready",
+          "started_at": null,
+          "title": "Requirement 3002",
+          "tracking": 0
+        },
+        {
+          "ai_model": "opus",
+          "completed_at": null,
+          "coordination_type": "implemented",
+          "effort": "high",
+          "id": 3003,
+          "machine_fk": null,
+          "requirement_status": "swarm_ready",
+          "started_at": null,
+          "title": "Requirement 3003",
+          "tracking": 0
+        },
+        {
+          "ai_model": "opus",
+          "completed_at": null,
+          "coordination_type": "deployed",
+          "effort": "high",
+          "id": 3004,
+          "machine_fk": null,
+          "requirement_status": "swarm_ready",
+          "started_at": null,
+          "title": "Requirement 3004",
+          "tracking": 0
+        }
+      ]
+    },
+    "sha256:c154fef3631103098948d6a8df861ee1bef089d4492f766077620b91df6187c4": {
+      "ceiling": 4,
+      "live": 2,
+      "reserved_elsewhere": 0
+    },
+    "sha256:f44bc3d6d7108cb063c52414b615f1b6de7313f6f31bce8f9b4256bd0a7ffa77": {
+      "live": [
+        {
+          "id": 1,
+          "initiative_fk": null,
+          "machine_fk": 1,
+          "pipeline_fk": 900,
+          "stale": false
+        }
+      ],
+      "own": {
+        "claim_id": 1,
+        "engine_pid": 5101,
+        "initiative_id": null,
+        "machine_fk": 1,
+        "pipeline_id": 900,
+        "terminal_pid": 4101
+      },
+      "proven": true
+    }
   },
-  "limits": {
-   "ceiling": 4,
-   "free": 2,
-   "in_flight_req_ids": [
-    3001,
-    3004
-   ],
-   "live": 2,
-   "reserved": 0
-  },
-  "location": {
-   "claim_id": 1,
-   "engine_pid": 5101,
-   "machine_fk": 1,
-   "role": "lead",
-   "scope": {
-    "initiative_id": null,
-    "pipeline_id": 900
-   },
-   "terminal_pid": 4101
-  },
-  "observed": {
-   "drained_since": null,
-   "stalled": [],
-   "status": {
-    "3001": "swarm_ready",
-    "3002": "swarm_ready",
-    "3003": "swarm_ready",
-    "3004": "swarm_ready"
-   },
-   "steps": {
-    "101": [
-     3001,
-     3002,
-     3003,
-     3004
-    ]
-   },
-   "violations": []
-  },
-  "outcomes": {
-   "3001": {
-    "reason": null,
-    "session_ids": [],
-    "state": "pending",
-    "step_id": 101
-   },
-   "3004": {
-    "reason": null,
-    "session_ids": [],
-    "state": "pending",
-    "step_id": 101
-   }
-  },
-  "prior_id": "sha256:8f442c0b8c78e8642f9f429e63d060a409d02bead7a9a24acaa473e7cb7d0613",
-  "queue": [
-   {
-    "code": "ADMITTED",
-    "detail": null,
-    "requirement_id": 3004,
-    "step_id": 101
-   },
-   {
-    "code": "ADMITTED",
-    "detail": null,
-    "requirement_id": 3001,
-    "step_id": 101
-   },
-   {
-    "code": "CAPACITY",
-    "detail": null,
-    "requirement_id": 3002,
-    "step_id": 101
-   },
-   {
-    "code": "CAPACITY",
-    "detail": null,
-    "requirement_id": 3003,
-    "step_id": 101
-   }
-  ],
-  "schema": "engine2.decision_record/1",
-  "steps": [
-   {
-    "code": "ADMITTED",
-    "detail": null,
-    "initiative_id": 90,
-    "items": [
-     {
-      "code": "ADMITTED",
-      "requirement_id": 3004
-     },
-     {
-      "code": "ADMITTED",
-      "requirement_id": 3001
-     },
-     {
-      "code": "CAPACITY",
-      "requirement_id": 3002
-     },
-     {
-      "code": "CAPACITY",
-      "requirement_id": 3003
-     }
+  "record": {
+    "cut": 2,
+    "cycle": {
+      "now": "2026-10-22T08:01:00Z",
+      "seq": 2,
+      "verdict": "OK",
+      "verdict_detail": null
+    },
+    "debounce": {
+      "3001": {
+        "announced_at": "2026-10-22T08:01:00Z",
+        "attempts": 1,
+        "epic_id": 101
+      },
+      "3004": {
+        "announced_at": "2026-10-22T08:01:00Z",
+        "attempts": 1,
+        "epic_id": 101
+      }
+    },
+    "epics": [
+      {
+        "code": "ADMITTED",
+        "detail": null,
+        "epic_id": 101,
+        "initiative_id": 90,
+        "items": [
+          {
+            "code": "ADMITTED",
+            "requirement_id": 3004
+          },
+          {
+            "code": "ADMITTED",
+            "requirement_id": 3001
+          },
+          {
+            "code": "CAPACITY",
+            "requirement_id": 3002
+          },
+          {
+            "code": "CAPACITY",
+            "requirement_id": 3003
+          }
+        ]
+      }
     ],
-    "step_id": 101
-   }
-  ]
- },
- "source": "scripts/swarm/engine2 scenario model (req #3755), scenario capacity-full-then-freeing"
+    "events": [],
+    "id": "sha256:28f438ff4a317934808e24261ba2c1487cf0886edbbe67aa2b181cc7f8d2156f",
+    "inputs": {
+      "capacity": "sha256:c154fef3631103098948d6a8df861ee1bef089d4492f766077620b91df6187c4",
+      "claims": "sha256:f44bc3d6d7108cb063c52414b615f1b6de7313f6f31bce8f9b4256bd0a7ffa77",
+      "clock": "sha256:b7bb84a85c9c9e8ff4e760aff1bf55164b8d0032248cdd8e154c7f0eede0701b",
+      "plan_payload": "sha256:b9fc8ea41df139953ff2acfdbfac3496530cac5637566f302fc5718fe425232e",
+      "prior_record": "sha256:a4c5f3cb40f6cea03fb0a04f0189de86bcbdf6a6321e3037edb4875cd1fcf193"
+    },
+    "limits": {
+      "ceiling": 4,
+      "free": 2,
+      "in_flight_req_ids": [
+        3001,
+        3004
+      ],
+      "live": 2,
+      "reserved": 0
+    },
+    "location": {
+      "claim_id": 1,
+      "engine_pid": 5101,
+      "machine_fk": 1,
+      "role": "lead",
+      "scope": {
+        "initiative_id": null,
+        "pipeline_id": 900
+      },
+      "terminal_pid": 4101
+    },
+    "observed": {
+      "drained_since": null,
+      "epics": {
+        "101": [
+          3001,
+          3002,
+          3003,
+          3004
+        ]
+      },
+      "stalled": [],
+      "status": {
+        "3001": "swarm_ready",
+        "3002": "swarm_ready",
+        "3003": "swarm_ready",
+        "3004": "swarm_ready"
+      },
+      "violations": []
+    },
+    "outcomes": {
+      "3001": {
+        "epic_id": 101,
+        "reason": null,
+        "session_ids": [],
+        "state": "pending"
+      },
+      "3004": {
+        "epic_id": 101,
+        "reason": null,
+        "session_ids": [],
+        "state": "pending"
+      }
+    },
+    "prior_id": "sha256:a4c5f3cb40f6cea03fb0a04f0189de86bcbdf6a6321e3037edb4875cd1fcf193",
+    "queue": [
+      {
+        "code": "ADMITTED",
+        "detail": null,
+        "epic_id": 101,
+        "requirement_id": 3004
+      },
+      {
+        "code": "ADMITTED",
+        "detail": null,
+        "epic_id": 101,
+        "requirement_id": 3001
+      },
+      {
+        "code": "CAPACITY",
+        "detail": null,
+        "epic_id": 101,
+        "requirement_id": 3002
+      },
+      {
+        "code": "CAPACITY",
+        "detail": null,
+        "epic_id": 101,
+        "requirement_id": 3003
+      }
+    ],
+    "schema": "engine2.decision_record/1"
+  },
+  "source": "scripts/swarm/engine2 scenario model (req #3755), scenario capacity-full-then-freeing"
 }

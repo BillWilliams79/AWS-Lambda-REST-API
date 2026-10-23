@@ -6,7 +6,7 @@ route this requirement adds. Everything here is driven through
 `lambda_handler` exactly like the generic gateway's own tests, proving the
 route end to end: auth, scoping, shape, derivation, and the budget ladder.
 
-The plan/initiative/step fixtures are built through the REAL gateway (POST to the
+The plan/initiative/epic fixtures are built through the REAL gateway (POST to the
 generic `pipeline2_*` table routes) rather than raw SQL — same discipline as
 `test_junction_scoping.py`: it is simultaneously the regression guard that an
 owner can still create this graph at all.
@@ -55,11 +55,11 @@ def _purge(conn, creator):
     import pymysql as _pymysql
     try:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM pipeline_step_deps WHERE step_fk IN "
-                        "(SELECT id FROM pipeline_steps WHERE creator_fk = %s)", (creator,))
-            cur.execute("DELETE FROM pipeline_step_requirements WHERE step_fk IN "
-                        "(SELECT id FROM pipeline_steps WHERE creator_fk = %s)", (creator,))
-            cur.execute("DELETE FROM pipeline_steps WHERE creator_fk = %s", (creator,))
+            cur.execute("DELETE FROM epic_deps WHERE epic_fk IN "
+                        "(SELECT id FROM epics WHERE creator_fk = %s)", (creator,))
+            cur.execute("DELETE FROM epic_requirements WHERE epic_fk IN "
+                        "(SELECT id FROM epics WHERE creator_fk = %s)", (creator,))
+            cur.execute("DELETE FROM epics WHERE creator_fk = %s", (creator,))
             cur.execute("DELETE FROM initiatives WHERE creator_fk = %s", (creator,))
             cur.execute("DELETE FROM pipelines WHERE creator_fk = %s", (creator,))
             cur.execute("DELETE FROM requirements WHERE creator_fk = %s", (creator,))
@@ -91,7 +91,7 @@ def other(other_fk, db_connection):
 
 @pytest.fixture(scope="module")
 def plan(owner):
-    """One pipeline, one initiative, two requirement-backed steps, one gate step
+    """One pipeline, one initiative, two requirement-backed epics, one gate epic
     depending on both — mirrors the darwin-mcp unit fixture's shape."""
     ids = {}
 
@@ -126,24 +126,24 @@ def plan(owner):
         assert resp['statusCode'] == 200, resp
         ids[key] = int(extract_id(resp))
 
-    for key, title, run in (('step_a', 'read service', 'auto'),
-                            ('step_b', 'tools', 'auto'),
-                            ('step_gate', 'gate', 'manual')):
-        resp = owner('POST', '/darwin_dev/pipeline_steps', body={
+    for key, title, run in (('epic_a', 'read service', 'auto'),
+                            ('epic_b', 'tools', 'auto'),
+                            ('epic_gate', 'gate', 'manual')):
+        resp = owner('POST', '/darwin_dev/epics', body={
             'initiative_fk': ids['initiative'], 'title': title, 'run': run})
         assert resp['statusCode'] == 200, resp
         ids[key] = int(extract_id(resp))
 
-    resp = owner('POST', '/darwin_dev/pipeline_step_requirements',
-                body={'step_fk': ids['step_a'], 'requirement_fk': ids['req_a']})
+    resp = owner('POST', '/darwin_dev/epic_requirements',
+                body={'epic_fk': ids['epic_a'], 'requirement_fk': ids['req_a']})
     assert resp['statusCode'] in (200, 201), resp
-    resp = owner('POST', '/darwin_dev/pipeline_step_requirements',
-                body={'step_fk': ids['step_b'], 'requirement_fk': ids['req_b']})
+    resp = owner('POST', '/darwin_dev/epic_requirements',
+                body={'epic_fk': ids['epic_b'], 'requirement_fk': ids['req_b']})
     assert resp['statusCode'] in (200, 201), resp
 
-    for dep in (ids['step_a'], ids['step_b']):
-        resp = owner('POST', '/darwin_dev/pipeline_step_deps',
-                    body={'step_fk': ids['step_gate'], 'dep_step_fk': dep})
+    for dep in (ids['epic_a'], ids['epic_b']):
+        resp = owner('POST', '/darwin_dev/epic_deps',
+                    body={'epic_fk': ids['epic_gate'], 'dep_epic_fk': dep})
         assert resp['statusCode'] == 200, resp
 
     return ids
@@ -163,13 +163,13 @@ class TestWholePlanCompose:
         assert resp['statusCode'] == 200, resp
         body = json.loads(resp['body'])
 
-        assert set(body) == {'pipeline', 'initiatives', 'steps', 'step_requirements',
-                             'step_deps', 'requirements', 'derived'}
+        assert set(body) == {'pipeline', 'initiatives', 'epics', 'epic_requirements',
+                             'epic_deps', 'requirements', 'derived'}
         assert body['pipeline']['title'] == 'p2compose plan'
-        assert body['pipeline']['step_count'] == 3
-        assert [s['title'] for s in body['steps']] == ['read service', 'tools', 'gate']
-        assert len(body['step_requirements']) == 2
-        assert len(body['step_deps']) == 2
+        assert body['pipeline']['epic_count'] == 3
+        assert [s['title'] for s in body['epics']] == ['read service', 'tools', 'gate']
+        assert len(body['epic_requirements']) == 2
+        assert len(body['epic_deps']) == 2
         assert sorted(r['id'] for r in body['requirements']) == sorted(
             [plan['req_a'], plan['req_b']])
 
@@ -180,8 +180,8 @@ class TestWholePlanCompose:
                              'closed'}
         assert initiative['locked'] == 0
         assert body['pipeline']['locked'] == 0
-        for step in body['steps']:
-            assert step['checkpoint'] == 1 and step['locked'] == 0
+        for epic in body['epics']:
+            assert epic['checkpoint'] == 1 and epic['locked'] == 0
         assert initiative['description'] == 'build it'
 
     def test_requirements_are_the_light_projection(self, owner, plan):
@@ -199,30 +199,30 @@ class TestWholePlanCompose:
                                 'started_at', 'completed_at', 'deferred_at'}
             assert 'description' not in row
 
-    def test_steps_have_no_state_column_and_initiative_fk_not_pipeline_fk(self, owner, plan):
+    def test_epics_have_no_state_column_and_initiative_fk_not_pipeline_fk(self, owner, plan):
         resp = _get(owner, 'pipeline_compose', plan['pipeline'])
         body = json.loads(resp['body'])
-        for step in body['steps']:
-            assert 'state' not in step and 'status' not in step
-            assert 'pipeline_fk' not in step
-            assert step['initiative_fk'] == plan['initiative']
+        for epic in body['epics']:
+            assert 'state' not in epic and 'status' not in epic
+            assert 'pipeline_fk' not in epic
+            assert epic['initiative_fk'] == plan['initiative']
 
     def test_derived_is_a_real_answer(self, owner, plan):
         resp = _get(owner, 'pipeline_compose', plan['pipeline'])
         body = json.loads(resp['body'])
         derived = body['derived']
         assert 'withheld' not in derived
-        assert derived['display_order'] == [plan['step_a'], plan['step_b'], plan['step_gate']]
+        assert derived['display_order'] == [plan['epic_a'], plan['epic_b'], plan['epic_gate']]
         by_id = {row['id']: row for row in derived['rows']}
-        # A step has no state (req #3750) — it carries its open work. req_a is
+        # An epic has no state (req #3750) — it carries its open work. req_a is
         # `development` and req_b `authoring`, both open; the gate holds
         # nothing of its own and waits on both.
-        assert by_id[plan['step_a']]['open_req_ids'] == [plan['req_a']]
-        assert by_id[plan['step_b']]['open_req_ids'] == [plan['req_b']]
-        assert by_id[plan['step_gate']]['open_req_ids'] == []
-        assert by_id[plan['step_gate']]['gate_open'] is False
+        assert by_id[plan['epic_a']]['open_req_ids'] == [plan['req_a']]
+        assert by_id[plan['epic_b']]['open_req_ids'] == [plan['req_b']]
+        assert by_id[plan['epic_gate']]['open_req_ids'] == []
+        assert by_id[plan['epic_gate']]['gate_open'] is False
         assert all('state' not in row for row in derived['rows'])
-        assert all('completed_at' not in step for step in body['steps'])
+        assert all('completed_at' not in epic for epic in body['epics'])
 
     def test_missing_pipeline_is_404(self, owner):
         resp = _get(owner, 'pipeline_compose', 999999999)
@@ -253,7 +253,7 @@ class TestInitiativeScopedCompose:
         body = json.loads(resp['body'])
         assert len(body['initiatives']) == 1
         assert body['initiatives'][0]['id'] == plan['initiative']
-        assert body['initiatives'][0]['step_count'] == 3
+        assert body['initiatives'][0]['epic_count'] == 3
         assert body['pipeline']['id'] == plan['pipeline']
 
     def test_missing_initiative_is_404(self, owner):
@@ -321,22 +321,22 @@ def two_initiative_plan(owner):
         assert resp['statusCode'] == 200, resp
         ids[key] = int(extract_id(resp))
 
-    resp = owner('POST', '/darwin_dev/pipeline_steps',
-                body={'initiative_fk': ids['initiative_a'], 'title': 'A step', 'run': 'auto'})
-    ids['step_a'] = int(extract_id(resp))
-    resp = owner('POST', '/darwin_dev/pipeline_steps',
-                body={'initiative_fk': ids['initiative_b'], 'title': 'B step', 'run': 'auto'})
-    ids['step_b'] = int(extract_id(resp))
+    resp = owner('POST', '/darwin_dev/epics',
+                body={'initiative_fk': ids['initiative_a'], 'title': 'An epic', 'run': 'auto'})
+    ids['epic_a'] = int(extract_id(resp))
+    resp = owner('POST', '/darwin_dev/epics',
+                body={'initiative_fk': ids['initiative_b'], 'title': 'B epic', 'run': 'auto'})
+    ids['epic_b'] = int(extract_id(resp))
 
     resp = owner('POST', '/darwin_dev/requirements', body={
         'title': 'two-initiative requirement', 'requirement_status': 'swarm_ready',
         'category_fk': ids['category'], 'coordination_type': 'deployed',
         'ai_model': 'sonnet', 'effort': 'high'})
     ids['req'] = int(extract_id(resp))
-    owner('POST', '/darwin_dev/pipeline_step_requirements',
-         body={'step_fk': ids['step_b'], 'requirement_fk': ids['req']})
-    owner('POST', '/darwin_dev/pipeline_step_deps',
-         body={'step_fk': ids['step_b'], 'dep_step_fk': ids['step_a']})
+    owner('POST', '/darwin_dev/epic_requirements',
+         body={'epic_fk': ids['epic_b'], 'requirement_fk': ids['req']})
+    owner('POST', '/darwin_dev/epic_deps',
+         body={'epic_fk': ids['epic_b'], 'dep_epic_fk': ids['epic_a']})
     return ids
 
 
@@ -344,19 +344,19 @@ def test_initiative_scoped_reports_out_of_scope_never_dangling(owner, two_initia
     resp = _get(owner, 'pipeline_compose_initiative', two_initiative_plan['initiative_b'])
     body = json.loads(resp['body'])
     derived = body['derived']
-    assert derived['out_of_scope_dep_ids'] == [two_initiative_plan['step_a']]
+    assert derived['out_of_scope_dep_ids'] == [two_initiative_plan['epic_a']]
     assert [v for v in derived['violations'] if v['invariant'] == 'dangling-dependency'] == []
 
 
 def test_whole_plan_sees_the_same_edge_as_an_ordinary_satisfied_gate(owner, two_initiative_plan):
-    # Step A holds no work, so it holds nothing (req #3750) — B's gate is open
+    # Epic A holds no work, so it holds nothing (req #3750) — B's gate is open
     # and B's launch-ready requirement makes it eligible.
     resp = _get(owner, 'pipeline_compose', two_initiative_plan['pipeline'])
     body = json.loads(resp['body'])
     derived = body['derived']
     assert derived['out_of_scope_dep_ids'] == []
     assert derived['violations'] == []
-    assert two_initiative_plan['step_b'] in derived['eligible_step_ids']
+    assert two_initiative_plan['epic_b'] in derived['eligible_epic_ids']
 
 
 # ---------------------------------------------------------------------------
@@ -385,7 +385,7 @@ def checkpoint_plan(owner):
         ids[key] = int(extract_id(resp))
     # A HOLDING checkpoint in initiative A: flag on (the default) with work in
     # development. An empty checkpoint would hold nothing (req #3750).
-    resp = owner('POST', '/darwin_dev/pipeline_steps',
+    resp = owner('POST', '/darwin_dev/epics',
                 body={'initiative_fk': ids['initiative_a'], 'title': 'checkpoint', 'run': 'manual'})
     ids['checkpoint'] = int(extract_id(resp))
     resp = owner('POST', '/darwin_dev/requirements', body={
@@ -393,9 +393,9 @@ def checkpoint_plan(owner):
         'category_fk': ids['category'], 'coordination_type': 'implemented',
         'ai_model': 'sonnet', 'effort': 'high'})
     ids['work'] = int(extract_id(resp))
-    owner('POST', '/darwin_dev/pipeline_step_requirements',
-         body={'step_fk': ids['checkpoint'], 'requirement_fk': ids['work']})
-    resp = owner('POST', '/darwin_dev/pipeline_steps',
+    owner('POST', '/darwin_dev/epic_requirements',
+         body={'epic_fk': ids['checkpoint'], 'requirement_fk': ids['work']})
+    resp = owner('POST', '/darwin_dev/epics',
                 body={'initiative_fk': ids['initiative_b'], 'title': 'held work', 'run': 'auto'})
     ids['held'] = int(extract_id(resp))
     resp = owner('POST', '/darwin_dev/requirements', body={
@@ -403,10 +403,10 @@ def checkpoint_plan(owner):
         'category_fk': ids['category'], 'coordination_type': 'deployed',
         'ai_model': 'sonnet', 'effort': 'high'})
     ids['req'] = int(extract_id(resp))
-    owner('POST', '/darwin_dev/pipeline_step_requirements',
-         body={'step_fk': ids['held'], 'requirement_fk': ids['req']})
-    owner('POST', '/darwin_dev/pipeline_step_deps',
-         body={'step_fk': ids['held'], 'dep_step_fk': ids['checkpoint']})
+    owner('POST', '/darwin_dev/epic_requirements',
+         body={'epic_fk': ids['held'], 'requirement_fk': ids['req']})
+    owner('POST', '/darwin_dev/epic_deps',
+         body={'epic_fk': ids['held'], 'dep_epic_fk': ids['checkpoint']})
     return ids
 
 
@@ -421,7 +421,7 @@ def test_initiative_scoped_read_holds_work_behind_another_initiatives_checkpoint
     assert 'plan_graph' not in body
 
 
-def test_whole_plan_read_holds_the_same_step(owner, checkpoint_plan):
+def test_whole_plan_read_holds_the_same_epic(owner, checkpoint_plan):
     resp = _get(owner, 'pipeline_compose', checkpoint_plan['pipeline'])
     body = json.loads(resp['body'])
     row = next(r for r in body['derived']['rows'] if r['id'] == checkpoint_plan['held'])
@@ -432,7 +432,7 @@ def test_whole_plan_read_holds_the_same_step(owner, checkpoint_plan):
 def test_initiative_scoped_read_releases_when_the_checkpoints_work_closes(owner, checkpoint_plan):
     """req #3649/#3750: the outside checkpoint holds while its WORK is open,
     so the plan graph must carry its requirement rows; its work going
-    terminal releases the hold, and a `checkpoint=0` outside step holds
+    terminal releases the hold, and a `checkpoint=0` outside epic holds
     nothing whatever its work says."""
     ids = checkpoint_plan
     held = lambda: next(r for r in json.loads(_get(
@@ -448,12 +448,12 @@ def test_initiative_scoped_read_releases_when_the_checkpoints_work_closes(owner,
         # Back to open work, flag OFF: a priority, no hold.
         owner('PUT', '/darwin_dev/requirements',
               body=[{'id': ids['work'], 'requirement_status': 'development'}])
-        owner('PUT', '/darwin_dev/pipeline_steps',
+        owner('PUT', '/darwin_dev/epics',
               body=[{'id': ids['checkpoint'], 'checkpoint': 0}])
         assert held()['checkpoint_blocked_by'] == []
         assert held()['gate_open'] is False
     finally:
         owner('PUT', '/darwin_dev/requirements',
               body=[{'id': ids['work'], 'requirement_status': 'development'}])
-        owner('PUT', '/darwin_dev/pipeline_steps',
+        owner('PUT', '/darwin_dev/epics',
               body=[{'id': ids['checkpoint'], 'checkpoint': 1}])

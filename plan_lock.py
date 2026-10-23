@@ -1,40 +1,40 @@
 """plan_lock.py — LOCKED is a relic in time (req #3649).
 
-`pipelines.locked`, `initiatives.locked` and `pipeline_steps.locked` (migration
+`pipelines.locked`, `initiatives.locked` and `epics.locked` (migration
 20261019100448) say a plan-layer row may no longer be AUTHORED. This module is
 the one place that rule is enforced, and it sits at the gateway for the same
 reason the ownership registries do: the browser writes these five tables
-directly through the generic PUT/POST/DELETE (`Darwin/src/Steps/stepsApi.js`,
+directly through the generic PUT/POST/DELETE (`Darwin/src/Epics/epicsApi.js`,
 `Initiatives/initiativesApi.js`, `Pipelines/pipelinesApi.js`), so a check in darwin-mcp's
 services would cover one of the two writers. Lambda-Rest is the single DB
 gateway (req #3050); a lock lives where every write passes.
 
 WHAT A LOCK FREEZES — structure AND authoring fields, cascading:
 
-  * a locked PIPELINE freezes itself, every initiative in it and every step in
-    those initiatives; a locked INITIATIVE freezes itself and its steps; a locked STEP
+  * a locked PIPELINE freezes itself, every initiative in it and every epic in
+    those initiatives; a locked INITIATIVE freezes itself and its epics; a locked EPIC
     freezes itself. "Effectively locked" = the row's own flag OR any
     ancestor's. There is one column per layer and no copy of an ancestor's
     state — the cascade is derived in one SELECT, never stored.
   * frozen: creating, deleting or moving a child (an initiative under the plan, a
-    step under the initiative); linking or unlinking a requirement; adding or
+    epic under the initiative); linking or unlinking a requirement; adding or
     removing a dependency edge; and every authoring field — title,
     description, notes, run, checkpoint, not_before, sort_order, category_fk,
     machine_fk, execution_mode, and the parent columns a move rewrites.
   * NOT frozen: the lock itself (so it can be lifted through the same call),
     and orchestration/lifecycle state — `pipeline_status` with its derived
-    `started_at`/`completed_at`, `initiative_status`, `closed`. A step carries no
+    `started_at`/`completed_at`, `initiative_status`, `closed`. An epic carries no
     lifecycle state at all (req #3750). A locked plan can still be orchestrated;
     it cannot be rewritten.
 
 A DELETE THAT CASCADES INTO THE PLAN LAYER IS AUTHORING TOO (req #3706).
-Deleting a requirement removes its step seat (`fk_psr_requirement` is ON
+Deleting a requirement removes its epic seat (`fk_er_requirement` is ON
 DELETE CASCADE since migration 20261021060108), so a requirement seated on an
-effectively locked step is refused exactly as unlinking it would be.
+effectively locked epic is refused exactly as unlinking it would be.
 `_CASCADES_INTO` names that one non-plan table.
 
 THE ANSWER IS 423 LOCKED, a JSON object (like the 409 CONFLICT body) carrying
-`table`, `id`, `locked_by` (the OUTERMOST locked level — unlocking the step
+`table`, `id`, `locked_by` (the OUTERMOST locked level — unlocking the epic
 helps nobody while its plan is locked) and `locked_id`, plus a `message` that
 `RestApi.jsx` and darwin-mcp's client both surface verbatim.
 
@@ -61,14 +61,14 @@ PLAN_LOCK = {
     'initiatives': {
         'parent': ('pipeline_fk', 'pipelines'),
         'unlocked': frozenset({'locked', 'initiative_status', 'closed'})},
-    'pipeline_steps': {
+    'epics': {
         'parent': ('initiative_fk', 'initiatives'),
         'unlocked': frozenset({'locked'})},
-    'pipeline_step_requirements': {
-        'parent': ('step_fk', 'pipeline_steps'),
+    'epic_requirements': {
+        'parent': ('epic_fk', 'epics'),
         'unlocked': frozenset()},
-    'pipeline_step_deps': {
-        'parent': ('step_fk', 'pipeline_steps'),
+    'epic_deps': {
+        'parent': ('epic_fk', 'epics'),
         'unlocked': frozenset()},
 }
 
@@ -86,24 +86,24 @@ _CHAINS = {
         'initiatives t JOIN pipelines p ON p.id = t.pipeline_fk',
         't',
         (('pipeline', 'p.id', 'p.locked'), ('initiative', 't.id', 't.locked'))),
-    'pipeline_steps': (
-        'pipeline_steps t JOIN initiatives e ON e.id = t.initiative_fk '
+    'epics': (
+        'epics t JOIN initiatives e ON e.id = t.initiative_fk '
         'JOIN pipelines p ON p.id = e.pipeline_fk',
         't',
         (('pipeline', 'p.id', 'p.locked'), ('initiative', 'e.id', 'e.locked'),
-         ('step', 't.id', 't.locked'))),
-    'pipeline_step_requirements': (
-        'pipeline_step_requirements t JOIN pipeline_steps s ON s.id = t.step_fk '
+         ('epic', 't.id', 't.locked'))),
+    'epic_requirements': (
+        'epic_requirements t JOIN epics s ON s.id = t.epic_fk '
         'JOIN initiatives e ON e.id = s.initiative_fk JOIN pipelines p ON p.id = e.pipeline_fk',
         's',
         (('pipeline', 'p.id', 'p.locked'), ('initiative', 'e.id', 'e.locked'),
-         ('step', 's.id', 's.locked'))),
-    'pipeline_step_deps': (
-        'pipeline_step_deps t JOIN pipeline_steps s ON s.id = t.step_fk '
+         ('epic', 's.id', 's.locked'))),
+    'epic_deps': (
+        'epic_deps t JOIN epics s ON s.id = t.epic_fk '
         'JOIN initiatives e ON e.id = s.initiative_fk JOIN pipelines p ON p.id = e.pipeline_fk',
         's',
         (('pipeline', 'p.id', 'p.locked'), ('initiative', 'e.id', 'e.locked'),
-         ('step', 's.id', 's.locked'))),
+         ('epic', 's.id', 's.locked'))),
 }
 
 
@@ -184,7 +184,7 @@ def resolve_locks(cursor, table, where, params, authenticated_user):
     through to the ownership scoping every verb already applies.
 
     `where` is written against the chain's aliases (`t` for the table's own
-    row, `s`/`e`/`p` for step/initiative/pipeline); `params` fill its placeholders.
+    row, `s`/`e`/`p` for epic/initiative/pipeline); `params` fill its placeholders.
     """
     levels = _CHAINS[table][2]
     cursor.execute(_chain_sql(table, where), tuple(params) + (authenticated_user,))
@@ -208,11 +208,11 @@ def resolve_locks(cursor, table, where, params, authenticated_user):
 # level each SELECT names.
 _BELOW = {
     'initiatives': (
-        ('step', 'initiatives t JOIN pipeline_steps s ON s.initiative_fk = t.id', 's'),),
+        ('epic', 'initiatives t JOIN epics s ON s.initiative_fk = t.id', 's'),),
     'pipelines': (
         ('initiative', 'pipelines t JOIN initiatives e ON e.pipeline_fk = t.id', 'e'),
-        ('step', 'pipelines t JOIN initiatives e ON e.pipeline_fk = t.id '
-                 'JOIN pipeline_steps s ON s.initiative_fk = e.id', 's')),
+        ('epic', 'pipelines t JOIN initiatives e ON e.pipeline_fk = t.id '
+                 'JOIN epics s ON s.initiative_fk = e.id', 's')),
 }
 
 
@@ -237,13 +237,13 @@ def resolve_locked_below(cursor, table, where, params, authenticated_user):
 # req #3706 — a table OUTSIDE the plan layer whose DELETE cascades into it:
 # table -> (the plan table its rows are seated in, the column naming them).
 _CASCADES_INTO = {
-    'requirements': ('pipeline_step_requirements', 'requirement_fk'),
+    'requirements': ('epic_requirements', 'requirement_fk'),
 }
 
 
 def resolve_locked_seats(cursor, table, where, params, authenticated_user):
-    """`[(row_id, step_id, level, level_id), ...]` — the `table` rows `where`
-    selects (alias `t`) that are seated on an effectively locked step,
+    """`[(row_id, epic_id, level, level_id), ...]` — the `table` rows `where`
+    selects (alias `t`) that are seated on an effectively locked epic,
     `level` the OUTERMOST locked one. Seats in another creator's plan are not
     returned, as in `resolve_locks`."""
     child, column = _CASCADES_INTO[table]
@@ -305,9 +305,9 @@ def _locked_response(table, locked, method, adding=None, below=False):
 
 
 def _seated_response(table, seated, method):
-    row_id, step_id, level, level_id = seated[0]
-    message = ('cannot delete %s %s: it is seated on step %s, locked by %s %s'
-               ' — unlock it first' % (table, row_id, step_id, level, level_id))
+    row_id, epic_id, level, level_id = seated[0]
+    message = ('cannot delete %s %s: it is seated on epic %s, locked by %s %s'
+               ' — unlock it first' % (table, row_id, epic_id, level, level_id))
     print('HTTP %s refused: %s' % (method, message))
     return compose_rest_response(423, '', {
         'error': 'LOCKED', 'table': table, 'id': row_id,
@@ -377,12 +377,12 @@ def plan_lock_guard(conn, table, bodies, authenticated_user, method):
 def plan_lock_guard_delete(conn, table, where, params, authenticated_user,
                            method='DELETE'):
     """423 when a DELETE would remove an effectively locked plan-layer row
-    (or a link/edge under a locked step), 500 when the check failed, else
+    (or a link/edge under a locked epic), 500 when the check failed, else
     None. `where` names the deleting request's own filters against alias `t`
     — the keys have already been validated against `DESC` by the caller.
 
     A table in `_CASCADES_INTO` (req #3706) is asked whether any row it would
-    delete is seated on a locked step, since the cascade would unlink it."""
+    delete is seated on a locked epic, since the cascade would unlink it."""
     if authenticated_user is None:
         return None
     if table in _CASCADES_INTO:

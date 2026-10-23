@@ -99,9 +99,12 @@ def _required_columns(table, seed):
         # the three carries is `title`.
         'pipelines': {'title': f'{seed}-p2pipeline'},
         'initiatives': {'title': f'{seed}-p2initiative'},
-        'pipeline_steps': {'title': f'{seed}-p2step'},
+        'epics': {'title': f'{seed}-p2epic'},
         'recurring_tasks': {'description': f'{seed}-rt', 'recurrence': 'daily',
                             'anchor_date': '2026-07-27'},
+        # Req #3815. `bundle` is the one NOT NULL, no-default column besides
+        # the reference; its UNIQUE (requirement_fk) is what `_drop` is for.
+        'requirement_debug_captures': {'bundle': '{}', 'bundle_bytes': 2},
         'requirements': {'title': f'{seed}-req', 'ai_model': 'opus',
                          'effort': 'high'},
         # No NOT NULL columns of their own, but `rest_post` 400s an EMPTY body
@@ -153,7 +156,7 @@ def test_the_matrix_is_the_whole_registry():
     # registered, PARENTS to 23.
     #
     # Req #3356 drops the whole 1.0 plan layer (migration 20260812175325): the
-    # `initiatives`, `pipelines` and `pipeline_steps` registry entries go with their
+    # `initiatives`, `pipelines` and `epics` registry entries go with their
     # tables (-3 columns), and so do 1.0's two `swarm_sessions` and two
     # `orchestration_claims` attribution columns (-4) — TRIPLES 47 -> 40.
     # `initiatives` and `pipelines` were PARENTS of nothing but each other and those
@@ -161,11 +164,14 @@ def test_the_matrix_is_the_whole_registry():
     #
     # Req #3756 adds Engine 2's eleven: engine_decision_records (pipeline,
     # initiative, machine), engine_heartbeats (engine state, claim), engine_outcomes
-    # (record, requirement, step), engine_states (pipeline, initiative, machine) —
+    # (record, requirement, epic), engine_states (pipeline, initiative, machine) —
     # TRIPLES 40 -> 51, and four new PARENTS (engine_states,
-    # orchestration_claims, engine_decision_records, and pipeline_steps — which
-    # no registered column referenced before engine_outcomes.step_fk) — 21 -> 25.
-    assert len(TRIPLES) == 51, f'expected 51 registered columns, generated {len(TRIPLES)}'
+    # orchestration_claims, engine_decision_records, and epics — which
+    # no registered column referenced before engine_outcomes.epic_fk) — 21 -> 25.
+    #
+    # Req #3815 adds `requirement_debug_captures.requirement_fk` — TRIPLES
+    # 51 -> 52; `requirements` was already a PARENT, so PARENTS stays 25.
+    assert len(TRIPLES) == 52, f'expected 52 registered columns, generated {len(TRIPLES)}'
     assert len(PARENTS) == 25, PARENTS
     assert ('test_runs', 'test_plan_fk', 'test_plans') in TRIPLES
 
@@ -203,7 +209,7 @@ PURGE_ORDER = (
     # only this safety-net sweep for rows a test case creates and does not
     # itself `_drop`.
     'orchestration_claims',
-    'pipeline_steps', 'initiatives', 'pipelines',
+    'epics', 'initiatives', 'pipelines',
     'test_results', 'test_runs', 'test_plans', 'test_cases',
     'requirements',
     'tasks', 'recurring_tasks', 'areas', 'domains',
@@ -304,7 +310,7 @@ def _build_graph(invoke, seed):
     # Three.
     post('requirements', dict(req('requirements'), category_fk=ids['categories']))
     post('test_runs', dict(req('test_runs'), test_plan_fk=ids['test_plans']))
-    post('pipeline_steps', dict(req('pipeline_steps'), initiative_fk=ids['initiatives']))
+    post('epics', dict(req('epics'), initiative_fk=ids['initiatives']))
 
     missing = [p for p in PARENTS if p not in ids]
     assert not missing, f'{seed} graph is missing parent rows for {missing}'
@@ -378,10 +384,11 @@ def _count_referencing(conn, table, column, value):
 def _drop(conn, table, row_id):
     """Remove a row a case created, so the next case can create the same shape.
 
-    Four tables put a UNIQUE key ON their reference columns —
+    Five tables put a UNIQUE key ON their reference columns —
     `builds (branch_fk, position)`, `customer_releases (customer_fk, build_fk)`,
-    `test_results (test_run_fk, test_case_fk)` and, since req #3224,
-    `orchestration_claims (pipeline_fk, initiative_key)` — so two cases writing the
+    `test_results (test_run_fk, test_case_fk)`, since req #3224
+    `orchestration_claims (pipeline_fk, initiative_key)` and since req #3815
+    `requirement_debug_captures (requirement_fk)` — so two cases writing the
     identical owned row collide on 1062 rather than testing anything. Deleting
     between cases is simpler and more honest than manufacturing a pool of spare
     parents whose only purpose is to dodge a UNIQUE key.

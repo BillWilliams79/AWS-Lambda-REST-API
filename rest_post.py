@@ -49,7 +49,7 @@ def rest_post(post_method, conn, database, table, body, authenticated_user=None)
     #
     # req #3122 — a table with no creator_fk has nothing to override, so its
     # INSERT is authorized by checking the parents it references instead. Without
-    # this, `POST /darwin/pipeline_step_deps {"step_fk": <somebody else's step>}`
+    # this, `POST /darwin/epic_deps {"epic_fk": <somebody else's epic>}`
     # injected a dependency gate into another user's plan.
     #
     # req #3125 — the creator_fk override just above settles WHOSE ROW THIS IS and
@@ -64,8 +64,8 @@ def rest_post(post_method, conn, database, table, body, authenticated_user=None)
         return refusal
 
     # req #3649 — a LOCKED plan-layer container accepts no new child: an initiative
-    # under a locked plan, a step under a locked initiative, a link or edge under a
-    # locked step. Answered 423 before the INSERT; see plan_lock.py.
+    # under a locked plan, an epic under a locked initiative, a link or edge under a
+    # locked epic. Answered 423 before the INSERT; see plan_lock.py.
     refusal = plan_lock_guard(conn, table, [body], authenticated_user,
                               post_method)
     if refusal is not None:
