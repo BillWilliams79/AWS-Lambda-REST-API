@@ -226,7 +226,7 @@ CREATOR_FK_TABLES = frozenset({
     # Req #3096 — per-document actual-token rows (migration 074). Carries
     # creator_fk like its parent row; scope generic passthrough the same way.
     'agent_telemetry_row_docs',
-    # Req #3111's `epics` / `pipelines` / `pipeline_steps` were registered here
+    # Req #3111's `initiatives` / `pipelines` / `epics` were registered here
     # and were REMOVED at req #3356 (migration 20260812175325) along with the
     # rest of the 1.0 plan layer. Their parallel-era successors are the three
     # `pipeline2_*` tables below, registered on identical terms.
@@ -242,14 +242,14 @@ CREATOR_FK_TABLES = frozenset({
     # two orchestrators believe they both hold a scope.
     'orchestration_claims',
     # Req #3337 — Pipeline 2.0 plan layer (migration 20260808115509). The plan,
-    # its initiatives and its steps each carry a NOT NULL creator_fk, so membership
+    # its initiatives and its epics each carry a NOT NULL creator_fk, so membership
     # here is what makes the generic passthrough work at all, exactly as for
     # `orchestration_claims` above.
     #
-    # pipeline_step_requirements and pipeline_step_deps stay OUT: neither has
-    # a creator_fk. They inherit ownership from their step, in JUNCTION_OWNERSHIP
+    # epic_requirements and epic_deps stay OUT: neither has
+    # a creator_fk. They inherit ownership from their epic, in JUNCTION_OWNERSHIP
     # below.
-    'pipelines', 'initiatives', 'pipeline_steps',
+    'pipelines', 'initiatives', 'epics',
     # Req #3756 — Orchestration Engine 2's data contract (migration
     # 20261022073056). All five carry a NOT NULL creator_fk, on the same terms as
     # `orchestration_claims`: membership is what lets rest_post inject it, and an
@@ -271,15 +271,15 @@ PROFILE_TABLE = 'profiles'
 # THE HOLE THIS CLOSES. Thirteen tables carry no `creator_fk`, so until this
 # registry existed the generic passthrough applied NO scoping to any of them.
 # Measured against the code as shipped by req #3113: `GET /darwin/
-# pipeline_step_deps` returned every user's dependency edges; `PUT`/`DELETE`
+# epic_deps` returned every user's dependency edges; `PUT`/`DELETE`
 # with another user's `id` fell into the unscoped `else` branch of rest_put /
 # rest_delete and rewrote or deleted that user's gate; `POST` with a foreign
-# `step_fk` injected a gate into their plan. Same shape on the other twelve.
-# (`pipeline_step_deps` and the rest of the 1.0 plan layer were dropped at
+# `epic_fk` injected a gate into their plan. Same shape on the other twelve.
+# (`epic_deps` and the rest of the 1.0 plan layer were dropped at
 # req #3356; the measurement is history and the rule it established is not.)
 #
 # NOT "the first junction with a surrogate id". Req #3111 flagged
-# `pipeline_step_deps` as the first junction whose rows are individually
+# `epic_deps` as the first junction whose rows are individually
 # addressable by id. It is not — `map_run_partners` (id + UNIQUE(map_run_fk,
 # map_partner_fk)) already was, and `map_coordinates` is a surrogate-id child
 # table with the same exposure. The id made the hole EASIER TO REACH; it did not
@@ -288,7 +288,7 @@ PROFILE_TABLE = 'profiles'
 # requirement named.
 #
 # WHY DERIVE RATHER THAN ADD A `creator_fk` COLUMN. Migration 076 already states
-# the rule in prose — "an edge is not independently owned; it inherits the step's
+# the rule in prose — "an edge is not independently owned; it inherits the epic's
 # ownership and dies with it" — and this makes the code say it. A `creator_fk`
 # column would make ownership a second, STORABLE fact that can disagree with the
 # parent's, which is precisely the failure req #3080 design rule 1 exists to
@@ -301,12 +301,12 @@ PROFILE_TABLE = 'profiles'
 # BELONGS TO, not the one it points at. It becomes a predicate on every read,
 # update and delete:
 #
-#     step_fk IN (SELECT id FROM pipeline_steps WHERE creator_fk = %s)
+#     epic_fk IN (SELECT id FROM epics WHERE creator_fk = %s)
 #
 # `verify` names the OTHER parent references, checked on INSERT only. A write is
 # refused when any of them names a row the caller does not own, which is what
-# stops a caller wiring their own plan to somebody else's step or requirement.
-# They are deliberately NOT read predicates: `dep_step_fk` is NULL on a
+# stops a caller wiring their own plan to somebody else's epic or requirement.
+# They are deliberately NOT read predicates: `dep_epic_fk` is NULL on a
 # wall-clock gate row, so ANDing it into a SELECT would hide those rows entirely.
 #
 # ADDING A TABLE. Every table without `creator_fk` belongs here — surrogate id or
@@ -316,19 +316,19 @@ PROFILE_TABLE = 'profiles'
 
 JUNCTION_OWNERSHIP = {
     # Pipeline 2.0 plan layer (req #3337, migration 20260808115509). An edge and
-    # a requirement link both belong to their STEP. `dep_step_fk` needs `verify`
+    # a requirement link both belong to their EPIC. `dep_epic_fk` needs `verify`
     # because it is ON DELETE RESTRICT: a cross-tenant edge would make somebody
-    # else's step undeletable, a denial of service rather than merely a leak.
+    # else's epic undeletable, a denial of service rather than merely a leak.
     #
-    # The 1.0 pair `pipeline_step_deps` / `pipeline_step_requirements` sat here
+    # The 1.0 pair `epic_deps` / `epic_requirements` sat here
     # on identical terms — they were req #3122's worked example — until
     # req #3356 (migration 20260812175325) dropped the whole 1.0 plan layer.
-    'pipeline_step_deps': {
-        'scope': ('step_fk', 'pipeline_steps'),
-        'verify': (('dep_step_fk', 'pipeline_steps'),),
+    'epic_deps': {
+        'scope': ('epic_fk', 'epics'),
+        'verify': (('dep_epic_fk', 'epics'),),
     },
-    'pipeline_step_requirements': {
-        'scope': ('step_fk', 'pipeline_steps'),
+    'epic_requirements': {
+        'scope': ('epic_fk', 'epics'),
         'verify': (('requirement_fk', 'requirements'),),
     },
 
@@ -528,8 +528,8 @@ CREATOR_TABLE_REFERENCES = {
         ('map_route_fk', 'map_routes'),                      # SET NULL
     ),
     'orchestration_claims': (                                # req #3224
-        # The 1.0 scope pair (`pipeline_fk` -> `pipelines`, `epic_fk` ->
-        # `epics`) was dropped with the rest of the 1.0 plan layer at req #3356
+        # The 1.0 scope pair (`pipeline_fk` -> `pipelines`, `initiative_fk` ->
+        # `initiatives`) was dropped with the rest of the 1.0 plan layer at req #3356
         # (migration 20260812175325).
         ('machine_fk', 'machines'),                          # RESTRICT
         ('pipeline_fk', 'pipelines'),             # CASCADE, req #3369
@@ -549,7 +549,7 @@ CREATOR_TABLE_REFERENCES = {
     'engine_outcomes': (                                     # req #3756
         ('record_fk', 'engine_decision_records'),            # CASCADE
         ('requirement_fk', 'requirements'),                  # CASCADE
-        ('step_fk', 'pipeline_steps'),                       # SET NULL
+        ('epic_fk', 'epics'),                       # SET NULL
     ),
     'engine_states': (                                       # req #3756
         ('pipeline_fk', 'pipelines'),                        # CASCADE
@@ -563,7 +563,7 @@ CREATOR_TABLE_REFERENCES = {
     'pipelines': (                                 # req #3337
         ('machine_fk', 'machines'),                          # RESTRICT
     ),
-    'pipeline_steps': (                                     # req #3337
+    'epics': (                                     # req #3337
         ('initiative_fk', 'initiatives'),                      # CASCADE
     ),
     'recurring_tasks': (
@@ -579,7 +579,7 @@ CREATOR_TABLE_REFERENCES = {
     ),
     'swarm_sessions': (
         ('machine_fk', 'machines'),                          # RESTRICT
-        # req #3186's 1.0 attribution pair (`pipeline_fk`, `epic_fk`) was
+        # req #3186's 1.0 attribution pair (`pipeline_fk`, `initiative_fk`) was
         # dropped at req #3356 (migration 20260812175325); the 2.0 pair below
         # is the surviving attribution.
         ('pipeline_fk', 'pipelines'),             # SET NULL  (req #3350)
@@ -704,7 +704,7 @@ ENUM_COLUMNS = {
     'map_runs': frozenset({'source'}),
     'initiatives': frozenset({'initiative_status'}),
     'pipelines': frozenset({'pipeline_status', 'execution_mode'}),
-    'pipeline_steps': frozenset({'run'}),
+    'epics': frozenset({'run'}),
     'profiles': frozenset({'theme_mode'}),
     'recurring_tasks': frozenset({'recurrence', 'insert_position'}),
     'requirements': frozenset({'requirement_status', 'coordination_type',
@@ -870,7 +870,7 @@ def junction_scope_clause(table):
     Returns a fragment carrying exactly ONE `%s` placeholder, which the caller
     binds to the authenticated user::
 
-        step_fk IN (SELECT id FROM pipeline_steps WHERE creator_fk = %s)
+        epic_fk IN (SELECT id FROM epics WHERE creator_fk = %s)
 
     Table and column names come from the hard-coded registry above, never from a
     request, so the interpolation here introduces no injection surface. The
@@ -901,7 +901,7 @@ def _reference_value(raw):
     `'9825abc'` against a database that answers `'9825'` — no match, so a foreign
     parent was classified as "does not exist", fell through to the FK, and then
     MySQL coerced it back to 9825 and wrote the row. Measured: every one of those
-    forms landed a gate on another user's step through a 200 while the plain
+    forms landed a gate on another user's epic through a 200 while the plain
     integer got a 403.
 
     A value that is not an integer at all raises ValueError, which the caller
@@ -1137,11 +1137,11 @@ def check_junction_parent_ownership(cursor, table, bodies, authenticated_user,
         the parent references are the only thing that can be checked.
       * **UPDATE** has one, but the predicate only proves ownership of the row's
         parent *before* the statement. The SET clause is built from every key in
-        the body, so `PUT [{"id": <my edge>, "step_fk": <their step>}]` passes the
+        the body, so `PUT [{"id": <my edge>, "epic_fk": <their epic>}]` passes the
         WHERE on its current parent and then HANDS THE ROW TO THEM — verified
         against darwin_dev, and it defeated the POST guard entirely by taking the
-        other door. `dep_step_fk` was worse: an edge re-pointed at another user's
-        step makes that step undeletable through `ON DELETE RESTRICT`.
+        other door. `dep_epic_fk` was worse: an edge re-pointed at another user's
+        epic makes that epic undeletable through `ON DELETE RESTRICT`.
 
     `require_scope` is the only difference between the two callers. On INSERT the
     scope column is mandatory (it is NOT NULL everywhere here). On UPDATE its

@@ -14,7 +14,7 @@ payload this emits is what those functions used to build by hand over six
 gateway round trips — byte-compatible, so a consumer cannot tell which
 produced it. That module is now a ONE-CALL passthrough to this route.
 
-    {pipeline, initiatives[], steps[], step_requirements[], step_deps[],
+    {pipeline, initiatives[], epics[], epic_requirements[], epic_deps[],
      requirements[], derived{}}
 
 `pipeline2_derive.derive_plan2` (moved here from darwin-mcp by this same
@@ -24,12 +24,12 @@ WITHHELD stub exactly as darwin-mcp's `_derive` guard did.
 
 Scoping mirrors what the generic gateway already does for every read of a
 `CREATOR_FK_TABLES` table (`rest_get_table.py`): every `pipelines` /
-`initiatives` / `pipeline_steps` / `requirements` SELECT carries
+`initiatives` / `epics` / `requirements` SELECT carries
 `creator_fk = %s` explicitly, not merely inherited through containment — the
 same defense-in-depth the generic gateway gave for free, replicated by hand
-because this route bypasses it. `pipeline_step_requirements` and
-`pipeline_step_deps` carry no `creator_fk` (JUNCTION_OWNERSHIP, req #3122) —
-scoped by narrowing to the already-scoped `step_fk` ids fetched above them,
+because this route bypasses it. `epic_requirements` and
+`epic_deps` carry no `creator_fk` (JUNCTION_OWNERSHIP, req #3122) —
+scoped by narrowing to the already-scoped `epic_fk` ids fetched above them,
 exactly as the daemon's own composed read did.
 """
 
@@ -48,7 +48,7 @@ import pipeline2_derive
 # daemon (`server._bounded_plan2`) has to run here instead: the payload this
 # emits is subject to the identical API Gateway / Lambda response cap the
 # daemon's own outbound calls were always subject to (req #3078) — moving the
-# compose step into Lambda does not change that ceiling, it just moves who
+# compose epic into Lambda does not change that ceiling, it just moves who
 # has to respect it.
 # ---------------------------------------------------------------------------
 
@@ -116,10 +116,10 @@ def truncate_to_budget(rows, *, resource, budget=PAYLOAD_BUDGET_BYTES, hint=None
                              payload_bytes(build(total))) - 2
     used, kept = 2, 0
     for size in sizes:
-        step = size + (2 if kept else 0)
-        if used + step > allowance:
+        epic = size + (2 if kept else 0)
+        if used + epic > allowance:
             break
-        used += step
+        used += epic
         kept += 1
 
     while kept > 0 and payload_size(kept) > budget:
@@ -157,20 +157,20 @@ def _bounded(uri, composed, *, initiative_scoped=False):
     Regime A — whole payload fits, `derived` included. Ship it.
     Regime B — does not fit; withholding `derived` alone is enough. Every row
         survives; `derived` becomes `budget_derived_only`, `rows_complete=True`.
-    Regime C — does not fit even without `derived`. `steps` is truncated
-        against the allowance regime B's absence actually buys, `step_requirements`
-        / `step_deps` are pruned to the surviving step ids, `_truncated` is
+    Regime C — does not fit even without `derived`. `epics` is truncated
+        against the allowance regime B's absence actually buys, `epic_requirements`
+        / `epic_deps` are pruned to the surviving epic ids, `_truncated` is
         hoisted to the top level, and `derived` becomes `budget_rows_truncated`,
         `rows_complete=False` — a hard stop.
     """
-    if not composed.get('steps'):
+    if not composed.get('epics'):
         return composed
 
     escape_hatch = (
         "" if initiative_scoped else
         " Read the initiative-scoped route for a smaller, complete slice of one "
         "initiative if you need `derived` for it.")
-    count_field = "`initiatives[0].step_count`" if initiative_scoped else "`pipeline.step_count`"
+    count_field = "`initiatives[0].epic_count`" if initiative_scoped else "`pipeline.epic_count`"
 
     if payload_bytes(composed) <= PAYLOAD_BUDGET_BYTES:
         return composed
@@ -186,7 +186,7 @@ def _bounded(uri, composed, *, initiative_scoped=False):
     if payload_bytes(with_stub) <= PAYLOAD_BUDGET_BYTES:
         return with_stub
 
-    hint = (f"a step's `notes` is uncapped TEXT; trim the evidence prose."
+    hint = (f"an epic's `notes` is uncapped TEXT; trim the evidence prose."
             f"{escape_hatch} {count_field} still reports the true total for "
             "what was requested.")
 
@@ -204,29 +204,29 @@ def _bounded(uri, composed, *, initiative_scoped=False):
         WITHHELD_BUDGET_ROWS_TRUNCATED, rows_complete=False,
         message=(
             f"the payload exceeded the {PAYLOAD_BUDGET_BYTES:,}-byte MCP budget "
-            "(req #3078) even with `derived` withheld, so `steps` was "
+            "(req #3078) even with `derived` withheld, so `epics` was "
             "truncated. The dependency graph in this payload is INCOMPLETE — "
             f"read `_truncated` and {count_field} for the shortfall, and do "
             "not sequence or launch from this response."))
-    others = {k: v for k, v in with_stub.items() if k != 'steps'}
+    others = {k: v for k, v in with_stub.items() if k != 'epics'}
     others['derived'] = regime_c_derived
     remaining = PAYLOAD_BUDGET_BYTES - payload_bytes(others)
 
-    bounded = truncate_to_budget(composed['steps'], resource=uri,
+    bounded = truncate_to_budget(composed['epics'], resource=uri,
                                  budget=max(remaining, 0), hint=hint)
     reserve = payload_bytes({TRUNCATION_KEY: marker_of(bounded)}) + 2
-    bounded = truncate_to_budget(composed['steps'], resource=uri,
+    bounded = truncate_to_budget(composed['epics'], resource=uri,
                                  budget=max(remaining - reserve, 0), hint=hint)
 
-    kept = {step['id'] for step in bounded if TRUNCATION_KEY not in step}
+    kept = {epic['id'] for epic in bounded if TRUNCATION_KEY not in epic}
     out = dict(with_stub)
-    out['steps'] = bounded
+    out['epics'] = bounded
     out[TRUNCATION_KEY] = marker_of(bounded)
-    out['step_requirements'] = [
-        row for row in composed['step_requirements'] if row['step_fk'] in kept]
-    out['step_deps'] = [
-        row for row in composed['step_deps']
-        if row['step_fk'] in kept and row.get('dep_step_fk') in kept]
+    out['epic_requirements'] = [
+        row for row in composed['epic_requirements'] if row['epic_fk'] in kept]
+    out['epic_deps'] = [
+        row for row in composed['epic_deps']
+        if row['epic_fk'] in kept and row.get('dep_epic_fk') in kept]
     out['derived'] = regime_c_derived
     return out
 
@@ -240,15 +240,15 @@ _PIPELINE_COLUMNS = ('id', 'title', 'description', 'pipeline_status',
                      'started_at', 'completed_at', 'create_ts', 'update_ts')
 _INITIATIVE_COLUMNS = ('id', 'pipeline_fk', 'title', 'description', 'initiative_status',
                  'locked', 'sort_order', 'category_fk', 'closed')
-_STEP_COLUMNS = ('id', 'initiative_fk', 'title', 'run', 'checkpoint', 'locked',
+_EPIC_COLUMNS = ('id', 'initiative_fk', 'title', 'run', 'checkpoint', 'locked',
                  'not_before', 'notes', 'creator_fk',
                  'create_ts', 'update_ts')
 # `checkpoint` and the three `locked` flags: req #3649 (migration
 # 20261019100448). `checkpoint` feeds the derivation's hold walk; `locked` is
 # carried so the view can draw the lock — the gateway (`plan_lock.py`) is what
 # enforces it.
-_LINK_COLUMNS = ('step_fk', 'requirement_fk')
-_DEP_COLUMNS = ('id', 'step_fk', 'dep_step_fk')
+_LINK_COLUMNS = ('epic_fk', 'requirement_fk')
+_DEP_COLUMNS = ('id', 'epic_fk', 'dep_epic_fk')
 _REQUIREMENT_COLUMNS = ('id', 'title', 'requirement_status', 'coordination_type',
                         'ai_model', 'effort', 'machine_fk', 'tracking',
                         'started_at', 'completed_at')
@@ -258,8 +258,8 @@ _REQUIREMENT_COLUMNS = ('id', 'title', 'requirement_status', 'coordination_type'
 # pipelinePlanTime.js, unchanged by req #3367/#3381 — it still runs
 # client-side, fed by this composed read) has no per-requirement start
 # evidence at all: measured against the live payload before this fix, EVERY
-# row's `requirementStart()` returned null, `stepStart()` collapsed to
-# UNKNOWN/FUTURE for all 64 steps, and the plan visualizer's time axis fell
+# row's `requirementStart()` returned null, `epicStart()` collapsed to
+# UNKNOWN/FUTURE for all 64 epics, and the plan visualizer's time axis fell
 # back to two dead slots — the exact defect req #3201 was filed to remove,
 # regressed by omission rather than by intent. Two more DATETIME columns on
 # a read already fetching 101 rows costs no extra gateway round trip (the
@@ -299,25 +299,25 @@ def compose_pipeline2(conn, pipeline_id, authenticated_user):
                         'pipeline_fk = %s AND creator_fk = %s',
                         (pipeline_id, authenticated_user), order_by='id ASC')  # read 2
 
-        steps = []
+        epics = []
         if initiatives:
             initiative_ids = sorted(e['id'] for e in initiatives)
-            steps = _select(
-                cursor, _STEP_COLUMNS, 'pipeline_steps',
+            epics = _select(
+                cursor, _EPIC_COLUMNS, 'epics',
                 f'initiative_fk IN {_in_clause(len(initiative_ids))} AND creator_fk = %s',
                 tuple(initiative_ids) + (authenticated_user,), order_by='id ASC')    # read 3
-        pipeline['step_count'] = len(steps)
+        pipeline['epic_count'] = len(epics)
 
         links, deps = [], []
-        if steps:
-            step_ids = sorted(s['id'] for s in steps)
-            in_clause = _in_clause(len(step_ids))
-            links = _select(cursor, _LINK_COLUMNS, 'pipeline_step_requirements',
-                            f'step_fk IN {in_clause}', tuple(step_ids),
-                            order_by='step_fk ASC, requirement_fk ASC')       # read 4
-            deps = _select(cursor, _DEP_COLUMNS, 'pipeline_step_deps',
-                           f'step_fk IN {in_clause}', tuple(step_ids),
-                           order_by='step_fk ASC, id ASC')                    # read 5
+        if epics:
+            epic_ids = sorted(s['id'] for s in epics)
+            in_clause = _in_clause(len(epic_ids))
+            links = _select(cursor, _LINK_COLUMNS, 'epic_requirements',
+                            f'epic_fk IN {in_clause}', tuple(epic_ids),
+                            order_by='epic_fk ASC, requirement_fk ASC')       # read 4
+            deps = _select(cursor, _DEP_COLUMNS, 'epic_deps',
+                           f'epic_fk IN {in_clause}', tuple(epic_ids),
+                           order_by='epic_fk ASC, id ASC')                    # read 5
 
         requirements = []
         requirement_ids = sorted({link['requirement_fk'] for link in links})
@@ -328,8 +328,8 @@ def compose_pipeline2(conn, pipeline_id, authenticated_user):
                 tuple(requirement_ids) + (authenticated_user,), order_by='id ASC')  # read 6
 
     model = {
-        'pipeline': pipeline, 'initiatives': initiatives, 'steps': steps,
-        'step_requirements': links, 'step_deps': deps,
+        'pipeline': pipeline, 'initiatives': initiatives, 'epics': epics,
+        'epic_requirements': links, 'epic_deps': deps,
         'requirements': requirements,
     }
     model['derived'] = _derive(model)
@@ -349,9 +349,9 @@ def compose_pipeline2_initiative(conn, initiative_id, authenticated_user):
     not found / not owned.
 
     PLUS UP TO FOUR LIGHT READS OF THE REST OF THE PLAN'S GRAPH (req #3597,
-    the user's amendment: a step closed by hand blocks everything downstream).
-    A checkpoint in ANOTHER initiative must hold this initiative's steps exactly as a
-    whole-plan read holds them, and only the plan's step ids, checkpoint
+    the user's amendment: an epic closed by hand blocks everything downstream).
+    A checkpoint in ANOTHER initiative must hold this initiative's epics exactly as a
+    whole-plan read holds them, and only the plan's epic ids, checkpoint
     flags, dependency edges, links and requirement statuses can say where one
     is and whether it still holds open work. Same
     invocation, so still ONE gateway round trip; ids and timestamps only.
@@ -375,21 +375,21 @@ def compose_pipeline2_initiative(conn, initiative_id, authenticated_user):
                 "creator. Data integrity issue — report it.")
         pipeline = pipelines[0]
 
-        steps = _select(cursor, _STEP_COLUMNS, 'pipeline_steps',
+        epics = _select(cursor, _EPIC_COLUMNS, 'epics',
                         'initiative_fk = %s AND creator_fk = %s',
                         (initiative_id, authenticated_user), order_by='id ASC')     # read 3
-        initiative['step_count'] = len(steps)
+        initiative['epic_count'] = len(epics)
 
         links, deps = [], []
-        if steps:
-            step_ids = sorted(s['id'] for s in steps)
-            in_clause = _in_clause(len(step_ids))
-            links = _select(cursor, _LINK_COLUMNS, 'pipeline_step_requirements',
-                            f'step_fk IN {in_clause}', tuple(step_ids),
-                            order_by='step_fk ASC, requirement_fk ASC')       # read 4
-            deps = _select(cursor, _DEP_COLUMNS, 'pipeline_step_deps',
-                           f'step_fk IN {in_clause}', tuple(step_ids),
-                           order_by='step_fk ASC, id ASC')                    # read 5
+        if epics:
+            epic_ids = sorted(s['id'] for s in epics)
+            in_clause = _in_clause(len(epic_ids))
+            links = _select(cursor, _LINK_COLUMNS, 'epic_requirements',
+                            f'epic_fk IN {in_clause}', tuple(epic_ids),
+                            order_by='epic_fk ASC, requirement_fk ASC')       # read 4
+            deps = _select(cursor, _DEP_COLUMNS, 'epic_deps',
+                           f'epic_fk IN {in_clause}', tuple(epic_ids),
+                           order_by='epic_fk ASC, id ASC')                    # read 5
 
         requirements = []
         requirement_ids = sorted({link['requirement_fk'] for link in links})
@@ -403,8 +403,8 @@ def compose_pipeline2_initiative(conn, initiative_id, authenticated_user):
                                               authenticated_user)
 
     model = {
-        'pipeline': pipeline, 'initiatives': [initiative], 'steps': steps,
-        'step_requirements': links, 'step_deps': deps,
+        'pipeline': pipeline, 'initiatives': [initiative], 'epics': epics,
+        'epic_requirements': links, 'epic_deps': deps,
         'requirements': requirements, 'plan_graph': plan_graph,
     }
     model['derived'] = _derive(model, initiative_scoped=True)
@@ -413,36 +413,36 @@ def compose_pipeline2_initiative(conn, initiative_id, authenticated_user):
 
 
 def _plan_graph_outside_initiative(cursor, pipeline_id, initiative_id, authenticated_user):
-    """The plan's steps OUTSIDE this initiative, as the derivation's checkpoint walk
+    """The plan's epics OUTSIDE this initiative, as the derivation's checkpoint walk
     needs them (`pipeline2_derive.plan_graph_outside`). Reads 7-10, each
     skipped when the one before it finds nothing."""
-    graph = {'steps': [], 'step_deps': [], 'step_requirements': [],
+    graph = {'epics': [], 'epic_deps': [], 'epic_requirements': [],
              'requirements': []}
-    graph['steps'] = _select(
-        cursor, ('id', 'checkpoint'), 'pipeline_steps',
+    graph['epics'] = _select(
+        cursor, ('id', 'checkpoint'), 'epics',
         'initiative_fk IN (SELECT id FROM initiatives WHERE pipeline_fk = %s '
         'AND creator_fk = %s) AND initiative_fk <> %s AND creator_fk = %s',
         (pipeline_id, authenticated_user, initiative_id, authenticated_user),
         order_by='id ASC')                                                    # read 7
-    if not graph['steps']:
+    if not graph['epics']:
         return graph
-    ids = tuple(sorted(s['id'] for s in graph['steps']))
+    ids = tuple(sorted(s['id'] for s in graph['epics']))
     in_clause = _in_clause(len(ids))
-    graph['step_deps'] = _select(cursor, ('step_fk', 'dep_step_fk'),
-                                 'pipeline_step_deps', f'step_fk IN {in_clause}',
+    graph['epic_deps'] = _select(cursor, ('epic_fk', 'dep_epic_fk'),
+                                 'epic_deps', f'epic_fk IN {in_clause}',
                                  ids)                                         # read 8
     # Only a CHECKPOINT's open work matters to the walk (req #3649): a
-    # non-checkpoint outside step contributes its edges for traversal and
+    # non-checkpoint outside epic contributes its edges for traversal and
     # nothing else, so its links are not read.
-    checkpoint_ids = tuple(sorted(s['id'] for s in graph['steps']
+    checkpoint_ids = tuple(sorted(s['id'] for s in graph['epics']
                                   if s.get('checkpoint')))
     if not checkpoint_ids:
         return graph
-    graph['step_requirements'] = _select(
-        cursor, _LINK_COLUMNS, 'pipeline_step_requirements',
-        f'step_fk IN {_in_clause(len(checkpoint_ids))}', checkpoint_ids)     # read 9
+    graph['epic_requirements'] = _select(
+        cursor, _LINK_COLUMNS, 'epic_requirements',
+        f'epic_fk IN {_in_clause(len(checkpoint_ids))}', checkpoint_ids)     # read 9
     req_ids = sorted({link['requirement_fk']
-                      for link in graph['step_requirements']})
+                      for link in graph['epic_requirements']})
     if req_ids:
         # A checkpoint holds while any gating requirement is not terminal
         # (req #3750), so the derivation gets the rows

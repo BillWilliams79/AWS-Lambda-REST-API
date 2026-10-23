@@ -39,7 +39,7 @@ blank* — and is documented under § Bounded value domains (req #3432).
 | `JUNCTION_OWNERSHIP` | the table has **no** `creator_fk` | `<col> IN (SELECT id FROM <parent> WHERE creator_fk = <sub>)` |
 
 Thirteen tables are in the third group and had **no scoping at all** before
-req #3122: an unscoped `GET /darwin/pipeline_step_deps` returned every user's
+req #3122: an unscoped `GET /darwin/epic_deps` returned every user's
 rows, and PUT/DELETE by id fell into the unscoped `else` branch of `rest_put.py` /
 `rest_delete.py`. Authorization is now DERIVED from the parent that owns the row
 rather than stored on it — a `creator_fk` column here would be a second copy of
@@ -58,9 +58,9 @@ ownership that MySQL cannot keep in agreement with the first.
 **Scoping the WHERE clause is not sufficient on a PUT, and this bit.** The
 predicate proves ownership of the row's parent *before* the statement, while the
 `SET` clause is built from every key in the body — including the scope column. So
-`PUT [{"id": <my edge>, "step_fk": <their step>}]` passed the predicate on its
-current parent and then handed the row over; `dep_step_fk` was worse, because
-`ON DELETE RESTRICT` then made the victim's step undeletable. That is why PUT
+`PUT [{"id": <my edge>, "epic_fk": <their epic>}]` passed the predicate on its
+current parent and then handed the row over; `dep_epic_fk` was worse, because
+`ON DELETE RESTRICT` then made the victim's epic undeletable. That is why PUT
 carries the write guard too (`require_scope=False` there — on an UPDATE an absent
 scope column means *unchanged*). `rest_put` also force-overrides `creator_fk` from
 the token exactly as `rest_post` does, so a body cannot push a row into another
@@ -95,7 +95,7 @@ cancelled the junction predicate *and* the pre-existing `creator_fk` scoping ali
 swallowing a `pymysql.Error`, and is called from inside the statement's own try
 block, so an unreachable database stays a 500 instead of becoming a misleading 400.
 
-`verify` columns are checked on INSERT only, never ANDed into a read — `dep_step_fk`
+`verify` columns are checked on INSERT only, never ANDed into a read — `dep_epic_fk`
 is NULL on a wall-clock gate row, and a read predicate would hide every time gate
 in a plan.
 
@@ -117,7 +117,7 @@ plan/initiative pair; req #3355 dropped the retired middle tier's entry
 (`category_fk`, `initiative_fk`) and the requirement's reference to it, migration
 20260811033413; req #3356
 dropped the whole 1.0 plan layer, migration 20260812175325 — the 1.0 initiative,
-pipeline and step entries with their tables, plus 1.0's two
+pipeline and epic entries with their tables, plus 1.0's two
 `swarm_sessions` and two `orchestration_claims` attribution columns, and renamed
 the second-generation pairs into their place (today's `pipeline_fk` / `initiative_fk`); req #3756
 added Orchestration Engine 2's eleven, migration 20261022073056. Every
@@ -239,7 +239,7 @@ KEYS are SQL identifiers* rule, which had already defeated two other registries.
 `tests/test_unit_enum_blank.py` re-parses `schema.sql` for every NOT NULL column that is
 a real `ENUM(...)` or a CHAR/VARCHAR no wider than 32 — 41 columns today (req #3355
 dropped the retired middle tier's status column; req #3356 dropped the 1.0 initiative tier's status column,
-the 1.0 `pipeline_status`/`execution_mode` and the 1.0 step `run`) — and fails
+the 1.0 `pipeline_status`/`execution_mode` and the 1.0 epic `run`) — and fails
 unless each is in `ENUM_COLUMNS` or `FREE_TEXT_NOT_NULL_COLUMNS` (36 + 5). A new enum
 column fails the build until registered.
 

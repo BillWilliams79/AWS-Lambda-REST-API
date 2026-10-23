@@ -23,9 +23,9 @@ orchestration-algorithm.md` § 11), and the authoritative boundary is the
 verification register `scripts/swarm/verification/pipeline2_behaviours.json`
 (req #3376's coverage gate, which this requirement's own acceptance criteria
 name): DRV-001 through DRV-018, DRV-020 and DRV-021 are `req: 3349`. That set
-DOES include a plain step-scoped `eligibility` (DRV-005/006 — a pending
-step's own dep graph and its own `not_before` against the payload's clock,
-with no batch or cross-step term) and pause-driven launch suppression
+DOES include a plain epic-scoped `eligibility` (DRV-005/006 — a pending
+epic's own dep graph and its own `not_before` against the payload's clock,
+with no batch or cross-epic term) and pause-driven launch suppression
 (DRV-016/017/018 — `launch_suppressed`/`suppressed_by` per row and the
 `pause` block, initiative-scoped because containment gives initiative pause a real scope
 key). It does NOT include reservations, debounce or commanded-requirement
@@ -36,7 +36,7 @@ in the same register) — those are the ENGINE'S restatement, which consumes
 consumer's own defensive posture toward a payload this module did not
 produce, not a second implementation. There is also no `launch_batches`
 here at all — Batch does not exist in 2.0
-(`memory/pipeline-2-first-principles.md` § 6, DRV-021): the Step is the
+(`memory/pipeline-2-first-principles.md` § 6, DRV-021): the Epic is the
 launch unit, so what 1.0 computes once per batch this module computes once
 per row.
 
@@ -52,49 +52,49 @@ requirement, not just this one — which is a gap in the register, not
 evidence the work is out of scope. `serial_state` and `serial_deadlocks`
 below restate 1.0's `pipeline_derive.serial_state`, with one addition the
 gate delta itself calls for and 1.0 has no equivalent of: cross-initiative edges
-are legal here (item 4), so a BACKWARD one — a step depending on a
-not-yet-live initiative's step — is a structural deadlock under `serial` and is
+are legal here (item 4), so a BACKWARD one — an epic depending on a
+not-yet-live initiative's epic — is a structural deadlock under `serial` and is
 reported as a LOUD `serial-deadlock` violation rather than an
 indistinguishable stall.
 
 ## What changed, item by item (req #3349's own numbering)
 
-1. **`initiative_id` is a column read.** `pipeline2_steps.initiative_fk` is NOT NULL, so
+1. **`initiative_id` is a column read.** `pipeline2_epics.initiative_fk` is NOT NULL, so
    there is no tally, no tie-break, and no inheritance walk. `dominant_labels`,
    `inherited_labels` and the `label_inherited` flag do not exist here;
    `initiative_id` and `initiative_labels` and their retired middle-tier counterparts do
-   not appear on a derived row — an unlabelled step cannot exist under this
+   not appear on a derived row — an unlabelled epic cannot exist under this
    schema, so there is nothing to borrow from a dependency. Measured against
-   the live plan (163 steps) via the 1.0 field this module's `initiative_id` column
-   replaces: `label_inherited` was set on exactly 1 of 163 rows (step 11, a
+   the live plan (163 epics) via the 1.0 field this module's `initiative_id` column
+   replaces: `label_inherited` was set on exactly 1 of 163 rows (epic 11, a
    req-less gate) — that one walk is what this item deletes, not seventeen.
 
-2. **`requirement_counts` groups by the STEP's `initiative_fk`**, not by a chain
+2. **`requirement_counts` groups by the EPIC's `initiative_fk`**, not by a chain
    through the requirement's own retired middle-tier link -> `initiative_fk` —
    that tier does not exist in 2.0, so there is no other chain to read. This
-   changes the ANSWER where a requirement's step sits under a different initiative
+   changes the ANSWER where a requirement's epic sits under a different initiative
    than its retired middle-tier record did.
    **Measured against the live plan, 2026-08-09** (206 non-tracking
-   requirements, re-grouped by the step each is linked to in the live 1.0
+   requirements, re-grouped by the epic each is linked to in the live 1.0
    composed read's own `derived.rows[].initiative_id`, which is the field the 2.0
    importer itself reads — see `memory/pipeline-2-data-architecture.md`
    § 7.2): **zero requirements change bucket, and both the overall and the
    per-initiative met/total numbers are byte-identical before and after.** One
-   requirement (#3077) links two steps (14 and 15), both seated in initiative 5,
+   requirement (#3077) links two epics (14 and 15), both seated in initiative 5,
    which is also its own feature's initiative — the sole multi-seat case on this
    plan (`memory/pipeline-2-mcp-surface.md`'s "1 of 255", req #3077) does not
    disturb the count. This is a real, reproducible measurement and not an
    assumption that the two groupings agree in general — they diverge exactly
-   when a requirement's step is seated under a different initiative than the
+   when a requirement's epic is seated under a different initiative than the
    requirement's own feature, which is zero times on today's plan and is not
    zero by construction.
 
-3. **The time-gate branch is deleted.** `pipeline2_step_deps.dep_step_fk` is
+3. **The time-gate branch is deleted.** `pipeline2_epic_deps.dep_epic_fk` is
    NOT NULL (data record § 3) — a dep row has exactly one meaning, so there is
    no discriminator to branch on and no `time_deps` bucket to build. The
    per-row `time_deps` field this module's rows once might have carried does
-   not exist; a step's own time gate is already visible to any reader of
-   `model['steps'][*]['not_before']` without this module re-surfacing it.
+   not exist; an epic's own time gate is already visible to any reader of
+   `model['epics'][*]['not_before']` without this module re-surfacing it.
    `now` still rides `derive_plan2`'s output, for the reason given in
    "Scope" above.
 
@@ -104,8 +104,8 @@ indistinguishable stall.
    with no manual order are placed after, started ones first by an earliest-
    activity proxy (ascending), unstarted ones last in creation (id) order.
    See `_initiative_block_order`'s docstring for the honest residue here — the
-   composed read carries no `started_at` anywhere (steps or the light
-   requirement projection), so "start" is approximated from a step's own
+   composed read carries no `started_at` anywhere (epics or the light
+   requirement projection), so "start" is approximated from an epic's own
    `create_ts`, not the richer timestamp chain the browser's separate
    derivation (req #3372) can afford to read.
 
@@ -120,7 +120,7 @@ indistinguishable stall.
    another initiative, and initiative blocks are not guaranteed contiguous, exactly as
    1.0 is not guaranteed contiguous by first-appearance today.
 
-   There is no state band and no banding self-check: a step has no state
+   There is no state band and no banding self-check: an epic has no state
    (req #3750), so the walk orders by topology, then initiative, then run mode,
    then id.
 
@@ -145,42 +145,42 @@ indistinguishable stall.
 
 6. **Tests** live in `tests/unit/test_pipeline2_derive.py`: one per deleted
    field asserting it is absent from a derived row, the tree-walk order
-   including the amended three-step case, and `requirement_counts` grouping
+   including the amended three-epic case, and `requirement_counts` grouping
    by the seated initiative.
 
 ## Added after the fact: DEPENDENCIES ARE A PRIORITY, NOT A GATE (req #3597, 2026-10-17)
 
 User rule, every plan, always: whenever the machine has a free slot, launch-
-ready work is started even when its step's dependency gate is not satisfied.
-`launch_candidacy` answers "may this step's work be announced" WITHOUT asking
+ready work is started even when its epic's dependency gate is not satisfied.
+`launch_candidacy` answers "may this epic's work be announced" WITHOUT asking
 about its dependencies (it keeps the time gate and the `swarm_ready` rule),
-and `launch_candidate_step_ids` lists the candidates gate-open first, then
+and `launch_candidate_epic_ids` lists the candidates gate-open first, then
 down the chain in display order. The gate is still computed and REPORTED
 (`gate_open`, and `eligible` for the view's eligible-now ring).
 
-**One dependency stays a gate** (the user's amendment, same day; a per-step
-FLAG since req #3649): a CHECKPOINT — `pipeline_steps.checkpoint`, on by
-default — holds every step downstream of it, transitively, while it holds
+**One dependency stays a gate** (the user's amendment, same day; a per-epic
+FLAG since req #3649): a CHECKPOINT — `epics.checkpoint`, on by
+default — holds every epic downstream of it, transitively, while it holds
 OPEN WORK. `checkpoint_blocked_by` names the checkpoints holding a row.
 
-## A STEP HAS NO STATE (req #3750, user ruling 2026-10-21)
+## A EPIC HAS NO STATE (req #3750, user ruling 2026-10-21)
 
-"A step exists to hold requirements. It can hold none, all closed, all open
-or any mix, and it has no state. A step just exists as a holder and has
+"An epic exists to hold requirements. It can hold none, all closed, all open
+or any mix, and it has no state. An epic just exists as a holder and has
 orchestration engine controls." So there is no pending/running/done, no
 `completed_at` stamp (the column is dropped) and no way to complete or
-reopen a step. Every question the engine used to ask of a step's state is
+reopen an epic. Every question the engine used to ask of an epic's state is
 asked of the requirements it holds, through ONE per-row fact:
 
-  `open_req_ids` — the step's GATING requirements (non-tracking) whose
+  `open_req_ids` — the epic's GATING requirements (non-tracking) whose
   status is not terminal (`met`/`deferred`/`wontfix`). An id the composed
   read did not resolve counts as open: holding is the safe direction.
 
-A dependency is CLEAR when that step's `open_req_ids` is empty; a checkpoint
-HOLDS while its own is not; an initiative's serial turn ends when no step in it
-holds open work. A step holding nothing holds nothing — it never gates.
+A dependency is CLEAR when that epic's `open_req_ids` is empty; a checkpoint
+HOLDS while its own is not; an initiative's serial turn ends when no epic in it
+holds open work. An epic holding nothing holds nothing — it never gates.
 Answered fresh from requirement statuses on every read, nothing here can go
-stale when a requirement is added to a step later; a stored "done" could.
+stale when a requirement is added to an epic later; a stored "done" could.
 """
 
 import re
@@ -204,13 +204,13 @@ TERMINAL_REQUIREMENT_STATUSES = ('met', 'deferred', 'wontfix')
 
 # The ONLY status a `/swarm-start` argument may carry (req #3360, carried
 # forward as gate delta F9 on THIS requirement — "without this the fix seated
-# at step 266 dies"). See `pipeline_derive.LAUNCHABLE_REQUIREMENT_STATUSES`
+# at epic 266 dies"). See `pipeline_derive.LAUNCHABLE_REQUIREMENT_STATUSES`
 # for the full reasoning on why `approved` and `development` are excluded;
 # that reasoning is a property of the requirement state machine, not of
 # Feature or containment, and is unchanged here.
 LAUNCHABLE_REQUIREMENT_STATUSES = ('swarm_ready',)
 
-# Why a requirement id is not in a step's launch argument list. One flat
+# Why a requirement id is not in an epic's launch argument list. One flat
 # string per exclusion, `"<req_id> <reason>"` — matches
 # `pipeline_derive`'s shape so a consumer reading both eras' payloads reads
 # one grammar, not two.
@@ -218,7 +218,7 @@ EXCLUDED_CONTAINER = 'tracking container'
 EXCLUDED_UNRESOLVED = 'unresolved — not in the composed read'
 EXCLUDED_NO_STATUS = 'no status'
 
-# The enum behind a step's `no_launch_reason` (gate delta F9). Per STEP, not
+# The enum behind an epic's `no_launch_reason` (gate delta F9). Per EPIC, not
 # per batch — 2.0 has no batch.
 BLOCK_NO_LINKS = 'no-links'
 BLOCK_CONTAINERS = 'containers'
@@ -342,17 +342,17 @@ def _id_sort_key(value):
         return (1, 0.0, str(value))
 
 
-def _linked_req_ids(step_id, model):
-    """Requirement ids linked to a step, in junction order."""
-    return [link['requirement_fk'] for link in (model.get('step_requirements') or [])
-            if link.get('step_fk') == step_id]
+def _linked_req_ids(epic_id, model):
+    """Requirement ids linked to an epic, in junction order."""
+    return [link['requirement_fk'] for link in (model.get('epic_requirements') or [])
+            if link.get('epic_fk') == epic_id]
 
 
 def _split_launchable(req_ids, tracking_ids, reqs_by_id):
     """Gate delta F9 (req #3360's rule, restated for 2.0). Returns
-    `(launch_ids, excluded)` — the ids a step's `/swarm-start` may carry, and
+    `(launch_ids, excluded)` — the ids an epic's `/swarm-start` may carry, and
     one record per id it may not, each carrying the reason. Order is the
-    step's own junction order — the command a reader is told to run must be
+    epic's own junction order — the command a reader is told to run must be
     stable across cycles."""
     tracking = set(tracking_ids or [])
     launch_ids, excluded = [], []
@@ -377,8 +377,8 @@ def _split_launchable(req_ids, tracking_ids, reqs_by_id):
 
 
 def _launch_block(req_ids, tracking_ids, launch_ids):
-    """WHICH of the three no-command cases this step is in — the enum, not
-    the sentence. `None` when something IS launchable. Per STEP: 2.0 has no
+    """WHICH of the three no-command cases this epic is in — the enum, not
+    the sentence. `None` when something IS launchable. Per EPIC: 2.0 has no
     batch to ask this of, so there is exactly one member, always."""
     if launch_ids:
         return None
@@ -404,11 +404,11 @@ def _no_launch_reason(block, excluded):
 
 
 def open_requirement_ids(req_ids, tracking_ids, reqs_by_id):
-    """The step's OPEN WORK (req #3750): its gating (non-tracking) requirement
+    """The epic's OPEN WORK (req #3750): its gating (non-tracking) requirement
     ids whose status is not terminal, in junction order.
 
-    THE ONE FACT every orchestration question about a step is asked through —
-    a step has no state of its own. An id `reqs_by_id` does not resolve counts
+    THE ONE FACT every orchestration question about an epic is asked through —
+    an epic has no state of its own. An id `reqs_by_id` does not resolve counts
     as OPEN: a checkpoint that cannot see its work keeps holding, which is the
     recoverable direction.
     """
@@ -428,34 +428,34 @@ def open_requirement_ids(req_ids, tracking_ids, reqs_by_id):
 # ---------------------------------------------------------------------------
 
 def build_plan_rows(model):
-    """Join the model tables into self-contained plan rows, in steps-array
+    """Join the model tables into self-contained plan rows, in epics-array
     (insertion) order — callers MUST reorder via `display_order` before
     rendering or sequencing, exactly as 1.0 requires of its own rows.
 
-    `initiative_id` is `step['initiative_fk']`, A COLUMN READ (item 1) — no tally, no
+    `initiative_id` is `epic['initiative_fk']`, A COLUMN READ (item 1) — no tally, no
     tie-break, no inheritance walk, and no `initiative`/`initiative_labels`/
     `label_inherited` (nor their retired middle-tier counterparts) on the
-    row: none of those concepts exist once a step's initiative is a NOT NULL
+    row: none of those concepts exist once an epic's initiative is a NOT NULL
     column. A consumer
     wanting the initiative's title reads it off `model['initiatives']` by id — this
     module does not duplicate data the composed read already carries once.
 
-    `dep_ids` come from `pipeline2_step_deps`, where every row is a plain
-    step-to-step edge (`dep_step_fk` NOT NULL, data record § 3) — there is no
+    `dep_ids` come from `pipeline2_epic_deps`, where every row is a plain
+    epic-to-epic edge (`dep_epic_fk` NOT NULL, data record § 3) — there is no
     second condition kind to bucket separately, so unlike
     `pipeline_derive.build_plan_rows` there is no `time_deps` output at all
     (item 3).
     """
     reqs_by_id = _index_by_id(model.get('requirements'))
-    steps = model.get('steps') or []
+    epics = model.get('epics') or []
 
-    dep_ids_by_step = {}
-    for dep in model.get('step_deps') or []:
-        dep_ids_by_step.setdefault(dep['step_fk'], []).append(dep['dep_step_fk'])
+    dep_ids_by_epic = {}
+    for dep in model.get('epic_deps') or []:
+        dep_ids_by_epic.setdefault(dep['epic_fk'], []).append(dep['dep_epic_fk'])
 
     rows = []
-    for step in steps:
-        req_ids = _linked_req_ids(step['id'], model)
+    for epic in epics:
+        req_ids = _linked_req_ids(epic['id'], model)
         unresolved = [rid for rid in req_ids if rid not in reqs_by_id]
         tracking_ids = [rid for rid in req_ids
                         if is_tracking_requirement(reqs_by_id.get(rid))]
@@ -468,18 +468,18 @@ def build_plan_rows(model):
             in _STARTED_REQUIREMENT_STATUSES
             for rid in req_ids if rid not in tracking_set)
         rows.append({
-            'id': step['id'],
-            'title': step.get('title'),
-            'run': step.get('run') or 'auto',
-            # req #3649 — the step's two stored flags. `checkpoint` is what
+            'id': epic['id'],
+            'title': epic.get('title'),
+            'run': epic.get('run') or 'auto',
+            # req #3649 — the epic's two stored flags. `checkpoint` is what
             # the hold walk reads (`is_checkpoint`); `locked` is carried for
             # the view and enforced by the gateway, never here.
-            'checkpoint': _flag(step.get('checkpoint'), default=True),
-            'locked': _flag(step.get('locked'), default=False),
-            'notes': step.get('notes'),
+            'checkpoint': _flag(epic.get('checkpoint'), default=True),
+            'locked': _flag(epic.get('locked'), default=False),
+            'notes': epic.get('notes'),
             'open_req_ids': open_requirement_ids(req_ids, tracking_ids,
                                                  reqs_by_id),
-            'initiative_id': step.get('initiative_fk'),
+            'initiative_id': epic.get('initiative_fk'),
             'req_ids': req_ids,
             'tracking_req_ids': tracking_ids,
             'unresolved_req_ids': unresolved,
@@ -491,7 +491,7 @@ def build_plan_rows(model):
                 if launch_ids else None),
             'no_launch_reason': (None if launch_ids
                                  else _no_launch_reason(block, launch_excluded)),
-            'dep_ids': dep_ids_by_step.get(step['id'], []),
+            'dep_ids': dep_ids_by_epic.get(epic['id'], []),
             # Internal to this module's ordering/eligibility passes only —
             # never on the payload a caller of `derive_plan2` sees (stripped
             # in `derive_plan2`'s own row projection, matching 1.0's compact-
@@ -500,9 +500,9 @@ def build_plan_rows(model):
             # `eligibility()` resolves into the public boolean `eligible` —
             # the raw value itself is item 3's `time_deps` deletion target
             # and must not reappear on the public row.
-            '_create_ts': step.get('create_ts'),
+            '_create_ts': epic.get('create_ts'),
             '_started': started,
-            '_not_before': step.get('not_before'),
+            '_not_before': epic.get('not_before'),
         })
     return rows
 
@@ -522,17 +522,17 @@ def _initiative_block_order(initiatives, rows_by_id):
     this composed read's light requirement projection does not carry
     (`memory/pipeline-2-mcp-surface.md` § 6.2's `_REQUIREMENT_FIELDS`), and
     which no `pipeline2_*` table carries at the initiative level either. The only
-    timestamp available to a server-side reader of THIS payload is a step's
+    timestamp available to a server-side reader of THIS payload is an epic's
     own `create_ts`. So "start" here is approximated as the earliest
-    `create_ts` among an initiative's own steps holding work that has begun (a
+    `create_ts` among an initiative's own epics holding work that has begun (a
     gating requirement in `development` or terminal) —
-    when a step actually started work is not recoverable from this payload,
+    when an epic actually started work is not recoverable from this payload,
     when it was authored into the plan is. This is a proxy, not a
     reproduction of the browser's richer chain, and a future session
     reconciling the two derivations should re-measure rather than assume
     they agree.
 
-    An initiative with no such step (including an empty initiative) is
+    An initiative with no such epic (including an empty initiative) is
     "unstarted" and sorts by id — AUTO_INCREMENT order is creation order on
     this schema, the same idiom `pipeline_derive._id_sort_key` documents.
     """
@@ -583,7 +583,7 @@ def display_order(rows, initiatives):
     guaranteed contiguous by first-appearance today — but `initiative_idx` pulls
     same-initiative rows together wherever topology leaves a choice.
 
-    No state band (req #3750): a step has no state, so among the rows whose
+    No state band (req #3750): an epic has no state, so among the rows whose
     dependencies have all rendered the tie-break is the latest dependency's
     position, then initiative order, then run mode, then id.
 
@@ -595,15 +595,15 @@ def display_order(rows, initiatives):
     Cycle contract, matching 1.0: detect, report, deterministic fallback to
     stored (insertion) order for whatever is left standing.
 
-    Returns `{rows, cycle_detected, cycle_step_ids, duplicate_step_ids,
+    Returns `{rows, cycle_detected, cycle_epic_ids, duplicate_epic_ids,
     initiative_order}`.
     """
-    duplicate_step_ids = []
+    duplicate_epic_ids = []
     seen_ids = set()
     for row in rows:
         if row['id'] in seen_ids:
-            if row['id'] not in duplicate_step_ids:
-                duplicate_step_ids.append(row['id'])
+            if row['id'] not in duplicate_epic_ids:
+                duplicate_epic_ids.append(row['id'])
         else:
             seen_ids.add(row['id'])
 
@@ -632,7 +632,7 @@ def display_order(rows, initiatives):
 
     remaining = {row['id']: row for row in dedup_rows}
     out, pos = [], {}
-    cycle_detected, cycle_step_ids = False, []
+    cycle_detected, cycle_epic_ids = False, []
 
     def sort_key(row):
         anchor = max([-1] + [pos[d] for d in (row.get('dep_ids') or []) if d in pos])
@@ -645,7 +645,7 @@ def display_order(rows, initiatives):
         if not avail:
             rest = sorted(remaining.values(), key=lambda r: idx[r['id']])
             cycle_detected = True
-            cycle_step_ids = [row['id'] for row in rest]
+            cycle_epic_ids = [row['id'] for row in rest]
             out.extend(rest)
             break
         pick = min(avail, key=sort_key)
@@ -654,8 +654,8 @@ def display_order(rows, initiatives):
         del remaining[pick['id']]
 
     return {'rows': out, 'cycle_detected': cycle_detected,
-            'cycle_step_ids': cycle_step_ids,
-            'duplicate_step_ids': duplicate_step_ids,
+            'cycle_epic_ids': cycle_epic_ids,
+            'duplicate_epic_ids': duplicate_epic_ids,
             'initiative_order': full_initiative_order}
 
 
@@ -664,20 +664,20 @@ def verify_order(rows, initiative_scoped=False):
 
     `duplicate-id`, `cycle` and `topology` stay plan-wide, because they must:
     cross-initiative dependency edges are LEGAL (gate delta, req #3336,
-    2026-08-08), so a dependency can genuinely name a step in a different
+    2026-08-08), so a dependency can genuinely name an epic in a different
     initiative and these invariants have to see the whole graph to mean anything.
-    There is no state-banding invariant: a step has no state (req #3750).
+    There is no state-banding invariant: an epic has no state (req #3750).
 
     `dangling-dependency` is CONDITIONAL on `initiative_scoped`, and this is the
     fix for a real defect a code review caught: `get_pipeline2_initiative_composed`
-    narrows `steps` at the gateway (`initiative_fk = E`) but fetches `step_deps` by
-    `step_fk`, so an OUTGOING cross-initiative edge arrives with its `dep_step_fk`
-    pointing at a step this payload never fetched. Under `initiative_scoped=True`
+    narrows `epics` at the gateway (`initiative_fk = E`) but fetches `epic_deps` by
+    `epic_fk`, so an OUTGOING cross-initiative edge arrives with its `dep_epic_fk`
+    pointing at an epic this payload never fetched. Under `initiative_scoped=True`
     that is EXPECTED — not a defect in the plan, a property of the scope —
     and reporting it as `dangling-dependency` (which reads as data loss or a
     stale FK) sends a reader chasing a corruption that does not exist while
     `eligibility` correctly, silently, and PERMANENTLY refuses to launch a
-    step that was actually ready. The fix is not to make it launchable —
+    epic that was actually ready. The fix is not to make it launchable —
     this render genuinely cannot see whether the out-of-scope dependency
     holds open work — it is to say so honestly: those ids are collected into
     `out_of_scope_dep_ids` instead of a violation, and a caller wanting the
@@ -702,9 +702,9 @@ def verify_order(rows, initiative_scoped=False):
             seen_ids.add(row['id'])
     if dup_ids:
         violations.append({
-            'invariant': 'duplicate-id', 'step_ids': dup_ids,
-            'message': (f"duplicate step ids {', '.join(str(i) for i in dup_ids)} — "
-                        "rows collapse silently; the rendered plan is missing steps"),
+            'invariant': 'duplicate-id', 'epic_ids': dup_ids,
+            'message': (f"duplicate epic ids {', '.join(str(i) for i in dup_ids)} — "
+                        "rows collapse silently; the rendered plan is missing epics"),
         })
 
     out_of_scope = set()
@@ -716,8 +716,8 @@ def verify_order(rows, initiative_scoped=False):
                 out_of_scope.add(dep)
             else:
                 violations.append({
-                    'invariant': 'dangling-dependency', 'step_ids': [row['id'], dep],
-                    'message': (f"step {row['id']} depends on step {dep}, which is "
+                    'invariant': 'dangling-dependency', 'epic_ids': [row['id'], dep],
+                    'message': (f"epic {row['id']} depends on epic {dep}, which is "
                                 "not in the rendered rows"),
                 })
 
@@ -733,8 +733,8 @@ def verify_order(rows, initiative_scoped=False):
     stuck = [row['id'] for row in rows if row['id'] not in peeled]
     if stuck:
         violations.append({
-            'invariant': 'cycle', 'step_ids': stuck,
-            'message': (f"dependency cycle: steps {', '.join(str(i) for i in stuck)} "
+            'invariant': 'cycle', 'epic_ids': stuck,
+            'message': (f"dependency cycle: epics {', '.join(str(i) for i in stuck)} "
                         "are in or gated behind a cycle; display fell back to "
                         "stored order"),
         })
@@ -743,19 +743,19 @@ def verify_order(rows, initiative_scoped=False):
         for dep in (row.get('dep_ids') or []):
             if dep in posn and posn[dep] > posn[row['id']]:
                 violations.append({
-                    'invariant': 'topology', 'step_ids': [row['id'], dep],
-                    'message': f"step {row['id']} renders before its dependency {dep}",
+                    'invariant': 'topology', 'epic_ids': [row['id'], dep],
+                    'message': f"epic {row['id']} renders before its dependency {dep}",
                 })
 
     return violations, sorted(out_of_scope, key=_id_sort_key)
 
 
 # ---------------------------------------------------------------------------
-# Eligibility (DRV-005/006) — a plain per-step predicate, no batch term
+# Eligibility (DRV-005/006) — a plain per-epic predicate, no batch term
 # ---------------------------------------------------------------------------
 
 def _deps_clear(row, by_id):
-    """No step dependency of this row holds open work (`open_req_ids`). ONE
+    """No epic dependency of this row holds open work (`open_req_ids`). ONE
     HALF of the gate.
 
     Split out of `_gates_open` by req #3597, which made this half a PRIORITY
@@ -806,11 +806,11 @@ def _gates_open(row, by_id, now):
 
     **Since req #3597 this is a REPORT and a SORT KEY, not a launch
     precondition.** It still decides `eligible` (the view's eligible-now ring)
-    and it orders `launch_candidate_step_ids`; it no
+    and it orders `launch_candidate_epic_ids`; it no
     longer decides whether work may be announced — `launch_candidacy` does.
 
     **An open CHECKPOINT upstream closes it too** (the user's amendment).
-    `_deps_clear` sees only DIRECT dependencies, so a step whose own deps are
+    `_deps_clear` sees only DIRECT dependencies, so an epic whose own deps are
     clear while a checkpoint further up still holds would otherwise read
     gate-open — `eligible`, so the engine admitted it and announced it past
     the checkpoint (review C1, measured). The checkpoint term lives HERE so
@@ -824,9 +824,9 @@ def eligibility(row, by_id, now=None):
     """IS THERE WORK HERE THAT MAY START NOW, GATE AND ALL? The view's
     eligible-now ring.
 
-    A step has no state (req #3750), so this asks the requirements: the step
+    An epic has no state (req #3750), so this asks the requirements: the epic
     holds launch-ready work (`launch_req_ids`) and its gate is open. Before
-    #3750 it was split in two by step state — `eligible` for a pending step,
+    #3750 it was split in two by epic state — `eligible` for a pending epic,
     `top_up_eligible` for a running one (req #3507) — and that split existed
     only because the state did; one predicate now answers both.
     """
@@ -836,15 +836,15 @@ def eligibility(row, by_id, now=None):
 
 
 def is_checkpoint(row):
-    """Is this step a CHECKPOINT — one that holds everything downstream of it
-    while it holds open work? **The answer is the `pipeline_steps.checkpoint` column
-    (req #3649), default ON**, never an inference from the step's links.
+    """Is this epic a CHECKPOINT — one that holds everything downstream of it
+    while it holds open work? **The answer is the `epics.checkpoint` column
+    (req #3649), default ON**, never an inference from the epic's links.
 
-    Before #3649 a checkpoint was IMPLIED: a step with no work requirement
-    (no links, or only tracking containers) was the one kind of step a
+    Before #3649 a checkpoint was IMPLIED: an epic with no work requirement
+    (no links, or only tracking containers) was the one kind of epic a
     person closes by hand, and only that kind held its downstream. The
-    user's rule (2026-10-19) is that every step holds by default and a person
-    turns the hold OFF to make a step a mere launch priority — so the fact is
+    user's rule (2026-10-19) is that every epic holds by default and a person
+    turns the hold OFF to make an epic a mere launch priority — so the fact is
     stored, and link shape says nothing about it any more. A checkpoint
     holds while its `open_req_ids` is non-empty (req #3750) — one holding no
     work holds nothing.
@@ -863,16 +863,16 @@ def _checkpoint_blockers(row, by_id):
 
 
 def plan_graph_outside(model, by_id):
-    """The steps of this PLAN that this payload's rows do not carry, as
-    `{step_id: {'dep_ids', 'checkpoint', 'open'}}` — so an INITIATIVE-scoped read
+    """The epics of this PLAN that this payload's rows do not carry, as
+    `{epic_id: {'dep_ids', 'checkpoint', 'open'}}` — so an INITIATIVE-scoped read
     can still see a checkpoint in another initiative (review I1: without it an
     initiative-scoped orchestrator launched straight past one that a whole-plan
     orchestrator held).
 
-    Read from `model['plan_graph']` — `{steps: [{id, checkpoint}],
-    step_deps, step_requirements, requirements: [{id, requirement_status,
+    Read from `model['plan_graph']` — `{epics: [{id, checkpoint}],
+    epic_deps, epic_requirements, requirements: [{id, requirement_status,
     tracking}]}` — which only the initiative-scoped compose supplies; a whole-plan
-    model carries every step already and has no outside. A step outside is a
+    model carries every epic already and has no outside. An epic outside is a
     CHECKPOINT by its own column (req #3649, `is_checkpoint`), and it holds
     by exactly the rule applied inside the initiative: it has open work
     (`open_requirement_ids`). The compose reads links and requirement rows
@@ -881,21 +881,21 @@ def plan_graph_outside(model, by_id):
     graph = (model or {}).get('plan_graph') or {}
     reqs_by_id = _index_by_id(graph.get('requirements'))
     links = {}
-    for link in graph.get('step_requirements') or []:
-        links.setdefault(link['step_fk'], []).append(link['requirement_fk'])
+    for link in graph.get('epic_requirements') or []:
+        links.setdefault(link['epic_fk'], []).append(link['requirement_fk'])
     deps = {}
-    for dep in graph.get('step_deps') or []:
-        deps.setdefault(dep['step_fk'], []).append(dep['dep_step_fk'])
+    for dep in graph.get('epic_deps') or []:
+        deps.setdefault(dep['epic_fk'], []).append(dep['dep_epic_fk'])
     outside = {}
-    for step in graph.get('steps') or []:
-        if step['id'] in by_id:
+    for epic in graph.get('epics') or []:
+        if epic['id'] in by_id:
             continue
-        checkpoint = is_checkpoint(step)
-        req_ids = links.get(step['id'], [])
+        checkpoint = is_checkpoint(epic)
+        req_ids = links.get(epic['id'], [])
         tracking_ids = [r for r in req_ids
                         if is_tracking_requirement(reqs_by_id.get(r))]
-        outside[step['id']] = {
-            'dep_ids': deps.get(step['id'], []),
+        outside[epic['id']] = {
+            'dep_ids': deps.get(epic['id'], []),
             'checkpoint': checkpoint,
             # Only a checkpoint's open work is ever read (the compose reads
             # links for checkpoints alone), so it is only claimed for one.
@@ -915,11 +915,11 @@ def open_checkpoints_upstream(row, by_id, outside=None):
     its requirements are all closed (or it holds none) it blocks nothing.
 
     The walk goes THROUGH every ancestor, checkpoint or not, so a checkpoint
-    two edges up holds the step as surely as one edge up, and a clear
+    two edges up holds the epic as surely as one edge up, and a clear
     checkpoint does not release anything an open one further up still holds.
     A dependency absent from `by_id` is looked up in `outside` (the rest of
     the plan, which the initiative-scoped compose supplies — `plan_graph_outside`),
-    so a checkpoint in another initiative holds this step exactly as it would under
+    so a checkpoint in another initiative holds this epic exactly as it would under
     a whole-plan read. One found in neither is unknowable and does not block:
     treating every unseen edge as a possible checkpoint would withhold all
     cross-initiative work, the opposite of the rule. A `visited` set makes a cycle
@@ -948,26 +948,26 @@ def open_checkpoints_upstream(row, by_id, outside=None):
 
 
 def launch_candidacy(row, by_id=None, now=None):
-    """MAY THIS STEP'S WORK BE ANNOUNCED FOR LAUNCH? (req #3597.)
+    """MAY THIS EPIC'S WORK BE ANNOUNCED FOR LAUNCH? (req #3597.)
 
     THE USER RULE (2026-10-17, plan 10): bias orchestration toward STARTING
-    work. A step's dependencies are a PRIORITY ORDER for launching, not a
+    work. An epic's dependencies are a PRIORITY ORDER for launching, not a
     hard gate, on every plan, always — no mode, no flag. So this predicate
     deliberately does NOT ask `_deps_clear`; the engine fills free slots from
-    gate-open candidates first (`launch_candidate_step_ids` carries that
+    gate-open candidates first (`launch_candidate_epic_ids` carries that
     order) and then cascades down the dependency chain.
 
     THREE CONJUNCTS:
 
     * At least one `launch_req_ids` entry — only `swarm_ready`, non-tracking
-      work is ever launch-ready (rule 8, req #3360). A step with nothing to
+      work is ever launch-ready (rule 8, req #3360). An epic with nothing to
       command is not a candidate.
     * Its own time gate (`_time_gate_passed`). A `not_before` is a person's
       scheduling intention, not a dependency on other work.
     * No CHECKPOINT upstream is still open (`open_checkpoints_upstream`). A
-      checkpoint step — `pipeline_steps.checkpoint`, ON by default (req
+      checkpoint epic — `epics.checkpoint`, ON by default (req
       #3649) — holds everything downstream of it while it holds open work,
-      the one dependency that stays a gate; a step with the flag OFF is a launch
+      the one dependency that stays a gate; an epic with the flag OFF is a launch
       priority and nothing more.
 
     Pause and serial turn-taking are NOT conjuncts here, exactly as they are
@@ -975,7 +975,7 @@ def launch_candidacy(row, by_id=None, now=None):
     `launch_suppressed`/`suppressed_by`, so a reader can tell "may launch but
     is held by a person" from "has nothing to launch".
 
-    A SUPERSET of every `eligible` step, never a replacement for it:
+    A SUPERSET of every `eligible` epic, never a replacement for it:
     `eligible` keeps answering the gate question for the view.
     """
     if not (row.get('launch_req_ids') or []):
@@ -989,7 +989,7 @@ def launch_queue(candidate_ids, by_id, reqs_by_id):
     """THE LAUNCH PRIORITY, as one ordered list — the only place it is stated
     (req #3649: "minimal and well tested … focused in a single area").
 
-    `[{'step_id', 'requirement_id'}, ...]`: every requirement the engine may
+    `[{'epic_id', 'requirement_id'}, ...]`: every requirement the engine may
     announce, in the order it hands out free slots. The engine consumes this
     list and ranks by position in it; it keeps no ordering rule of its own.
 
@@ -998,24 +998,24 @@ def launch_queue(candidate_ids, by_id, reqs_by_id):
     1. `candidate_ids` — launch candidates (`launch_candidacy`) gate-open
        first, then past their gate, each half in display order (req #3597:
        a dependency is WHO GOES FIRST, never WHETHER; a CHECKPOINT upstream
-       has already removed a held step from candidacy).
-    2. Within a step, `coordination_type == 'deployed'` first (a deployed
+       has already removed a held epic from candidacy).
+    2. Within an epic, `coordination_type == 'deployed'` first (a deployed
        worker closes itself through `/swarm-complete`, so its slot frees and
        the plan drains), then ascending requirement id — FIFO, since ids
-       are allocated in creation order. **Within a step only** (user ruling
+       are allocated in creation order. **Within an epic only** (user ruling
        2026-10-19, superseding req #3623's scope-wide preference): a later
-       step's deployed work never jumps an earlier step's implemented work.
+       epic's deployed work never jumps an earlier epic's implemented work.
 
-    A `launch_suppressed` step (pause, serial turn) is LEFT OUT — this is what
+    A `launch_suppressed` epic (pause, serial turn) is LEFT OUT — this is what
     WOULD be announced, and suppression is reported beside it on the row. A
-    `run=manual` step is IN: where its READY-MANUAL reminder ranks against
+    `run=manual` epic is IN: where its READY-MANUAL reminder ranks against
     auto work is policy too, and the engine must not keep a second rule for
     it. Only *expiry* of a reminder's announce window — debounce state the
     derivation cannot see — stays an engine term.
     """
     queue = []
-    for step_id in candidate_ids:
-        row = by_id.get(step_id) or {}
+    for epic_id in candidate_ids:
+        row = by_id.get(epic_id) or {}
         if row.get('launch_suppressed'):
             continue
         ids = list(row.get('launch_req_ids') or [])
@@ -1023,7 +1023,7 @@ def launch_queue(candidate_ids, by_id, reqs_by_id):
             0 if (reqs_by_id.get(rid) or {}).get('coordination_type') == 'deployed'
             else 1,
             _id_sort_key(rid)))
-        queue.extend({'step_id': step_id, 'requirement_id': rid} for rid in ids)
+        queue.extend({'epic_id': epic_id, 'requirement_id': rid} for rid in ids)
     return queue
 
 
@@ -1032,18 +1032,18 @@ def launch_queue(candidate_ids, by_id, reqs_by_id):
 # ---------------------------------------------------------------------------
 
 def pause_state(model, rows):
-    """Which scopes are paused, and therefore which steps must not be
+    """Which scopes are paused, and therefore which epics must not be
     launched — restated for containment from `pipeline_derive.pause_state`,
-    and simpler here: a step has exactly ONE initiative (a column, not a
-    tie-broken tally), so "the step's dominant initiative is paused" collapses to
+    and simpler here: an epic has exactly ONE initiative (a column, not a
+    tie-broken tally), so "the epic's dominant initiative is paused" collapses to
     a plain membership test.
 
-    TWO SCOPES, ONE RULE, unchanged from 1.0: a step is suppressed when its
+    TWO SCOPES, ONE RULE, unchanged from 1.0: an epic is suppressed when its
     PLAN is paused, or when its OWN initiative is paused (DRV-017 — an initiative pause
-    suppresses that initiative's steps and not its neighbour, because containment
+    suppresses that initiative's epics and not its neighbour, because containment
     gives initiative pause a real scope key no 1.0 initiative ever had). An initiative pause
     binds a WHOLE-PLAN orchestrator too (DRV-018): suppression is a property
-    of the STEP, computed here regardless of which scope is asking, so there
+    of the EPIC, computed here regardless of which scope is asking, so there
     is nothing for a whole-plan orchestrator to opt out of.
 
     `eligible` (from `eligibility` above) is left UNCHANGED by this function
@@ -1053,7 +1053,7 @@ def pause_state(model, rows):
     reading both.
 
     `suppressed_by` is a LIST: when both clauses fire, naming only one would
-    leave a reader who unpaused just the plan surprised the step is still
+    leave a reader who unpaused just the plan surprised the epic is still
     held. A missing `initiative_status` reads as `active` — the column's own
     default, and what every row written before an initiative pause ever existed
     is.
@@ -1084,7 +1084,7 @@ def pause_state(model, rows):
         'paused_initiative_ids': sorted(paused_initiatives, key=_id_sort_key),
         # In DISPLAY order — `derive_plan2` calls this after `display_order`,
         # so `rows` already carries the caller's rendered sequence.
-        'suppressed_step_ids': suppressed,
+        'suppressed_epic_ids': suppressed,
     }
 
 
@@ -1093,13 +1093,13 @@ def pause_state(model, rows):
 # ---------------------------------------------------------------------------
 
 def serial_state(model, rows, initiative_order):
-    """Which initiative's turn it is, and therefore which steps must WAIT for it —
+    """Which initiative's turn it is, and therefore which epics must WAIT for it —
     the `derived.serial` block, mirroring 1.0's shipped shape
     (`pipeline_derive.serial_state`): `{execution_mode, serial, initiative_order,
-    closed_initiative_ids, live_initiative_id, waiting_initiative_ids, held_step_ids}`.
+    closed_initiative_ids, live_initiative_id, waiting_initiative_ids, held_epic_ids}`.
 
     `execution_mode` is the ONE stored fact — an intention, like a pause.
-    Everything else is DERIVED: an initiative's turn is CLOSED when no step it owns
+    Everything else is DERIVED: an initiative's turn is CLOSED when no epic it owns
     holds open work (`open_req_ids`, req #3750); the LIVE initiative is the first one in `initiative_order` that is not
     closed; an initiative is BEHIND, LIVE, or AHEAD, and only the ones AHEAD are
     held.
@@ -1114,13 +1114,13 @@ def serial_state(model, rows, initiative_order):
     creation order), and re-deriving a second, cruder one here would be two
     answers to one question.
 
-    A step whose initiative is not the live one is suppressed with reason `turn`,
+    An epic whose initiative is not the live one is suppressed with reason `turn`,
     appended to `suppressed_by` (which `pause_state` — called first — has
-    already populated), never replacing it: a step held by both a pause and
-    a turn must name both. A step with NO initiative label cannot happen under
-    2.0's `initiative_fk NOT NULL` (unlike 1.0, where a req-less step could carry
+    already populated), never replacing it: an epic held by both a pause and
+    a turn must name both. An epic with NO initiative label cannot happen under
+    2.0's `initiative_fk NOT NULL` (unlike 1.0, where a req-less epic could carry
     no label at all) — so unlike `pipeline_derive.serial_state` there is no
-    "no initiative label -> never held" carve-out to make here; every step has an
+    "no initiative label -> never held" carve-out to make here; every epic has an
     initiative and therefore a turn.
 
     Under `parallel` nothing is suppressed and no row is touched — the order
@@ -1168,30 +1168,30 @@ def serial_state(model, rows, initiative_order):
         'closed_initiative_ids': closed_initiative_ids,
         'live_initiative_id': live_initiative_id,
         'waiting_initiative_ids': [e for e in initiative_order if e in waiting],
-        'held_step_ids': held,
+        'held_epic_ids': held,
     }
 
 
 def serial_deadlocks(rows, initiative_order, serial):
     """A BACKWARD cross-initiative dependency edge on a `serial` plan — the gate
     delta's own new invariant, unique to 2.0: cross-initiative edges are legal
-    (item 4's gate delta), so a step can name a dependency in an initiative that
+    (item 4's gate delta), so an epic can name a dependency in an initiative that
     has not had its turn yet. Under serial execution that dependency is
     HELD by `serial_state` until its own initiative goes live, which is after the
-    depending step's initiative has closed — so the edge can NEVER be honoured as
+    depending epic's initiative has closed — so the edge can NEVER be honoured as
     an ordering.
 
     **IT IS NO LONGER A DEADLOCK (req #3597)**, and the message says so. It
-    was one while a dependency GATED a launch: the depending step could not
+    was one while a dependency GATED a launch: the depending epic could not
     start, so its initiative could not close, so the dependency's turn never came.
-    Now a dependency is a launch PRIORITY, the depending step launches ahead
+    Now a dependency is a launch PRIORITY, the depending epic launches ahead
     of it and the plan runs. The edge is still reported, LOUDLY (design rule
     7), because an ordering the author wrote that the plan structurally
     inverts is almost certainly not what they meant. The invariant keeps its
     `serial-deadlock` key so no consumer of the wire format changes.
 
     A "backward" edge is one where the DEPENDENCY's initiative sits AFTER the
-    DEPENDING step's initiative in `initiative_order` — the depending step's turn
+    DEPENDING epic's initiative in `initiative_order` — the depending epic's turn
     finishes before the dependency's turn even starts. Only meaningful under
     `serial`; a parallel plan has no turn order for an edge to violate.
 
@@ -1216,16 +1216,16 @@ def serial_deadlocks(rows, initiative_order, serial):
                 continue
             violations.append({
                 'invariant': 'serial-deadlock',
-                'step_ids': [row['id'], dep_id],
+                'epic_ids': [row['id'], dep_id],
                 'message': (
-                    f"step {row['id']} (initiative turn {row_pos}) depends on step "
+                    f"epic {row['id']} (initiative turn {row_pos}) depends on epic "
                     f"{dep_id} (initiative turn {dep_pos}) — a BACKWARD cross-initiative "
                     "edge under serial execution. The dependency's initiative only "
-                    "goes live after this one closes, so this step ALWAYS "
+                    "goes live after this one closes, so this epic ALWAYS "
                     "launches ahead of it (a dependency is a launch priority, "
                     "not a gate — req #3597) and the edge can never be "
                     "honoured as an ordering. Re-order the initiatives, move both "
-                    "steps into one initiative, or drop the edge."),
+                    "epics into one initiative, or drop the edge."),
             })
     return violations
 
@@ -1236,10 +1236,10 @@ def serial_deadlocks(rows, initiative_order, serial):
 
 def requirement_counts(model):
     """Met/total requirement counts, per initiative and for the whole plan —
-    RE-POINTED at the step's `initiative_fk` (item 2): a requirement's bucket is
+    RE-POINTED at the epic's `initiative_fk` (item 2): a requirement's bucket is
     now where its work is SEATED, not where its (nonexistent) feature was
-    filed. `pipeline2_step_requirements` carries `PRIMARY KEY
-    (requirement_fk)` alone (gate delta, req #3336) — one step per
+    filed. `pipeline2_epic_requirements` carries `PRIMARY KEY
+    (requirement_fk)` alone (gate delta, req #3336) — one epic per
     requirement, structural — so the lookup is a plain one-to-one join, not a
     tie-break.
 
@@ -1258,18 +1258,18 @@ def requirement_counts(model):
     **`overall`'s POPULATION follows `model['requirements']`, which is a
     different set depending on which composed read produced `model`** — the
     same "which population" caveat `get_pipeline2_initiative_composed`'s own
-    docstring states for `step_count` (req #3287). On the whole-plan read
+    docstring states for `epic_count` (req #3287). On the whole-plan read
     it is every requirement in the plan; on the initiative-scoped read it is only
-    the requirements linked to THAT initiative's own steps, so `overall` there is
+    the requirements linked to THAT initiative's own epics, so `overall` there is
     identical to that initiative's own `by_initiative` entry — never the plan's true
     total. A caller rendering "N/M requirements complete" from an
     initiative-scoped read is showing the initiative's number, not the plan's, and must
     label it that way.
     """
-    steps_by_id = _index_by_id(model.get('steps'))
-    req_to_step = {}
-    for link in model.get('step_requirements') or []:
-        req_to_step[link['requirement_fk']] = link['step_fk']
+    epics_by_id = _index_by_id(model.get('epics'))
+    req_to_epic = {}
+    for link in model.get('epic_requirements') or []:
+        req_to_epic[link['requirement_fk']] = link['epic_fk']
 
     overall = {'met': 0, 'total': 0}
     by_initiative = {}
@@ -1280,8 +1280,8 @@ def requirement_counts(model):
         overall['total'] += 1
         if met:
             overall['met'] += 1
-        step = steps_by_id.get(req_to_step.get(req['id']))
-        initiative_id = step.get('initiative_fk') if step else None
+        epic = epics_by_id.get(req_to_epic.get(req['id']))
+        initiative_id = epic.get('initiative_fk') if epic else None
         if initiative_id is None:
             continue
         bucket = by_initiative.setdefault(initiative_id, {'initiative_id': initiative_id, 'met': 0, 'total': 0})
@@ -1318,7 +1318,7 @@ def derive_plan2(model, now=None, initiative_scoped=False):
     reports a dependency it cannot see (an honest `out_of_scope_dep_ids`
     entry instead of a false `dangling-dependency` alarm; see that
     function's docstring for the defect this fixes). It does not change
-    ordering or eligibility: a step gated on an out-of-scope dependency is
+    ordering or eligibility: an epic gated on an out-of-scope dependency is
     correctly, and unavoidably, `eligible: False` here either way — this
     payload cannot see whether that dependency holds open work, and the safe
     direction is not to guess. A caller that needs the true answer reads the
@@ -1336,13 +1336,13 @@ def derive_plan2(model, now=None, initiative_scoped=False):
     ordered = display_order(plan_rows, model.get('initiatives') or [])
     rows = ordered['rows']
     violations, out_of_scope_dep_ids = verify_order(rows, initiative_scoped=initiative_scoped)
-    # AFTER `display_order`, so `suppressed_step_ids` comes out in display
+    # AFTER `display_order`, so `suppressed_epic_ids` comes out in display
     # order, and it writes `launch_suppressed`/`suppressed_by` onto the same
     # row dicts the payload below projects — matching 1.0's ordering of the
     # two calls and its stated reason.
     pause = pause_state(model, rows)
     # AFTER `pause_state`, because it APPENDS to the `suppressed_by` list
-    # that call creates rather than replacing it — a step held by both a
+    # that call creates rather than replacing it — an epic held by both a
     # pause and a turn must name both (matches 1.0's ordering, req #3388).
     serial = serial_state(model, rows, ordered['initiative_order'])
     violations = violations + serial_deadlocks(rows, ordered['initiative_order'], serial['serial'])
@@ -1386,22 +1386,22 @@ def derive_plan2(model, now=None, initiative_scoped=False):
             'id': row['id'],
             'run': row['run'],
             # req #3649 — the two stored flags, so a reader can say WHY a
-            # step holds its downstream (checkpoint) and draw the lock.
+            # epic holds its downstream (checkpoint) and draw the lock.
             'checkpoint': row['checkpoint'],
             'locked': row['locked'],
             'eligible': row['id'] in eligible_set,
-            # req #3750 — the step's OPEN WORK, the one fact every question
-            # about a step is asked through (a step has no state).
+            # req #3750 — the epic's OPEN WORK, the one fact every question
+            # about an epic is asked through (an epic has no state).
             'open_req_ids': row['open_req_ids'],
             # req #3597. `gate_open` is the gate REPORTED (no dep holds open
             # work and the time gate passed) — the view's "gate satisfied / waiting".
-            # `launch_candidate` is whether this step's work may be announced
+            # `launch_candidate` is whether this epic's work may be announced
             # for launch, which no longer requires the gate.
             'gate_open': row['id'] in gate_open_set,
             'launch_candidate': row['id'] in candidate_set,
-            # The amendment: checkpoint steps upstream that still hold open
+            # The amendment: checkpoint epics upstream that still hold open
             # work (req #3649: the flag, on by default). Non-empty means this
-            # step's work is NOT announced until they are.
+            # epic's work is NOT announced until they are.
             'checkpoint_blocked_by': row['_checkpoint_blockers'],
             'initiative_id': row['initiative_id'],
             'dep_ids': row['dep_ids'],
@@ -1424,17 +1424,17 @@ def derive_plan2(model, now=None, initiative_scoped=False):
         } for row in rows],
         'pause': pause,
         'serial': serial,
-        'eligible_step_ids': eligible_ids,
+        'eligible_epic_ids': eligible_ids,
         # req #3597 — every launch candidate, in launch PRIORITY order
         # (gate-open first, then display order), NOT display order.
-        'launch_candidate_step_ids': candidate_ids,
+        'launch_candidate_epic_ids': candidate_ids,
         # req #3649 — THE launch order, one entry per announceable
         # requirement (`launch_queue`): the engine ranks by position here.
         'launch_queue': queue,
         'violations': violations,
         'cycle_detected': ordered['cycle_detected'],
-        'cycle_step_ids': ordered['cycle_step_ids'],
-        'duplicate_step_ids': ordered['duplicate_step_ids'],
+        'cycle_epic_ids': ordered['cycle_epic_ids'],
+        'duplicate_epic_ids': ordered['duplicate_epic_ids'],
         'unresolved_req_ids': unresolved,
         # Only ever non-empty when `initiative_scoped=True` — a dependency this
         # initiative-scoped payload never fetched, not a plan defect. See

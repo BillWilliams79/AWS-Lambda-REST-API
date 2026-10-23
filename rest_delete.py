@@ -53,8 +53,8 @@ def rest_delete(delete_method, conn, database, table, body, authenticated_user=N
             print(f"HTTP {delete_method} invalid body key(s) for {table}: {unknown}")
             return compose_rest_response(400, '', 'BAD REQUEST')
 
-        # req #3649 — an effectively LOCKED plan-layer row (a step under a
-        # locked initiative, a link or edge under a locked step...) is not deleted.
+        # req #3649 — an effectively LOCKED plan-layer row (an epic under a
+        # locked initiative, a link or edge under a locked epic...) is not deleted.
         # The keys are validated above, so they are safe as `t.<key>` here.
         refusal = plan_lock_guard_delete(
             conn, table, ' AND '.join(f"t.{key} = %s" for key in keys), values,
@@ -75,8 +75,8 @@ def rest_delete(delete_method, conn, database, table, body, authenticated_user=N
             else:
                 # req #3122 — join-through scoping for tables with no creator_fk.
                 # This is the branch that used to let `DELETE /darwin/
-                # pipeline_step_deps {"id": <theirs>}` remove another user's gate,
-                # and `{"step_fk": <theirs>}` strip a whole step's dependencies.
+                # epic_deps {"id": <theirs>}` remove another user's gate,
+                # and `{"epic_fk": <theirs>}` strip a whole epic's dependencies.
                 junction_clause = junction_scope_clause(table)
                 if junction_clause:
                     where_clause += f' AND {junction_clause}'

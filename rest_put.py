@@ -136,7 +136,7 @@ def rest_put(put_method, conn, database, table, body_list, authenticated_user=No
         elif authenticated_user is not None and junction_scope_clause(table):
             # req #3122 — a table with no creator_fk is scoped through its
             # parent. Without this branch a junction PUT fell into the unscoped
-            # `else` below, and `PUT /darwin/pipeline_step_deps [{"id":<theirs>}]`
+            # `else` below, and `PUT /darwin/epic_deps [{"id":<theirs>}]`
             # rewrote another user's dependency gate. The subquery names the
             # PARENT table, never the one being updated, so MySQL 1093 (self-
             # reference in an UPDATE subquery) does not apply.

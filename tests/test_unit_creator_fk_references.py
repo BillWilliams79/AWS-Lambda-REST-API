@@ -20,7 +20,7 @@ rule from `schema.sql` gives **40 columns across 26 tables** (36 when #3125
 shipped; req #3186's two `swarm_sessions` attribution FKs and req #3224's three
 `orchestration_claims` ones are the proof the mechanism works — they failed this
 test until registered; req #3355 dropped the retired middle tier, and req #3356 dropped the
-whole 1.0 plan layer, taking `initiatives`, `pipelines` and `pipeline_steps` off the
+whole 1.0 plan layer, taking `initiatives`, `pipelines` and `epics` off the
 table count along with 1.0's two `swarm_sessions` and two `orchestration_claims`
 attribution columns). A hand-counted
 security boundary drifts silently — `test_every_cross_tenant_fk_column_is_registered`
@@ -164,7 +164,7 @@ def test_the_ddl_and_the_registry_agree_on_which_tables_carry_creator_fk(creator
 
     Already covered from the darwin-mcp side; asserted here because every test
     below reads it as the definition of "creator-scoped". Derived from
-    schema.sql, so it fails helpfully if pipeline2_pipelines/_initiatives/_steps are
+    schema.sql, so it fails helpfully if pipeline2_pipelines/_initiatives/_epics are
     missing, or if either pipeline2_ edge table (no creator_fk) is wrongly
     present.
     """
@@ -242,7 +242,7 @@ def test_the_column_the_requirement_named_is_covered():
 
 # COVERS: ENG-034
 def test_orchestration_claims_pipeline2_columns_are_registered():
-    """`pipeline2_fk` / `epic2_fk` (req #3369, migration 20260809024954) — the
+    """`pipeline2_fk` / `initiative2_fk` (req #3369, migration 20260809024954) — the
     schema-shape half of "orchestration claims serve both eras". Without this
     registration a 2.0 claim naming a foreign creator's `pipeline2_pipelines` /
     `pipeline2_initiatives` row would be the exact grief-lock req #3125 exists to
@@ -363,8 +363,8 @@ def test_the_two_registries_never_name_the_same_table():
 
 def test_referenced_parent_columns_dispatches_to_both_registries():
     assert referenced_parent_columns('test_runs') == [('test_plan_fk', 'test_plans')]
-    assert referenced_parent_columns('pipeline_step_deps')[0] == ('step_fk',
-                                                                   'pipeline_steps')
+    assert referenced_parent_columns('epic_deps')[0] == ('epic_fk',
+                                                                   'epics')
     assert referenced_parent_columns('profiles') == []
     assert referenced_parent_columns('not_a_table') == []
 

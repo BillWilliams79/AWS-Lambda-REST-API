@@ -15,16 +15,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import pipeline2_compose as pc                          # noqa: E402
 
 
-def _fake_composed(step_count=3, notes_len=10, derived_bytes=200):
-    steps = [{'id': i, 'initiative_fk': 1, 'title': f's{i}', 'run': 'auto',
+def _fake_composed(epic_count=3, notes_len=10, derived_bytes=200):
+    epics = [{'id': i, 'initiative_fk': 1, 'title': f's{i}', 'run': 'auto',
              'not_before': None, 'notes': 'x' * notes_len}
-             for i in range(1, step_count + 1)]
+             for i in range(1, epic_count + 1)]
     return {
-        'pipeline': {'id': 1, 'title': 'p', 'step_count': step_count},
+        'pipeline': {'id': 1, 'title': 'p', 'epic_count': epic_count},
         'initiatives': [{'id': 1, 'pipeline_fk': 1, 'title': 'e'}],
-        'steps': steps,
-        'step_requirements': [],
-        'step_deps': [],
+        'epics': epics,
+        'epic_requirements': [],
+        'epic_deps': [],
         'requirements': [],
         'derived': {'withheld': True, 'reason': 'x' * derived_bytes,
                    'withheld_reason': 'derivation_failed', 'rows_complete': True},
@@ -44,7 +44,7 @@ def test_a_plan_under_budget_ships_regime_a_unchanged(monkeypatch):
 
 
 def test_an_empty_plan_is_never_bounded(monkeypatch):
-    composed = _fake_composed(step_count=0)
+    composed = _fake_composed(epic_count=0)
     result = _bounded(composed, 1, monkeypatch)
     assert result is composed
 
@@ -52,14 +52,14 @@ def test_an_empty_plan_is_never_bounded(monkeypatch):
 def test_regime_b_withholds_derived_and_keeps_every_row(monkeypatch):
     """A LARGE `derived` block pushes the payload over budget on its own;
     withholding it alone is enough."""
-    composed = _fake_composed(step_count=5, notes_len=20, derived_bytes=50_000)
+    composed = _fake_composed(epic_count=5, notes_len=20, derived_bytes=50_000)
     budget = pc.payload_bytes(composed) - 1
     assert budget < pc.payload_bytes(composed)
 
     result = _bounded(composed, budget, monkeypatch)
 
-    assert len(result['steps']) == 5
-    assert not any(pc.TRUNCATION_KEY in s for s in result['steps'])
+    assert len(result['epics']) == 5
+    assert not any(pc.TRUNCATION_KEY in s for s in result['epics'])
     assert pc.TRUNCATION_KEY not in result
     assert result['derived']['withheld_reason'] == pc.WITHHELD_BUDGET_DERIVED_ONLY
     assert result['derived']['rows_complete'] is True
@@ -69,27 +69,27 @@ def test_regime_b_withholds_derived_and_keeps_every_row(monkeypatch):
     assert pc.payload_bytes(result) <= budget
 
 
-def test_regime_c_truncates_steps_and_prunes_dependents(monkeypatch):
-    composed = _fake_composed(step_count=50, notes_len=2000, derived_bytes=50_000)
-    composed['step_requirements'] = [
-        {'step_fk': i, 'requirement_fk': 100 + i} for i in range(1, 51)]
-    composed['step_deps'] = [
-        {'step_fk': i, 'dep_step_fk': i - 1} for i in range(2, 51)]
+def test_regime_c_truncates_epics_and_prunes_dependents(monkeypatch):
+    composed = _fake_composed(epic_count=50, notes_len=2000, derived_bytes=50_000)
+    composed['epic_requirements'] = [
+        {'epic_fk': i, 'requirement_fk': 100 + i} for i in range(1, 51)]
+    composed['epic_deps'] = [
+        {'epic_fk': i, 'dep_epic_fk': i - 1} for i in range(2, 51)]
 
     budget = 10_000
     result = _bounded(composed, budget, monkeypatch)
 
     assert pc.TRUNCATION_KEY in result
-    kept = {s['id'] for s in result['steps'] if pc.TRUNCATION_KEY not in s}
+    kept = {s['id'] for s in result['epics'] if pc.TRUNCATION_KEY not in s}
     assert 0 < len(kept) < 50, 'the budget must actually bite for this test to mean anything'
-    for row in result['step_requirements']:
-        assert row['step_fk'] in kept
-    for row in result['step_deps']:
-        assert row['step_fk'] in kept and row['dep_step_fk'] in kept
+    for row in result['epic_requirements']:
+        assert row['epic_fk'] in kept
+    for row in result['epic_deps']:
+        assert row['epic_fk'] in kept and row['dep_epic_fk'] in kept
 
     assert result['derived']['withheld_reason'] == pc.WITHHELD_BUDGET_ROWS_TRUNCATED
     assert result['derived']['rows_complete'] is False
-    assert result['pipeline']['step_count'] == 50
+    assert result['pipeline']['epic_count'] == 50
     assert pc.payload_bytes(result) <= budget
 
 
@@ -100,28 +100,28 @@ def test_regime_c_never_ships_over_budget_across_a_sweep(monkeypatch):
     reason to stay in a particular order, and measuring the wrong one is a
     latent over-budget bug that only shows up once someone edits either
     message's wording (found in review, req #3367)."""
-    for step_count in (1, 4, 7, 13, 25, 40):
+    for epic_count in (1, 4, 7, 13, 25, 40):
         for notes_len in (0, 50, 500, 2000):
             for derived_bytes in (0, 1000, 20_000, 80_000):
                 for budget in (5_000, 8_000, 10_000, 20_000):
-                    composed = _fake_composed(step_count=step_count, notes_len=notes_len,
+                    composed = _fake_composed(epic_count=epic_count, notes_len=notes_len,
                                               derived_bytes=derived_bytes)
-                    composed['step_requirements'] = [
-                        {'step_fk': i, 'requirement_fk': 100 + i}
-                        for i in range(1, step_count + 1)]
-                    composed['step_deps'] = [
-                        {'step_fk': i, 'dep_step_fk': i - 1}
-                        for i in range(2, step_count + 1)]
+                    composed['epic_requirements'] = [
+                        {'epic_fk': i, 'requirement_fk': 100 + i}
+                        for i in range(1, epic_count + 1)]
+                    composed['epic_deps'] = [
+                        {'epic_fk': i, 'dep_epic_fk': i - 1}
+                        for i in range(2, epic_count + 1)]
                     result = _bounded(composed, budget, monkeypatch)
                     size = pc.payload_bytes(result)
                     assert size <= budget, (
-                        f"over budget by {size - budget}B: step_count={step_count} "
+                        f"over budget by {size - budget}B: epic_count={epic_count} "
                         f"notes_len={notes_len} derived_bytes={derived_bytes} "
                         f"budget={budget}")
 
 
 def test_regime_c_never_ships_the_real_derived_block(monkeypatch):
-    composed = _fake_composed(step_count=40, notes_len=1500, derived_bytes=80_000)
+    composed = _fake_composed(epic_count=40, notes_len=1500, derived_bytes=80_000)
     result = _bounded(composed, 8_000, monkeypatch)
     assert result['derived'] != composed['derived']
     assert result['derived']['withheld'] is True
@@ -134,8 +134,8 @@ def test_deriver_exception_degrades_to_a_withheld_stub_without_losing_rows(monke
         raise RuntimeError('synthetic failure')
 
     monkeypatch.setattr(pc.pipeline2_derive, 'derive_plan2', boom)
-    model = {'pipeline': {'id': 1}, 'initiatives': [], 'steps': [],
-             'step_requirements': [], 'step_deps': [], 'requirements': []}
+    model = {'pipeline': {'id': 1}, 'initiatives': [], 'epics': [],
+             'epic_requirements': [], 'epic_deps': [], 'requirements': []}
     derived = pc._derive(model)
     assert derived['withheld'] is True
     assert derived['withheld_reason'] == pc.WITHHELD_DERIVATION_FAILED
