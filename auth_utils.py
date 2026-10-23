@@ -259,6 +259,11 @@ CREATOR_FK_TABLES = frozenset({
     # this exact plan payload" with a 409.
     'engine_states', 'engine_heartbeats', 'engine_decision_records',
     'engine_outcomes', 'engine_inputs',
+    # Req #3815 — the Requirement Filer Bug button's debug capture (migration
+    # 20261023103433). A NOT NULL creator_fk, so membership is what lets
+    # rest_post inject it; an unscoped read would hand any caller another
+    # user's console, network trace and storage snapshot.
+    'requirement_debug_captures',
 })
 
 PROFILE_TABLE = 'profiles'
@@ -568,6 +573,11 @@ CREATOR_TABLE_REFERENCES = {
     ),
     'recurring_tasks': (
         ('area_fk', 'areas'),                                # CASCADE
+    ),
+    'requirement_debug_captures': (                          # req #3815
+        # UNIQUE as well as CASCADE: a cross-tenant capture would also take the
+        # victim requirement's one capture slot, so their own Bug save 409s.
+        ('requirement_fk', 'requirements'),                  # CASCADE
     ),
     'requirements': (
         ('project_fk', 'projects'),                          # SET NULL
