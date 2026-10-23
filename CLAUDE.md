@@ -106,7 +106,7 @@ empty.
 
 ## Outbound references — owning a row is not owning what it points at (req #3125)
 
-`CREATOR_TABLE_REFERENCES` is the fourth registry: **51 columns across 30
+`CREATOR_TABLE_REFERENCES` is the fourth registry: **52 columns across 31
 tables** — every `*_fk` on a `creator_fk`-bearing table whose target is also
 creator-scoped. (36 at req #3125; req #3186 added `swarm_sessions.pipeline_fk`
 and `.initiative_fk`; req #3224 added `orchestration_claims.pipeline_fk`, `.initiative_fk`
@@ -120,7 +120,8 @@ dropped the whole 1.0 plan layer, migration 20260812175325 — the 1.0 initiativ
 pipeline and step entries with their tables, plus 1.0's two
 `swarm_sessions` and two `orchestration_claims` attribution columns, and renamed
 the second-generation pairs into their place (today's `pipeline_fk` / `initiative_fk`); req #3756
-added Orchestration Engine 2's eleven, migration 20261022073056. Every
+added Orchestration Engine 2's eleven, migration 20261022073056; req #3815 added
+`requirement_debug_captures.requirement_fk`, migration 20261023103433. Every
 number is DERIVED — see the closing note of this section.)
 
 **The attack does not defeat `creator_fk` scoping, it rides on it.** The attacker
