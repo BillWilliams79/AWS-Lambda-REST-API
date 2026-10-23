@@ -143,13 +143,13 @@ def test_the_matrix_is_the_whole_registry():
     # 41 at #3224's three `orchestration_claims` columns, 45 at #3337's four
     # Pipeline 2.0 plan-layer columns. Found already red at 48 when #3350
     # landed (this file had drifted, undetected because nobody re-ran it): 47
-    # from req #3369's two `orchestration_claims.pipeline2_fk`/`.epic2_fk`, 48
+    # from req #3369's two `orchestration_claims.pipeline2_fk`/`.initiative2_fk`, 48
     # from req #3202's one `swarm_completes.machine_fk` — neither accompanied
     # by an update here, and `swarm_completes` had no body template at all
     # (see `_required_columns`). #3350 fixes both gaps AND adds its own two
-    # `swarm_sessions` 2.0 attribution siblings (pipeline2_fk/epic2_fk — no
+    # `swarm_sessions` 2.0 attribution siblings (pipeline2_fk/initiative2_fk — no
     # new parent tables, both already built for #3337's own
-    # pipeline2_initiatives/pipeline2_steps entries), landing on 50. Req #3355 drops
+    # pipeline2_initiatives/pipeline2_epics entries), landing on 50. Req #3355 drops
     # the retired middle tier — both the requirement's reference column AND its
     # own `('category_fk', 'categories')`/`('initiative_fk', 'initiatives')` entry — taking
     # TRIPLES to 47 and, since that tier was itself a PARENT of nothing else

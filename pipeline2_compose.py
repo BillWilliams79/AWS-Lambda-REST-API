@@ -254,7 +254,7 @@ _REQUIREMENT_COLUMNS = ('id', 'title', 'requirement_status', 'coordination_type'
                         'started_at', 'completed_at', 'deferred_at')
 # `deferred_at` added by req #3825: an epic card's END is the moment its last
 # gating requirement closed, and `deferred` stamps `deferred_at` while clearing
-# `completed_at` — without it a step closed by a deferral has no end.
+# `completed_at` — without it an epic closed by a deferral has no end.
 # `started_at`/`completed_at` added by req #3381's code review (2026-08-09),
 # widening the light projection req #3345 originally specified. Without them
 # the browser's `planTimeAxis` (Darwin/src/SwarmView/pipelines/
