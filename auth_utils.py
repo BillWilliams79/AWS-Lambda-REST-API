@@ -713,7 +713,7 @@ ENUM_COLUMNS = {
     'machines': frozenset({'platform', 'arch'}),
     'map_runs': frozenset({'source'}),
     'initiatives': frozenset({'initiative_status'}),
-    'pipelines': frozenset({'pipeline_status', 'execution_mode'}),
+    'pipelines': frozenset({'pipeline_status'}),
     'epics': frozenset({'run'}),
     'profiles': frozenset({'theme_mode'}),
     'recurring_tasks': frozenset({'recurrence', 'insert_position'}),

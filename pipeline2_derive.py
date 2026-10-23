@@ -40,23 +40,6 @@ here at all — Batch does not exist in 2.0
 launch unit, so what 1.0 computes once per batch this module computes once
 per row.
 
-**Serial "turn" suppression IS this module's, and the register above is
-INCOMPLETE about it, not silent on purpose.** Req #3349's own GATE DELTAS
-section (stage-2 gate, req #3336, 2026-08-08) names it directly: "SERIAL
-MODE (req #3388, live on 1.0 since 2026-08-08): consume `execution_mode`;
-emit the `derived.serial` block mirroring 1.0's shipped shape". That
-sentence is an instruction TO this requirement, not a description of
-something already built, and `scripts/swarm/verification/
-pipeline2_behaviours.json` has no `DRV-*` entry for it at all — on ANY
-requirement, not just this one — which is a gap in the register, not
-evidence the work is out of scope. `serial_state` and `serial_deadlocks`
-below restate 1.0's `pipeline_derive.serial_state`, with one addition the
-gate delta itself calls for and 1.0 has no equivalent of: cross-initiative edges
-are legal here (item 4), so a BACKWARD one — an epic depending on a
-not-yet-live initiative's epic — is a structural deadlock under `serial` and is
-reported as a LOUD `serial-deadlock` violation rather than an
-indistinguishable stall.
-
 ## What changed, item by item (req #3349's own numbering)
 
 1. **`initiative_id` is a column read.** `pipeline2_epics.initiative_fk` is NOT NULL, so
@@ -177,8 +160,7 @@ asked of the requirements it holds, through ONE per-row fact:
   read did not resolve counts as open: holding is the safe direction.
 
 A dependency is CLEAR when that epic's `open_req_ids` is empty; a checkpoint
-HOLDS while its own is not; an initiative's serial turn ends when no epic in it
-holds open work. An epic holding nothing holds nothing — it never gates.
+HOLDS while its own is not. An epic holding nothing holds nothing — it never gates.
 Answered fresh from requirement statuses on every read, nothing here can go
 stale when a requirement is added to an epic later; a stored "done" could.
 """
@@ -188,12 +170,12 @@ from datetime import datetime, timezone
 
 __all__ = [
     'TERMINAL_REQUIREMENT_STATUSES', 'LAUNCHABLE_REQUIREMENT_STATUSES',
-    'PAUSED_STATUS', 'MODE_PARALLEL', 'MODE_SERIAL',
+    'PAUSED_STATUS',
     'is_tracking_requirement', 'open_requirement_ids',
     'build_plan_rows', 'display_order', 'verify_order', 'eligibility',
     'launch_candidacy', 'is_checkpoint',
     'open_checkpoints_upstream', 'plan_graph_outside',
-    'pause_state', 'serial_state', 'requirement_counts', 'derive_plan2',
+    'pause_state', 'requirement_counts', 'derive_plan2',
     'LIVE_SESSION_STATUSES', 'PRIMARY_START_TAG', 'STALL_GRACE_SECONDS',
     'work_evidence', 'stall_requirement_ids', 'seat_violations',
 ]
@@ -230,14 +212,6 @@ BLOCK_NOT_READY = 'not-ready'
 # shared by `pipelines.pipeline_status`/`initiatives.initiative_status` and their 2.0
 # counterparts — one word, one meaning, at both scopes, in both eras.
 PAUSED_STATUS = 'paused'
-
-# How a plan runs its initiatives (req #3388, gate delta on THIS requirement:
-# "consume `execution_mode`; emit the `derived.serial` block mirroring 1.0's
-# shipped shape"). `parallel` is every initiative at once and is the DEFAULT — an
-# ABSENT value reads as parallel, matching every `pipeline2_pipelines` row
-# written before this column existed a meaning for.
-MODE_PARALLEL = 'parallel'
-MODE_SERIAL = 'serial'
 
 # ---------------------------------------------------------------------------
 # Stall evidence (req #3757) — "is anybody working this?", answered HERE so the
@@ -1004,8 +978,8 @@ def launch_candidacy(row, by_id=None, now=None):
       the one dependency that stays a gate; an epic with the flag OFF is a launch
       priority and nothing more.
 
-    Pause and serial turn-taking are NOT conjuncts here, exactly as they are
-    not conjuncts of `eligible`: they are SUPPRESSION, carried separately on
+    Pause is NOT a conjunct here, exactly as it is
+    not a conjunct of `eligible`: it is SUPPRESSION, carried separately on
     `launch_suppressed`/`suppressed_by`, so a reader can tell "may launch but
     is held by a person" from "has nothing to launch".
 
@@ -1040,7 +1014,7 @@ def launch_queue(candidate_ids, by_id, reqs_by_id):
        2026-10-19, superseding req #3623's scope-wide preference): a later
        epic's deployed work never jumps an earlier epic's implemented work.
 
-    A `launch_suppressed` epic (pause, serial turn) is LEFT OUT — this is what
+    A `launch_suppressed` (paused) epic is LEFT OUT — this is what
     WOULD be announced, and suppression is reported beside it on the row. A
     `run=manual` epic is IN: where its READY-MANUAL reminder ranks against
     auto work is policy too, and the engine must not keep a second rule for
@@ -1120,148 +1094,6 @@ def pause_state(model, rows):
         # so `rows` already carries the caller's rendered sequence.
         'suppressed_epic_ids': suppressed,
     }
-
-
-# ---------------------------------------------------------------------------
-# Serial execution (gate delta, req #3388 — "live on 1.0 since 2026-08-08")
-# ---------------------------------------------------------------------------
-
-def serial_state(model, rows, initiative_order):
-    """Which initiative's turn it is, and therefore which epics must WAIT for it —
-    the `derived.serial` block, mirroring 1.0's shipped shape
-    (`pipeline_derive.serial_state`): `{execution_mode, serial, initiative_order,
-    closed_initiative_ids, live_initiative_id, waiting_initiative_ids, held_epic_ids}`.
-
-    `execution_mode` is the ONE stored fact — an intention, like a pause.
-    Everything else is DERIVED: an initiative's turn is CLOSED when no epic it owns
-    holds open work (`open_req_ids`, req #3750); the LIVE initiative is the first one in `initiative_order` that is not
-    closed; an initiative is BEHIND, LIVE, or AHEAD, and only the ones AHEAD are
-    held.
-
-    **`initiative_order` is the caller's — this module's OWN tree-walk order
-    (`display_order`'s `initiative_order`), not a re-derivation from first
-    appearance in `rows`.** This is a deliberate divergence from 1.0:
-    1.0 has no stored or derived initiative-order concept at all before this
-    field exists, so its `serial_state` had to invent one from first
-    appearance; 2.0 already has a principled initiative order (item 4's
-    override-tier rule — manual `sort_order`, else earliest-activity, else
-    creation order), and re-deriving a second, cruder one here would be two
-    answers to one question.
-
-    An epic whose initiative is not the live one is suppressed with reason `turn`,
-    appended to `suppressed_by` (which `pause_state` — called first — has
-    already populated), never replacing it: an epic held by both a pause and
-    a turn must name both. An epic with NO initiative label cannot happen under
-    2.0's `initiative_fk NOT NULL` (unlike 1.0, where a req-less epic could carry
-    no label at all) — so unlike `pipeline_derive.serial_state` there is no
-    "no initiative label -> never held" carve-out to make here; every epic has an
-    initiative and therefore a turn.
-
-    Under `parallel` nothing is suppressed and no row is touched — the order
-    and closure facts are still computed and returned, because they cost
-    nothing over rows already in hand.
-    """
-    pipeline = model.get('pipeline') or {}
-    mode = pipeline.get('execution_mode') or MODE_PARALLEL
-    serial = mode == MODE_SERIAL
-
-    rows_by_initiative = {}
-    for row in rows:
-        rows_by_initiative.setdefault(row.get('initiative_id'), []).append(row)
-
-    closed_initiative_ids = [
-        initiative_id for initiative_id in initiative_order
-        if not any(row.get('open_req_ids')
-                   for row in rows_by_initiative.get(initiative_id, []))
-    ]
-    closed = set(closed_initiative_ids)
-
-    live_initiative_id = None
-    for initiative_id in initiative_order:
-        if initiative_id not in closed:
-            live_initiative_id = initiative_id
-            break
-
-    waiting = {initiative_id for initiative_id in initiative_order
-               if initiative_id not in closed and initiative_id != live_initiative_id}
-
-    held = []
-    if serial and live_initiative_id is not None:
-        for row in rows:
-            initiative_id = row.get('initiative_id')
-            if initiative_id not in waiting:
-                continue
-            row['suppressed_by'] = list(row.get('suppressed_by') or []) + ['turn']
-            row['launch_suppressed'] = True
-            held.append(row['id'])
-
-    return {
-        'execution_mode': mode,
-        'serial': serial,
-        'initiative_order': list(initiative_order),
-        'closed_initiative_ids': closed_initiative_ids,
-        'live_initiative_id': live_initiative_id,
-        'waiting_initiative_ids': [e for e in initiative_order if e in waiting],
-        'held_epic_ids': held,
-    }
-
-
-def serial_deadlocks(rows, initiative_order, serial):
-    """A BACKWARD cross-initiative dependency edge on a `serial` plan — the gate
-    delta's own new invariant, unique to 2.0: cross-initiative edges are legal
-    (item 4's gate delta), so an epic can name a dependency in an initiative that
-    has not had its turn yet. Under serial execution that dependency is
-    HELD by `serial_state` until its own initiative goes live, which is after the
-    depending epic's initiative has closed — so the edge can NEVER be honoured as
-    an ordering.
-
-    **IT IS NO LONGER A DEADLOCK (req #3597)**, and the message says so. It
-    was one while a dependency GATED a launch: the depending epic could not
-    start, so its initiative could not close, so the dependency's turn never came.
-    Now a dependency is a launch PRIORITY, the depending epic launches ahead
-    of it and the plan runs. The edge is still reported, LOUDLY (design rule
-    7), because an ordering the author wrote that the plan structurally
-    inverts is almost certainly not what they meant. The invariant keeps its
-    `serial-deadlock` key so no consumer of the wire format changes.
-
-    A "backward" edge is one where the DEPENDENCY's initiative sits AFTER the
-    DEPENDING epic's initiative in `initiative_order` — the depending epic's turn
-    finishes before the dependency's turn even starts. Only meaningful under
-    `serial`; a parallel plan has no turn order for an edge to violate.
-
-    Returns a list of `serial-deadlock` violations, empty when `serial` is
-    False or no edge is backward.
-    """
-    if not serial:
-        return []
-    initiative_pos = {eid: position for position, eid in enumerate(initiative_order)}
-    by_id = {row['id']: row for row in rows}
-    violations = []
-    for row in rows:
-        row_pos = initiative_pos.get(row.get('initiative_id'))
-        if row_pos is None:
-            continue
-        for dep_id in (row.get('dep_ids') or []):
-            dep = by_id.get(dep_id)
-            if dep is None:
-                continue
-            dep_pos = initiative_pos.get(dep.get('initiative_id'))
-            if dep_pos is None or dep_pos <= row_pos:
-                continue
-            violations.append({
-                'invariant': 'serial-deadlock',
-                'epic_ids': [row['id'], dep_id],
-                'message': (
-                    f"epic {row['id']} (initiative turn {row_pos}) depends on epic "
-                    f"{dep_id} (initiative turn {dep_pos}) — a BACKWARD cross-initiative "
-                    "edge under serial execution. The dependency's initiative only "
-                    "goes live after this one closes, so this epic ALWAYS "
-                    "launches ahead of it (a dependency is a launch priority, "
-                    "not a gate — req #3597) and the edge can never be "
-                    "honoured as an ordering. Re-order the initiatives, move both "
-                    "epics into one initiative, or drop the edge."),
-            })
-    return violations
 
 
 # ---------------------------------------------------------------------------
@@ -1489,10 +1321,8 @@ def derive_plan2(model, now=None, initiative_scoped=False):
     Narrower than `pipeline_derive.derive_plan` in one respect: no batches —
     Batch does not exist in 2.0. `eligible`, `open_req_ids` (req #3750),
     `gate_open` / `launch_candidate` (req #3597),
-    `pause` AND `serial` ARE built here (DRV-005/006/016/017/018 for the first two — the verification
-    register's boundary, not req #3345's stale docstring; `serial` per the
-    gate delta naming req #3388 explicitly, which the register does not
-    cover at all — see the module docstring's Scope section). `now` rides
+    `pause` IS built here (DRV-005/006/016/017/018 — the verification
+    register's boundary, not req #3345's stale docstring). `now` rides
     the payload for the same reason 1.0 carries it, and because
     `eligibility` above is one of this module's own consumers of it.
 
@@ -1524,11 +1354,6 @@ def derive_plan2(model, now=None, initiative_scoped=False):
     # row dicts the payload below projects — matching 1.0's ordering of the
     # two calls and its stated reason.
     pause = pause_state(model, rows)
-    # AFTER `pause_state`, because it APPENDS to the `suppressed_by` list
-    # that call creates rather than replacing it — an epic held by both a
-    # pause and a turn must name both (matches 1.0's ordering, req #3388).
-    serial = serial_state(model, rows, ordered['initiative_order'])
-    violations = violations + serial_deadlocks(rows, ordered['initiative_order'], serial['serial'])
     violations = violations + seat_violations(model)
     evidence = _evidence(model)
     reqs_by_id = _index_by_id(model.get('requirements'))
@@ -1615,7 +1440,6 @@ def derive_plan2(model, now=None, initiative_scoped=False):
             'suppressed_by': row['suppressed_by'],
         } for row in rows],
         'pause': pause,
-        'serial': serial,
         'eligible_epic_ids': eligible_ids,
         # req #3597 — every launch candidate, in launch PRIORITY order
         # (gate-open first, then display order), NOT display order.

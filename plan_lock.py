@@ -20,7 +20,7 @@ WHAT A LOCK FREEZES — structure AND authoring fields, cascading:
     epic under the initiative); linking or unlinking a requirement; adding or
     removing a dependency edge; and every authoring field — title,
     description, notes, run, checkpoint, not_before, sort_order, category_fk,
-    machine_fk, execution_mode, and the parent columns a move rewrites.
+    machine_fk, and the parent columns a move rewrites.
   * NOT frozen: the lock itself (so it can be lifted through the same call),
     and orchestration/lifecycle state — `pipeline_status` with its derived
     `started_at`/`completed_at`, `initiative_status`, `closed`. An epic carries no

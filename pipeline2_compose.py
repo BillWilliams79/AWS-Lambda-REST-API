@@ -236,7 +236,7 @@ def _bounded(uri, composed, *, initiative_scoped=False):
 # ---------------------------------------------------------------------------
 
 _PIPELINE_COLUMNS = ('id', 'title', 'description', 'pipeline_status',
-                     'execution_mode', 'locked', 'machine_fk', 'creator_fk',
+                     'locked', 'machine_fk', 'creator_fk',
                      'started_at', 'completed_at', 'create_ts', 'update_ts')
 _INITIATIVE_COLUMNS = ('id', 'pipeline_fk', 'title', 'description', 'initiative_status',
                  'locked', 'sort_order', 'category_fk', 'closed')
