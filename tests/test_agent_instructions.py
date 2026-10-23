@@ -395,8 +395,11 @@ class TestAgentInstructionsReorder:
         resp = invoke('POST', '/darwin_dev/agent_instructions', body=[
             {'agent_fk': agent, 'instruction_fk': second, 'sort_order': 1},
         ])
-        assert resp['statusCode'] == 500
-        assert 'uq_agent_instructions_slot' in _err(resp)
+        # A duplicate key is a CONFLICT (req #3059), and the body names the key.
+        assert resp['statusCode'] == 409
+        payload = _err(resp)
+        assert payload['errno'] == 1062
+        assert payload['constraint'] == 'uq_agent_instructions_slot'
 
         # Restore the old value, exactly as link_agent_instruction's except branch
         # does — the link is back where it was, not lost.
