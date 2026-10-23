@@ -252,7 +252,7 @@ _DEP_COLUMNS = ('id', 'epic_fk', 'dep_epic_fk')
 _REQUIREMENT_COLUMNS = ('id', 'title', 'requirement_status', 'coordination_type',
                         'ai_model', 'effort', 'machine_fk', 'tracking',
                         'started_at', 'completed_at', 'deferred_at')
-# `deferred_at` added by req #3825: a step card's END is the moment its last
+# `deferred_at` added by req #3825: an epic card's END is the moment its last
 # gating requirement closed, and `deferred` stamps `deferred_at` while clearing
 # `completed_at` — without it a step closed by a deferral has no end.
 # `started_at`/`completed_at` added by req #3381's code review (2026-08-09),
