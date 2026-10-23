@@ -36,7 +36,7 @@ def owner(owner_fk, db_connection):
 
 @pytest.fixture(scope="module")
 def plan(owner):
-    """Pipeline P: epic A (steps a1, a2; a2 depends on a1) and epic B (step
+    """Pipeline P: initiative A (steps a1, a2; a2 depends on a1) and initiative B (step
     b1). One swarm_ready requirement seated on a1, one unseated."""
     ids = {}
     resp = owner('POST', '/darwin_dev/projects', body={'project_name': 'planlock project'})
@@ -47,14 +47,14 @@ def plan(owner):
     resp = owner('POST', '/darwin_dev/pipelines', body={
         'title': 'planlock plan', 'pipeline_status': 'active', 'execution_mode': 'parallel'})
     ids['pipeline'] = int(extract_id(resp))
-    for key, title in (('epic_a', 'A'), ('epic_b', 'B')):
-        resp = owner('POST', '/darwin_dev/epics', body={
-            'pipeline_fk': ids['pipeline'], 'title': title, 'epic_status': 'active',
+    for key, title in (('initiative_a', 'A'), ('initiative_b', 'B')):
+        resp = owner('POST', '/darwin_dev/initiatives', body={
+            'pipeline_fk': ids['pipeline'], 'title': title, 'initiative_status': 'active',
             'category_fk': ids['category'], 'closed': '0'})
         ids[key] = int(extract_id(resp))
-    for key, epic, title in (('a1', 'epic_a', 'a1'), ('a2', 'epic_a', 'a2'), ('b1', 'epic_b', 'b1')):
+    for key, initiative, title in (('a1', 'initiative_a', 'a1'), ('a2', 'initiative_a', 'a2'), ('b1', 'initiative_b', 'b1')):
         resp = owner('POST', '/darwin_dev/pipeline_steps',
-                     body={'epic_fk': ids[epic], 'title': title, 'run': 'auto'})
+                     body={'initiative_fk': ids[initiative], 'title': title, 'run': 'auto'})
         ids[key] = int(extract_id(resp))
     resp = owner('POST', '/darwin_dev/pipeline_step_deps',
                  body={'step_fk': ids['a2'], 'dep_step_fk': ids['a1']})
@@ -113,29 +113,29 @@ def test_a_locked_step_refuses_authoring_but_takes_the_lock(owner, plan):
     assert resp['statusCode'] in (200, 204), resp
 
 
-def test_a_locked_epic_cascades_to_its_steps_and_refuses_new_ones(owner, plan):
-    _set_locked(owner, 'epics', plan['epic_a'], 1)
+def test_a_locked_initiative_cascades_to_its_steps_and_refuses_new_ones(owner, plan):
+    _set_locked(owner, 'initiatives', plan['initiative_a'], 1)
     try:
         resp = _put(owner, 'pipeline_steps', {'id': plan['a1'], 'title': 'x'})
         assert resp['statusCode'] == 423, resp
-        assert (_body(resp)['locked_by'], _body(resp)['locked_id']) == ('epic', plan['epic_a'])
+        assert (_body(resp)['locked_by'], _body(resp)['locked_id']) == ('initiative', plan['initiative_a'])
         resp = owner('POST', '/darwin_dev/pipeline_steps',
-                     body={'epic_fk': plan['epic_a'], 'title': 'new', 'run': 'auto'})
+                     body={'initiative_fk': plan['initiative_a'], 'title': 'new', 'run': 'auto'})
         assert resp['statusCode'] == 423, resp
-        assert 'cannot add pipeline_steps under epics' in _body(resp)['message']
-        # Moving a step INTO the locked epic is refused; the other epic is open.
-        resp = _put(owner, 'pipeline_steps', {'id': plan['b1'], 'epic_fk': plan['epic_a']})
+        assert 'cannot add pipeline_steps under initiatives' in _body(resp)['message']
+        # Moving a step INTO the locked initiative is refused; the other initiative is open.
+        resp = _put(owner, 'pipeline_steps', {'id': plan['b1'], 'initiative_fk': plan['initiative_a']})
         assert resp['statusCode'] == 423, resp
         resp = _put(owner, 'pipeline_steps', {'id': plan['b1'], 'title': 'b1'})
         assert resp['statusCode'] in (200, 204), resp
-        # The epic's own authoring fields are frozen; its status and closure are not.
-        assert _put(owner, 'epics', {'id': plan['epic_a'], 'sort_order': 2})['statusCode'] == 423
-        assert _put(owner, 'epics', {'id': plan['epic_a'], 'epic_status': 'paused'})['statusCode'] in (200, 204)
-        assert _put(owner, 'epics', {'id': plan['epic_a'], 'epic_status': 'active'})['statusCode'] in (200, 204)
-        resp = owner('DELETE', '/darwin_dev/epics', body={'id': plan['epic_a']})
+        # The initiative's own authoring fields are frozen; its status and closure are not.
+        assert _put(owner, 'initiatives', {'id': plan['initiative_a'], 'sort_order': 2})['statusCode'] == 423
+        assert _put(owner, 'initiatives', {'id': plan['initiative_a'], 'initiative_status': 'paused'})['statusCode'] in (200, 204)
+        assert _put(owner, 'initiatives', {'id': plan['initiative_a'], 'initiative_status': 'active'})['statusCode'] in (200, 204)
+        resp = owner('DELETE', '/darwin_dev/initiatives', body={'id': plan['initiative_a']})
         assert resp['statusCode'] == 423, resp
     finally:
-        _set_locked(owner, 'epics', plan['epic_a'], 0)
+        _set_locked(owner, 'initiatives', plan['initiative_a'], 0)
 
 
 def test_a_locked_plan_freezes_everything_under_it(owner, plan):
@@ -143,13 +143,13 @@ def test_a_locked_plan_freezes_everything_under_it(owner, plan):
     try:
         for table, row in (('pipelines', {'id': plan['pipeline'], 'title': 'x'}),
                            ('pipelines', {'id': plan['pipeline'], 'execution_mode': 'serial'}),
-                           ('epics', {'id': plan['epic_b'], 'title': 'x'}),
+                           ('initiatives', {'id': plan['initiative_b'], 'title': 'x'}),
                            ('pipeline_steps', {'id': plan['b1'], 'title': 'x'})):
             resp = _put(owner, table, row)
             assert resp['statusCode'] == 423, (table, row, resp)
             assert _body(resp)['locked_by'] == 'pipeline'
-        resp = owner('POST', '/darwin_dev/epics', body={
-            'pipeline_fk': plan['pipeline'], 'title': 'C', 'epic_status': 'active',
+        resp = owner('POST', '/darwin_dev/initiatives', body={
+            'pipeline_fk': plan['pipeline'], 'title': 'C', 'initiative_status': 'active',
             'category_fk': plan['category'], 'closed': '0'})
         assert resp['statusCode'] == 423, resp
         resp = owner('DELETE', '/darwin_dev/pipelines', body={'id': plan['pipeline']})
@@ -165,30 +165,30 @@ def test_a_locked_plan_freezes_everything_under_it(owner, plan):
 
 
 def test_the_composed_read_carries_the_flags(owner, plan):
-    _set_locked(owner, 'epics', plan['epic_a'], 1)
+    _set_locked(owner, 'initiatives', plan['initiative_a'], 1)
     _put(owner, 'pipeline_steps', {'id': plan['b1'], 'checkpoint': 0})
     try:
         resp = owner('GET', '/darwin_dev/pipeline_compose', query={'id': str(plan['pipeline'])})
         body = json.loads(resp['body'])
         assert body['pipeline']['locked'] == 0
-        epics = {e['id']: e for e in body['epics']}
-        assert epics[plan['epic_a']]['locked'] == 1 and epics[plan['epic_b']]['locked'] == 0
+        initiatives = {e['id']: e for e in body['initiatives']}
+        assert initiatives[plan['initiative_a']]['locked'] == 1 and initiatives[plan['initiative_b']]['locked'] == 0
         rows = {r['id']: r for r in body['derived']['rows']}
         assert rows[plan['a1']]['checkpoint'] is True and rows[plan['b1']]['checkpoint'] is False
         assert rows[plan['a2']]['locked'] is False
         assert 'launch_queue' in body['derived']
         assert [e['requirement_id'] for e in body['derived']['launch_queue']] == [plan['req_seated']]
     finally:
-        _set_locked(owner, 'epics', plan['epic_a'], 0)
+        _set_locked(owner, 'initiatives', plan['initiative_a'], 0)
         _put(owner, 'pipeline_steps', {'id': plan['b1'], 'checkpoint': 1})
 
 
-def test_deleting_an_open_epic_with_a_locked_step_under_it_is_423_and_strips_no_gate(owner, plan):
+def test_deleting_an_open_initiative_with_a_locked_step_under_it_is_423_and_strips_no_gate(owner, plan):
     """Review W1/C2: the UI and darwin-mcp clear dependency rows before the
-    epic; the gateway must refuse the epic AND the edge deletes."""
+    initiative; the gateway must refuse the initiative AND the edge deletes."""
     _set_locked(owner, 'pipeline_steps', plan['a2'], 1)
     try:
-        resp = owner('DELETE', '/darwin_dev/epics', body={'id': plan['epic_a']})
+        resp = owner('DELETE', '/darwin_dev/initiatives', body={'id': plan['initiative_a']})
         assert resp['statusCode'] == 423, resp
         assert (_body(resp)['locked_by'], _body(resp)['locked_id']) == ('step', plan['a2'])
         # The locked step's own edge is refused too.
@@ -228,16 +228,16 @@ def test_a_seated_requirement_deletes_with_its_seat_unless_the_step_is_locked(ow
                  body={'step_fk': plan['b1'], 'requirement_fk': doomed})
     assert resp['statusCode'] in (200, 201), resp
 
-    _set_locked(owner, 'epics', plan['epic_b'], 1)
+    _set_locked(owner, 'initiatives', plan['initiative_b'], 1)
     try:
         resp = owner('DELETE', '/darwin_dev/requirements', body={'id': doomed})
         assert resp['statusCode'] == 423, resp
         body = _body(resp)
         assert (body['table'], body['id'], body['locked_by'], body['locked_id']) == (
-            'requirements', doomed, 'epic', plan['epic_b'])
+            'requirements', doomed, 'initiative', plan['initiative_b'])
         assert f"seated on step {plan['b1']}" in body['message']
     finally:
-        _set_locked(owner, 'epics', plan['epic_b'], 0)
+        _set_locked(owner, 'initiatives', plan['initiative_b'], 0)
 
     resp = owner('DELETE', '/darwin_dev/requirements', body={'id': doomed})
     assert resp['statusCode'] == 200, resp

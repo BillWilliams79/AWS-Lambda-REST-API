@@ -82,7 +82,7 @@ def rest_put(put_method, conn, database, table, body_list, authenticated_user=No
         if refusal is not None:
             return refusal
 
-        # req #3649 — a LOCKED plan-layer row (or one under a locked epic or
+        # req #3649 — a LOCKED plan-layer row (or one under a locked initiative or
         # plan) accepts no authoring field and cannot be moved; the lock
         # itself and lifecycle state still write. Here, before the single/CASE
         # split, while every body still carries its `id`. See plan_lock.py.

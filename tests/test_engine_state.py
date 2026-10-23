@@ -58,7 +58,7 @@ def test_a_new_state_is_off_and_stopped(invoke, state):
     row = _rows(invoke('GET', '/darwin_dev/engine_states', query={'id': state}))[0]
     assert row['desired_state'] == 'off'
     assert row['actual_state'] == 'stopped'
-    assert row['epic_fk'] is None
+    assert row['initiative_fk'] is None
 
 
 def test_a_second_whole_plan_state_on_one_machine_is_a_409(invoke, scope, state):

@@ -16,12 +16,12 @@ import pipeline2_compose as pc                          # noqa: E402
 
 
 def _fake_composed(step_count=3, notes_len=10, derived_bytes=200):
-    steps = [{'id': i, 'epic_fk': 1, 'title': f's{i}', 'run': 'auto',
+    steps = [{'id': i, 'initiative_fk': 1, 'title': f's{i}', 'run': 'auto',
              'not_before': None, 'notes': 'x' * notes_len}
              for i in range(1, step_count + 1)]
     return {
         'pipeline': {'id': 1, 'title': 'p', 'step_count': step_count},
-        'epics': [{'id': 1, 'pipeline_fk': 1, 'title': 'e'}],
+        'initiatives': [{'id': 1, 'pipeline_fk': 1, 'title': 'e'}],
         'steps': steps,
         'step_requirements': [],
         'step_deps': [],
@@ -130,11 +130,11 @@ def test_regime_c_never_ships_the_real_derived_block(monkeypatch):
 def test_deriver_exception_degrades_to_a_withheld_stub_without_losing_rows(monkeypatch):
     """`_derive`'s guard: a `derive_plan2` exception must never take the real
     rows down with it."""
-    def boom(model, now=None, epic_scoped=False):
+    def boom(model, now=None, initiative_scoped=False):
         raise RuntimeError('synthetic failure')
 
     monkeypatch.setattr(pc.pipeline2_derive, 'derive_plan2', boom)
-    model = {'pipeline': {'id': 1}, 'epics': [], 'steps': [],
+    model = {'pipeline': {'id': 1}, 'initiatives': [], 'steps': [],
              'step_requirements': [], 'step_deps': [], 'requirements': []}
     derived = pc._derive(model)
     assert derived['withheld'] is True

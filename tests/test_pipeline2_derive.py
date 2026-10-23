@@ -4,7 +4,7 @@ along with the module itself — `memory/pipeline-2-orchestration-algorithm.md`
 
 Pure-function tests: `pipeline2_derive.py` performs no I/O, so unlike
 `test_pipeline2_compose.py` there is no fake gateway here — every test builds
-a composed-read-shaped `model` dict directly (`{pipeline, epics, steps,
+a composed-read-shaped `model` dict directly (`{pipeline, initiatives, steps,
 step_requirements, step_deps, requirements}`) and calls the module's
 functions against it. No database, no `exports.sh` needed.
 
@@ -44,11 +44,11 @@ Translated and covered by a test in this file:
   `tracking-container-exemption` → `test_tracking_requirement_is_never_open_work`;
   `tracking-flag-coercion` → `test_tracking_flag_coercion_matrix`;
   `requirement-counts-tracking-and-terminal-statuses`,
-    `requirement-counts-deferred-completes-epic`,
-    `requirement-counts-wontfix-completes-epic` →
-    `test_requirement_counts_groups_by_the_seated_epic_not_a_retired_middle_tier_chain`,
+    `requirement-counts-deferred-completes-initiative`,
+    `requirement-counts-wontfix-completes-initiative` →
+    `test_requirement_counts_groups_by_the_seated_initiative_not_a_retired_middle_tier_chain`,
     `test_requirement_counts_excludes_tracking_containers`,
-    `test_requirement_with_no_step_link_counts_overall_not_by_epic`
+    `test_requirement_with_no_step_link_counts_overall_not_by_initiative`
     (`met`/`deferred`/`wontfix` are one TERMINAL_REQUIREMENT_STATUSES tuple,
     not three branches — a case per status is not a case per behaviour);
   `eligibility-step-gates`, `eligibility-time-gate-passed`,
@@ -64,25 +64,25 @@ Translated and covered by a test in this file:
     (`state-bands-outrank-stored-order` and
     `banding-inversion-forced-by-topology-is-not-a-violation` are retired with
     step state, req #3750);
-  `cycle-detection` → `test_cycle_within_one_epic_is_detected_and_falls_back_to_stored_order`;
+  `cycle-detection` → `test_cycle_within_one_initiative_is_detected_and_falls_back_to_stored_order`;
   `duplicate-step-ids` → `test_duplicate_step_id_is_reported`;
   `dangling-dependency` →
     `test_dangling_dependency_is_detected_and_reported`,
-    `test_epic_scoped_read_reports_out_of_scope_not_dangling`,
+    `test_initiative_scoped_read_reports_out_of_scope_not_dangling`,
     `test_whole_plan_read_still_reports_a_genuinely_dangling_dependency`;
   `unresolved-requirement-ids` →
     `test_derive_plan2_unresolved_requirement_is_reported_not_silently_dropped`;
-  `pause-suppresses-whole-plan`, `pause-suppresses-one-epic-not-its-neighbour` →
-    `test_epic_pause_suppresses_only_that_epics_steps`,
-    `test_whole_plan_pause_suppresses_every_epics_steps`,
+  `pause-suppresses-whole-plan`, `pause-suppresses-one-initiative-not-its-neighbour` →
+    `test_initiative_pause_suppresses_only_that_initiatives_steps`,
+    `test_whole_plan_pause_suppresses_every_initiatives_steps`,
     `test_suppressed_by_names_both_reasons_when_both_fire`;
-  `serial-holds-every-epic-but-the-live-one`,
-    `serial-advances-when-the-live-epic-closes`,
-    `serial-terminal-statuses-close-an-epic-like-met`,
+  `serial-holds-every-initiative-but-the-live-one`,
+    `serial-advances-when-the-live-initiative-closes`,
+    `serial-terminal-statuses-close-an-initiative-like-met`,
     `serial-and-pause-both-name-themselves`,
-    `serial-never-holds-a-step-with-no-epic-label` (N/A half: no step can
-    have no epic label — folds into the epic_fk-is-a-column argument below),
-    `serial-all-epics-closed-holds-nothing`,
+    `serial-never-holds-a-step-with-no-initiative-label` (N/A half: no step can
+    have no initiative label — folds into the initiative_fk-is-a-column argument below),
+    `serial-all-initiatives-closed-holds-nothing`,
     `parallel-is-the-default-and-suppresses-nothing`,
     `absent-execution-mode-reads-as-parallel` → the whole serial-state block,
     `test_serial_state_parallel_mode_holds_nothing` through
@@ -92,33 +92,33 @@ Translated and covered by a test in this file:
     BATCH half is N/A below) →
     `test_launch_req_ids_only_swarm_ready_minus_containers`,
     `test_no_launch_reason_distinguishes_no_links_from_containers`;
-  `epic-sort-order-outranks-first-appearance`,
-    `epic-sort-order-absent-falls-back-to-first-appearance`,
-    `epic-sort-order-null-sorts-after-every-ordered-epic` →
-    `test_manual_sort_order_orders_the_epic_blocks`,
+  `initiative-sort-order-outranks-first-appearance`,
+    `initiative-sort-order-absent-falls-back-to-first-appearance`,
+    `initiative-sort-order-null-sorts-after-every-ordered-initiative` →
+    `test_manual_sort_order_orders_the_initiative_blocks`,
     `test_manual_sort_order_wins_over_derived_order`,
-    `test_started_epics_order_by_earliest_activity_ahead_of_unstarted`;
-  `serial-turn-follows-the-epic-sort-order` → `test_turn_suppression_appends_to_pause_suppression`
-    plus the sort-order tests above (both mechanisms read the same `epic_order`);
-  `epic-sort-order-does-not-outrank-a-state-band` — retired with step state
+    `test_started_initiatives_order_by_earliest_activity_ahead_of_unstarted`;
+  `serial-turn-follows-the-initiative-sort-order` → `test_turn_suppression_appends_to_pause_suppression`
+    plus the sort-order tests above (both mechanisms read the same `initiative_order`);
+  `initiative-sort-order-does-not-outrank-a-state-band` — retired with step state
     (req #3750): there is no state band for sort order to outrank.
 
 Structurally N/A — the SCENARIO cannot occur in 2.0, not merely untested:
   `batch-splits-on-machine`, `batch-splits-on-run-mode-and-gate`,
-    `batch-splits-on-epic`, `batch-groups-on-remaining-gate`,
+    `batch-splits-on-initiative`, `batch-groups-on-remaining-gate`,
     `batch-no-launch-reason-no-links`, `batch-contiguity-avoidable-split-still-reports`,
     `machines-sharing-a-title`, `batch-no-launch-reason-nothing-launchable`
     (its batch half) — Batch does not exist in 2.0; the Step is the launch
     unit (first-principles record § 6, docstring item 1's "no `batches` key");
   `label-inheritance-chain`, `dominant-label-majority-and-tie`,
-    `epic-sort-order-rides-an-inherited-label` — `epic_fk` is a NOT NULL
+    `initiative-sort-order-rides-an-inherited-label` — `initiative_fk` is a NOT NULL
     column read directly; there is no tally, no majority vote, and no
     inheritance walk to have a tie or a chain (docstring item 1);
   `substrate-rebuild-34-rows` — a whole-plan integration fixture built from
     1.0's batch+label machinery end to end; its individual RULES are each
     covered above, and a 2.0-shaped equivalent integration case exists as
     `Lambda-Rest/tests/test_pipeline2_compose.py`'s `plan` /
-    `two_epic_plan` fixtures, run against real `darwin_dev` rather than a
+    `two_initiative_plan` fixtures, run against real `darwin_dev` rather than a
     hand-built model.
 
 Verified rather than redone (module docstring item 6's own claim, checked
@@ -148,30 +148,30 @@ def _req(id, status='met', tracking=0, machine_fk=None):
             'effort': 'high', 'machine_fk': machine_fk, 'tracking': tracking}
 
 
-def _epic(id, pipeline_fk=900, sort_order=None, title=None):
-    return {'id': id, 'pipeline_fk': pipeline_fk, 'title': title or f'epic {id}',
-            'description': None, 'epic_status': 'active', 'category_fk': 1,
+def _initiative(id, pipeline_fk=900, sort_order=None, title=None):
+    return {'id': id, 'pipeline_fk': pipeline_fk, 'title': title or f'initiative {id}',
+            'description': None, 'initiative_status': 'active', 'category_fk': 1,
             'sort_order': sort_order, 'closed': 0}
 
 
-def _step(id, epic_fk, title=None, run='auto', not_before=None, notes=None,
+def _step(id, initiative_fk, title=None, run='auto', not_before=None, notes=None,
          create_ts='2026-08-01 00:00:00', checkpoint=0, locked=0):
     # `checkpoint=0` here, against the column's DEFAULT 1 (req #3649): these
     # fixtures were written for steps that are launch PRIORITIES, and the
     # checkpoint tests below say `checkpoint=1` where they mean it.
-    return {'id': id, 'epic_fk': epic_fk, 'title': title or f'step {id}',
+    return {'id': id, 'initiative_fk': initiative_fk, 'title': title or f'step {id}',
             'run': run, 'checkpoint': checkpoint, 'locked': locked,
             'not_before': not_before, 'notes': notes, 'creator_fk': _SUB,
             'create_ts': create_ts, 'update_ts': create_ts}
 
 
 def _basic_model():
-    """One epic, three steps (two requirement-backed, one gate depending on
+    """One initiative, three steps (two requirement-backed, one gate depending on
     both) — the same shape as `test_pipelines2.py`'s `plan2` fixture."""
     return {
         'pipeline': {'id': 900, 'title': 'Pipeline 2.0 Build',
                      'pipeline_status': 'active', 'execution_mode': 'parallel'},
-        'epics': [_epic(90)],
+        'initiatives': [_initiative(90)],
         'steps': [
             _step(9001, 90, title='read service'),
             _step(9002, 90, title='tools'),
@@ -190,24 +190,24 @@ def _basic_model():
 
 
 # ---------------------------------------------------------------------------
-# Item 1 — epic_id is a column read; the deleted fields never appear
+# Item 1 — initiative_id is a column read; the deleted fields never appear
 # ---------------------------------------------------------------------------
 
 # COVERS: DRV-001
-def test_epic_id_is_read_from_the_step_column_no_tally_no_tiebreak():
+def test_initiative_id_is_read_from_the_step_column_no_tally_no_tiebreak():
     model = _basic_model()
     rows = deriv.build_plan_rows(model)
-    assert all(row['epic_id'] == 90 for row in rows)
+    assert all(row['initiative_id'] == 90 for row in rows)
 
 
 # COVERS: DRV-001, DRV-002
-def test_epic_id_follows_the_step_even_when_its_requirement_implies_nothing():
-    """A req-less gate step still carries its OWN epic_fk — there is no
+def test_initiative_id_follows_the_step_even_when_its_requirement_implies_nothing():
+    """A req-less gate step still carries its OWN initiative_fk — there is no
     inheritance walk to fall back on, because an unlabelled step cannot exist
-    once epic_fk is NOT NULL."""
+    once initiative_fk is NOT NULL."""
     model = _basic_model()
     rows = {row['id']: row for row in deriv.build_plan_rows(model)}
-    assert rows[9003]['epic_id'] == 90
+    assert rows[9003]['initiative_id'] == 90
 
 
 # COVERS: DRV-002, DRV-003
@@ -223,7 +223,7 @@ def test_build_plan_rows_has_no_legacy_or_leaked_fields():
     for row in deriv.build_plan_rows(model):
         assert set(row) == {
             'id', 'title', 'run', 'checkpoint', 'locked', 'notes',
-            'open_req_ids', 'epic_id',
+            'open_req_ids', 'initiative_id',
             'req_ids', 'tracking_req_ids', 'unresolved_req_ids',
             'launch_req_ids', 'launch_excluded', 'launch_block',
             'swarm_start_command', 'no_launch_reason', 'dep_ids',
@@ -246,15 +246,15 @@ def test_no_batches_key_but_pause_serial_and_eligibility_are_present():
 
 
 # ---------------------------------------------------------------------------
-# Item 2 — requirement_counts re-points at the step's seated epic
+# Item 2 — requirement_counts re-points at the step's seated initiative
 # ---------------------------------------------------------------------------
 
 # COVERS: DRV-008
-def test_requirement_counts_groups_by_the_seated_epic_not_a_retired_middle_tier_chain():
+def test_requirement_counts_groups_by_the_seated_initiative_not_a_retired_middle_tier_chain():
     model = {
         'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active',
                     'execution_mode': 'parallel'},
-        'epics': [_epic(90), _epic(91)],
+        'initiatives': [_initiative(90), _initiative(91)],
         'steps': [_step(9001, 90), _step(9101, 91)],
         'step_requirements': [
             {'step_fk': 9001, 'requirement_fk': 5010},
@@ -269,9 +269,9 @@ def test_requirement_counts_groups_by_the_seated_epic_not_a_retired_middle_tier_
     }
     counts = deriv.requirement_counts(model)
     assert counts['overall'] == {'met': 2, 'total': 3}
-    by_epic = {b['epic_id']: b for b in counts['by_epic']}
-    assert by_epic[90] == {'epic_id': 90, 'met': 1, 'total': 1}
-    assert by_epic[91] == {'epic_id': 91, 'met': 1, 'total': 2}
+    by_initiative = {b['initiative_id']: b for b in counts['by_initiative']}
+    assert by_initiative[90] == {'initiative_id': 90, 'met': 1, 'total': 1}
+    assert by_initiative[91] == {'initiative_id': 91, 'met': 1, 'total': 2}
 
 
 def test_requirement_counts_excludes_tracking_containers():
@@ -282,25 +282,25 @@ def test_requirement_counts_excludes_tracking_containers():
     assert counts['overall']['total'] == 2      # the container is not counted
 
 
-def test_requirement_with_no_step_link_counts_overall_not_by_epic():
+def test_requirement_with_no_step_link_counts_overall_not_by_initiative():
     model = _basic_model()
     model['requirements'].append(_req(5099, status='authoring'))
     counts = deriv.requirement_counts(model)
     assert counts['overall']['total'] == 3
-    assert sum(b['total'] for b in counts['by_epic']) == 2
+    assert sum(b['total'] for b in counts['by_initiative']) == 2
 
 
 def test_overall_population_follows_model_requirements_not_the_whole_plan():
-    """Documented residue (a code-review NOTE): on an EPIC-SCOPED `model`
-    (only that epic's own requirements present, matching what
-    `get_pipeline2_epic_composed` actually builds), `overall` is
-    indistinguishable from that epic's own `by_epic` entry — never the
-    plan's true total. A caller must label it as the epic's number, not the
+    """Documented residue (a code-review NOTE): on an INITIATIVE-SCOPED `model`
+    (only that initiative's own requirements present, matching what
+    `get_pipeline2_initiative_composed` actually builds), `overall` is
+    indistinguishable from that initiative's own `by_initiative` entry — never the
+    plan's true total. A caller must label it as the initiative's number, not the
     plan's, on that resource."""
     model = {
         'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active',
                     'execution_mode': 'parallel'},
-        'epics': [_epic(90)],                    # ONE epic, as an epic-scoped
+        'initiatives': [_initiative(90)],                    # ONE initiative, as an initiative-scoped
         'steps': [_step(9001, 90)],               # composed read narrows to
         'step_requirements': [{'step_fk': 9001, 'requirement_fk': 5010}],
         'step_deps': [],
@@ -308,9 +308,9 @@ def test_overall_population_follows_model_requirements_not_the_whole_plan():
     }
     counts = deriv.requirement_counts(model)
     assert counts['overall'] == {'met': 1, 'total': 1}
-    assert counts['by_epic'] == [{'epic_id': 90, 'met': 1, 'total': 1}]
-    epic_entry = {k: v for k, v in counts['by_epic'][0].items() if k != 'epic_id'}
-    assert counts['overall'] == epic_entry
+    assert counts['by_initiative'] == [{'initiative_id': 90, 'met': 1, 'total': 1}]
+    initiative_entry = {k: v for k, v in counts['by_initiative'][0].items() if k != 'initiative_id'}
+    assert counts['overall'] == initiative_entry
 
 
 # ---------------------------------------------------------------------------
@@ -330,22 +330,22 @@ def test_step_deps_are_plain_edges_with_no_condition_kind():
 # ---------------------------------------------------------------------------
 
 # COVERS: DRV-007
-def test_manual_sort_order_orders_the_epic_blocks():
-    """`epic_order` and the resulting row order both follow `sort_order` —
-    NOT a claim that epic blocks stay contiguous once a cross-epic edge
-    exists (they are not guaranteed to; see `test_cross_epic_dependency_
+def test_manual_sort_order_orders_the_initiative_blocks():
+    """`initiative_order` and the resulting row order both follow `sort_order` —
+    NOT a claim that initiative blocks stay contiguous once a cross-initiative edge
+    exists (they are not guaranteed to; see `test_cross_initiative_dependency_
     edge_is_legal_and_respected_topologically` below and the module
     docstring's item 4)."""
     model = {
         'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active',
                     'execution_mode': 'parallel'},
-        'epics': [_epic(90, sort_order=2), _epic(91, sort_order=1)],
+        'initiatives': [_initiative(90, sort_order=2), _initiative(91, sort_order=1)],
         'steps': [_step(9001, 90), _step(9101, 91)],
         'step_requirements': [], 'step_deps': [], 'requirements': [],
     }
     rows = deriv.build_plan_rows(model)
-    ordered = deriv.display_order(rows, model['epics'])
-    assert ordered['epic_order'] == [91, 90]              # sort_order wins
+    ordered = deriv.display_order(rows, model['initiatives'])
+    assert ordered['initiative_order'] == [91, 90]              # sort_order wins
     assert [r['id'] for r in ordered['rows']] == [9101, 9001]
 
 
@@ -353,30 +353,30 @@ def test_manual_sort_order_wins_over_derived_order():
     model = {
         'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active',
                     'execution_mode': 'parallel'},
-        # epic 90 started (its step's work is met) so would derive FIRST;
-        # epic 91 is unstarted and would derive LAST. A manual order on 91
+        # initiative 90 started (its step's work is met) so would derive FIRST;
+        # initiative 91 is unstarted and would derive LAST. A manual order on 91
         # overrides that.
-        'epics': [_epic(90), _epic(91, sort_order=1)],
+        'initiatives': [_initiative(90), _initiative(91, sort_order=1)],
         'steps': [_step(9001, 90), _step(9101, 91)],
         'step_requirements': [{'step_fk': 9001, 'requirement_fk': 1}],
         'step_deps': [], 'requirements': [_req(1, status='met')],
     }
     rows = deriv.build_plan_rows(model)
-    ordered = deriv.display_order(rows, model['epics'])
-    assert ordered['epic_order'] == [91, 90]
+    ordered = deriv.display_order(rows, model['initiatives'])
+    assert ordered['initiative_order'] == [91, 90]
 
 
-def test_started_epics_order_by_earliest_activity_ahead_of_unstarted():
+def test_started_initiatives_order_by_earliest_activity_ahead_of_unstarted():
     model = {
         'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active',
                     'execution_mode': 'parallel'},
-        'epics': [_epic(90), _epic(91), _epic(92)],
+        'initiatives': [_initiative(90), _initiative(91), _initiative(92)],
         'steps': [
-            # epic 90: unstarted (no work begun) -> creation order (id)
+            # initiative 90: unstarted (no work begun) -> creation order (id)
             _step(9001, 90),
-            # epic 91: started later (work in development)
+            # initiative 91: started later (work in development)
             _step(9101, 91, create_ts='2026-08-02 00:00:00'),
-            # epic 92: started earliest (work met)
+            # initiative 92: started earliest (work met)
             _step(9201, 92, create_ts='2026-08-01 00:00:00'),
         ],
         'step_requirements': [{'step_fk': 9001, 'requirement_fk': 1},
@@ -387,20 +387,20 @@ def test_started_epics_order_by_earliest_activity_ahead_of_unstarted():
                          _req(2, status='development'), _req(3, status='met')],
     }
     rows = deriv.build_plan_rows(model)
-    ordered = deriv.display_order(rows, model['epics'])
-    # started epics (92 earliest, then 91) precede the unstarted one (90).
-    assert ordered['epic_order'] == [92, 91, 90]
+    ordered = deriv.display_order(rows, model['initiatives'])
+    # started initiatives (92 earliest, then 91) precede the unstarted one (90).
+    assert ordered['initiative_order'] == [92, 91, 90]
 
 
 # COVERS: DRV-020
 def test_display_order_has_no_state_band():
     """Req #3750: a step has no state, so finished work does not float above
     unfinished work. Among rows whose dependencies have rendered, the order is
-    the latest dependency's position, then epic, then run mode, then id."""
+    the latest dependency's position, then initiative, then run mode, then id."""
     model = {
         'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active',
                     'execution_mode': 'parallel'},
-        'epics': [_epic(90)],
+        'initiatives': [_initiative(90)],
         'steps': [_step(1, 90), _step(2, 90), _step(3, 90, run='manual'),
                   _step(4, 90)],
         'step_requirements': [{'step_fk': 1, 'requirement_fk': 10},
@@ -408,7 +408,7 @@ def test_display_order_has_no_state_band():
         'requirements': [_req(10, status='swarm_ready'), _req(40, status='met')],
         'step_deps': [{'id': 1, 'step_fk': 2, 'dep_step_fk': 1}],
     }
-    ordered = deriv.display_order(deriv.build_plan_rows(model), model['epics'])
+    ordered = deriv.display_order(deriv.build_plan_rows(model), model['initiatives'])
     # 4 (all work met) does NOT jump ahead; 3 (manual) after the auto roots.
     assert [r['id'] for r in ordered['rows']] == [1, 4, 3, 2]
     assert 'banding_settled' not in ordered
@@ -425,11 +425,11 @@ def test_verify_order_has_no_banding_invariant():
     assert not deriv.derive_plan2(model, now='2026-08-09T00:00:00Z')['violations']
 
 
-def test_cycle_within_one_epic_is_detected_and_falls_back_to_stored_order():
+def test_cycle_within_one_initiative_is_detected_and_falls_back_to_stored_order():
     model = {
         'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active',
                     'execution_mode': 'parallel'},
-        'epics': [_epic(90)],
+        'initiatives': [_initiative(90)],
         'steps': [_step(1, 90), _step(2, 90)],
         'step_requirements': [], 'requirements': [],
         'step_deps': [
@@ -438,7 +438,7 @@ def test_cycle_within_one_epic_is_detected_and_falls_back_to_stored_order():
         ],
     }
     rows = deriv.build_plan_rows(model)
-    ordered = deriv.display_order(rows, model['epics'])
+    ordered = deriv.display_order(rows, model['initiatives'])
     assert ordered['cycle_detected'] is True
     assert set(ordered['cycle_step_ids']) == {1, 2}
 
@@ -448,7 +448,7 @@ def test_duplicate_step_id_is_reported():
     model = _basic_model()
     model['steps'].append(_step(9001, 90, title='duplicate'))
     rows = deriv.build_plan_rows(model)
-    ordered = deriv.display_order(rows, model['epics'])
+    ordered = deriv.display_order(rows, model['initiatives'])
     assert 9001 in ordered['duplicate_step_ids']
 
 
@@ -460,21 +460,21 @@ def test_dangling_dependency_is_detected_and_reported():
     model = _basic_model()
     model['step_deps'].append({'id': 3, 'step_fk': 9003, 'dep_step_fk': 424242})
     rows = deriv.build_plan_rows(model)
-    ordered = deriv.display_order(rows, model['epics'])
+    ordered = deriv.display_order(rows, model['initiatives'])
     violations, _ = deriv.verify_order(ordered['rows'])
     dangling = [v for v in violations if v['invariant'] == 'dangling-dependency']
     assert dangling and set(dangling[0]['step_ids']) == {9003, 424242}
 
 
 # COVERS: DRV-020
-def test_cross_epic_dependency_edge_is_legal_and_respected_topologically():
-    """Stage-2 gate delta (req #3336, 2026-08-08): cross-epic edges are
-    LEGAL, reversing the original body text. A step in epic 91 gated on a
-    step in epic 90 must never render before it."""
+def test_cross_initiative_dependency_edge_is_legal_and_respected_topologically():
+    """Stage-2 gate delta (req #3336, 2026-08-08): cross-initiative edges are
+    LEGAL, reversing the original body text. A step in initiative 91 gated on a
+    step in initiative 90 must never render before it."""
     model = {
         'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active',
                     'execution_mode': 'parallel'},
-        'epics': [_epic(90, sort_order=1), _epic(91, sort_order=2)],
+        'initiatives': [_initiative(90, sort_order=1), _initiative(91, sort_order=2)],
         'steps': [
             _step(9001, 90),                    # gates 9101
             _step(9101, 91),                     # depends on 9001
@@ -483,10 +483,10 @@ def test_cross_epic_dependency_edge_is_legal_and_respected_topologically():
         'step_deps': [{'id': 1, 'step_fk': 9101, 'dep_step_fk': 9001}],
     }
     rows = deriv.build_plan_rows(model)
-    ordered = deriv.display_order(rows, model['epics'])
+    ordered = deriv.display_order(rows, model['initiatives'])
     positions = {row['id']: i for i, row in enumerate(ordered['rows'])}
     assert positions[9001] < positions[9101], \
-        'a row must never render before a dependency, even across an epic'
+        'a row must never render before a dependency, even across an initiative'
     violations, _ = deriv.verify_order(ordered['rows'])
     assert [v for v in violations if v['invariant'] == 'topology'] == []
 
@@ -570,7 +570,7 @@ def test_derive_plan2_shape_is_compact_ids_and_enums_only():
     model = _basic_model()
     plan = deriv.derive_plan2(model, now='2026-08-09T00:00:00Z')
     assert set(plan) == {
-        'now', 'epic_order', 'display_order', 'rows', 'pause', 'serial',
+        'now', 'initiative_order', 'display_order', 'rows', 'pause', 'serial',
         'eligible_step_ids', 'launch_candidate_step_ids',
         'launch_queue',
         'violations', 'cycle_detected', 'cycle_step_ids',
@@ -582,7 +582,7 @@ def test_derive_plan2_shape_is_compact_ids_and_enums_only():
         assert set(row) == {
             'id', 'run', 'checkpoint', 'locked', 'eligible', 'open_req_ids',
             'gate_open', 'launch_candidate', 'checkpoint_blocked_by',
-            'epic_id', 'dep_ids',
+            'initiative_id', 'dep_ids',
             'out_of_scope_dep_ids', 'req_ids',
             'tracking_req_ids', 'unresolved_req_ids', 'launch_req_ids',
             'launch_excluded', 'launch_block', 'swarm_start_command',
@@ -610,12 +610,12 @@ def test_derive_plan2_unresolved_requirement_is_reported_not_silently_dropped():
 # Eligibility (DRV-005/006) — a plain per-step predicate, no batch term
 # ---------------------------------------------------------------------------
 
-def _row(id, epic_id=90, dep_ids=None, not_before=None, launch_req_ids=(42,),
+def _row(id, initiative_id=90, dep_ids=None, not_before=None, launch_req_ids=(42,),
          open_req_ids=None):
     """A derived-row-shaped dict. `open_req_ids` defaults to the launch ids —
     launch-ready work is open work."""
     launch = list(launch_req_ids)
-    return {'id': id, 'dep_ids': dep_ids or [], 'epic_id': epic_id,
+    return {'id': id, 'dep_ids': dep_ids or [], 'initiative_id': initiative_id,
             '_not_before': not_before, 'launch_req_ids': launch,
             'open_req_ids': list(open_req_ids) if open_req_ids is not None else launch}
 
@@ -723,7 +723,7 @@ def _plan10_model():
     return {
         'pipeline': {'id': 10, 'title': 'Tip of the Spear',
                      'pipeline_status': 'active', 'execution_mode': 'parallel'},
-        'epics': [_epic(100, pipeline_fk=10)],
+        'initiatives': [_initiative(100, pipeline_fk=10)],
         'steps': [_step(313, 100), _step(315, 100), _step(316, 100),
                   _step(314, 100), _step(317, 100)],
         'step_requirements': [
@@ -824,7 +824,7 @@ def _checkpoint_model(checkpoint_open=True):
     return {
         'pipeline': {'id': 11, 'title': 'Checkpoints',
                      'pipeline_status': 'active', 'execution_mode': 'parallel'},
-        'epics': [_epic(110, pipeline_fk=11)],
+        'initiatives': [_initiative(110, pipeline_fk=11)],
         'steps': [_step(1, 110, title='checkpoint', checkpoint=1),
                   _step(2, 110), _step(3, 110), _step(4, 110), _step(5, 110)],
         'step_requirements': [
@@ -962,7 +962,7 @@ def test_a_holding_checkpoint_above_a_clear_step_still_holds_its_downstream():
     model = {
         'pipeline': {'id': 12, 'title': 'C1', 'pipeline_status': 'active',
                      'execution_mode': 'parallel'},
-        'epics': [_epic(120, pipeline_fk=12)],
+        'initiatives': [_initiative(120, pipeline_fk=12)],
         'steps': [_step(10, 120, checkpoint=1), _step(11, 120), _step(12, 120),
                   _step(13, 120), _step(14, 120, checkpoint=1)],
         'step_requirements': [
@@ -997,19 +997,19 @@ def test_a_holding_checkpoint_above_a_clear_step_still_holds_its_downstream():
 
 
 # COVERS: DRV-028
-def test_an_epic_scoped_read_sees_a_checkpoint_in_another_epic():
-    """Review I1: the epic-scoped compose supplies `plan_graph` (the rest of
+def test_an_initiative_scoped_read_sees_a_checkpoint_in_another_initiative():
+    """Review I1: the initiative-scoped compose supplies `plan_graph` (the rest of
     the plan's steps, edges, links and requirement statuses) so a checkpoint
-    outside the epic holds this epic's step exactly as a whole-plan read does."""
+    outside the initiative holds this initiative's step exactly as a whole-plan read does."""
     model = {
         'pipeline': {'id': 13, 'title': 'I1', 'pipeline_status': 'active',
                      'execution_mode': 'parallel'},
-        'epics': [_epic(131, pipeline_fk=13)],
+        'initiatives': [_initiative(131, pipeline_fk=13)],
         'steps': [_step(2, 131)],
         'step_requirements': [{'step_fk': 2, 'requirement_fk': 20}],
         'step_deps': [{'id': 1, 'step_fk': 2, 'dep_step_fk': 5}],
         'requirements': [_req(20, status='swarm_ready')],
-        # step 5 is a priority step (flag off) in epic 130, and it depends on
+        # step 5 is a priority step (flag off) in initiative 130, and it depends on
         # step 1 — a checkpoint holding work 900 (and a container, 901).
         'plan_graph': {
             'steps': [{'id': 1, 'checkpoint': 1}, {'id': 5, 'checkpoint': 0}],
@@ -1022,25 +1022,25 @@ def test_an_epic_scoped_read_sees_a_checkpoint_in_another_epic():
                               'tracking': 1}],
         },
     }
-    plan = deriv.derive_plan2(model, now=NOW, epic_scoped=True)
+    plan = deriv.derive_plan2(model, now=NOW, initiative_scoped=True)
     row = plan['rows'][0]
     assert row['checkpoint_blocked_by'] == [1]
     assert row['launch_candidate'] is False
     # ...and once its work is terminal, the same read releases the step; the
     # container never counted.
     model['plan_graph']['requirements'][0]['requirement_status'] = 'met'
-    plan = deriv.derive_plan2(model, now=NOW, epic_scoped=True)
+    plan = deriv.derive_plan2(model, now=NOW, initiative_scoped=True)
     assert plan['rows'][0]['checkpoint_blocked_by'] == []
     assert plan['rows'][0]['launch_candidate'] is True
 
 
 # COVERS: DRV-028
-def test_an_epic_scoped_read_holds_behind_another_epics_checkpoint_with_work():
+def test_an_initiative_scoped_read_holds_behind_another_initiatives_checkpoint_with_work():
     """An outside checkpoint holds while any gating requirement is open."""
     model = {
         'pipeline': {'id': 14, 'title': 'I1b', 'pipeline_status': 'active',
                      'execution_mode': 'parallel'},
-        'epics': [_epic(141, pipeline_fk=14)],
+        'initiatives': [_initiative(141, pipeline_fk=14)],
         'steps': [_step(2, 141)],
         'step_requirements': [{'step_fk': 2, 'requirement_fk': 20}],
         'step_deps': [{'id': 1, 'step_fk': 2, 'dep_step_fk': 1}],
@@ -1055,23 +1055,23 @@ def test_an_epic_scoped_read_holds_behind_another_epics_checkpoint_with_work():
                               'tracking': 0}],
         },
     }
-    plan = deriv.derive_plan2(model, now=NOW, epic_scoped=True)
+    plan = deriv.derive_plan2(model, now=NOW, initiative_scoped=True)
     assert plan['rows'][0]['checkpoint_blocked_by'] == [1]
     assert plan['rows'][0]['launch_candidate'] is False
     # Its last requirement going terminal releases it.
     model['plan_graph']['requirements'][1]['requirement_status'] = 'wontfix'
-    plan = deriv.derive_plan2(model, now=NOW, epic_scoped=True)
+    plan = deriv.derive_plan2(model, now=NOW, initiative_scoped=True)
     assert plan['rows'][0]['checkpoint_blocked_by'] == []
     assert plan['rows'][0]['launch_candidate'] is True
     # An outside step with the flag OFF never holds, whatever its links say.
     model['plan_graph']['steps'][0] = {'id': 1, 'checkpoint': 0}
     model['plan_graph']['requirements'][1]['requirement_status'] = 'development'
-    plan = deriv.derive_plan2(model, now=NOW, epic_scoped=True)
+    plan = deriv.derive_plan2(model, now=NOW, initiative_scoped=True)
     assert plan['rows'][0]['checkpoint_blocked_by'] == []
     # An outside checkpoint holding NOTHING never holds either.
     model['plan_graph']['steps'][0] = {'id': 1, 'checkpoint': 1}
     model['plan_graph']['step_requirements'] = []
-    plan = deriv.derive_plan2(model, now=NOW, epic_scoped=True)
+    plan = deriv.derive_plan2(model, now=NOW, initiative_scoped=True)
     assert plan['rows'][0]['checkpoint_blocked_by'] == []
 
 
@@ -1095,7 +1095,7 @@ def _queue_model():
     model = {
         'pipeline': {'id': 15, 'title': 'Queue', 'pipeline_status': 'active',
                      'execution_mode': 'parallel'},
-        'epics': [_epic(150, pipeline_fk=15)],
+        'initiatives': [_initiative(150, pipeline_fk=15)],
         'steps': [_step(1, 150, title='A'), _step(2, 150, title='B'),
                   _step(3, 150, title='C'), _step(4, 150, title='M', run='manual')],
         'step_requirements': [
@@ -1156,7 +1156,7 @@ def test_launch_queue_includes_manual_steps_and_excludes_suppressed_ones():
     model = _queue_model()
     plan = deriv.derive_plan2(model, now=NOW)
     assert (4, 61) in _pairs(plan)                    # run=manual is IN
-    model['epics'][0]['epic_status'] = 'paused'
+    model['initiatives'][0]['initiative_status'] = 'paused'
     plan = deriv.derive_plan2(model, now=NOW)
     assert plan['launch_queue'] == []                 # suppressed is OUT...
     assert plan['launch_candidate_step_ids'] == [1, 2, 4, 3]   # ...but still a candidate
@@ -1186,16 +1186,16 @@ def test_launch_queue_is_a_pure_function_of_candidates_rows_and_requirements():
 
 
 # ---------------------------------------------------------------------------
-# Pause (DRV-016/017/018) — launch suppression, epic-scoped
+# Pause (DRV-016/017/018) — launch suppression, initiative-scoped
 # ---------------------------------------------------------------------------
 
-def _paused_model(pipeline_status='active', epic_statuses=(None, None)):
+def _paused_model(pipeline_status='active', initiative_statuses=(None, None)):
     return {
         'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': pipeline_status,
                     'execution_mode': 'parallel'},
-        'epics': [
-            {**_epic(90), 'epic_status': epic_statuses[0] or 'active'},
-            {**_epic(91), 'epic_status': epic_statuses[1] or 'active'},
+        'initiatives': [
+            {**_initiative(90), 'initiative_status': initiative_statuses[0] or 'active'},
+            {**_initiative(91), 'initiative_status': initiative_statuses[1] or 'active'},
         ],
         'steps': [_step(9001, 90), _step(9101, 91)],
         'step_requirements': [{'step_fk': 9001, 'requirement_fk': 71},
@@ -1207,16 +1207,16 @@ def _paused_model(pipeline_status='active', epic_statuses=(None, None)):
 
 
 # COVERS: DRV-017
-def test_epic_pause_suppresses_only_that_epics_steps():
-    model = _paused_model(epic_statuses=('paused', 'active'))
+def test_initiative_pause_suppresses_only_that_initiatives_steps():
+    model = _paused_model(initiative_statuses=('paused', 'active'))
     rows = deriv.build_plan_rows(model)
-    ordered = deriv.display_order(rows, model['epics'])
+    ordered = deriv.display_order(rows, model['initiatives'])
     pause = deriv.pause_state(model, ordered['rows'])
     by_id = {r['id']: r for r in ordered['rows']}
     assert by_id[9001]['launch_suppressed'] is True
-    assert by_id[9001]['suppressed_by'] == ['epic']
+    assert by_id[9001]['suppressed_by'] == ['initiative']
     assert by_id[9101]['launch_suppressed'] is False
-    assert pause['paused_epic_ids'] == [90]
+    assert pause['paused_initiative_ids'] == [90]
     assert pause['suppressed_step_ids'] == [9001]
 
 
@@ -1225,21 +1225,21 @@ def test_launch_suppression_leaves_eligible_unchanged():
     """`eligible` and `launch_suppressed` are independent — an
     eligible-and-suppressed step must stay distinguishable from a
     not-eligible one (DRV-016)."""
-    model = _paused_model(epic_statuses=('paused', 'active'))
+    model = _paused_model(initiative_statuses=('paused', 'active'))
     plan = deriv.derive_plan2(model, now='2026-08-09T00:00:00Z')
     row = next(r for r in plan['rows'] if r['id'] == 9001)
     assert row['eligible'] is True                 # work, no deps, no time gate
-    assert row['launch_suppressed'] is True         # but its epic is paused
+    assert row['launch_suppressed'] is True         # but its initiative is paused
     assert 9001 in plan['eligible_step_ids']         # eligibility is untouched
 
 
 # COVERS: DRV-018
-def test_whole_plan_pause_suppresses_every_epics_steps():
-    """A whole-plan pause binds a whole-plan orchestrator's every epic —
+def test_whole_plan_pause_suppresses_every_initiatives_steps():
+    """A whole-plan pause binds a whole-plan orchestrator's every initiative —
     suppression is a property of the STEP regardless of which scope asks."""
     model = _paused_model(pipeline_status='paused')
     rows = deriv.build_plan_rows(model)
-    ordered = deriv.display_order(rows, model['epics'])
+    ordered = deriv.display_order(rows, model['initiatives'])
     pause = deriv.pause_state(model, ordered['rows'])
     assert pause['pipeline_paused'] is True
     assert set(pause['suppressed_step_ids']) == {9001, 9101}
@@ -1249,41 +1249,41 @@ def test_whole_plan_pause_suppresses_every_epics_steps():
 
 
 def test_suppressed_by_names_both_reasons_when_both_fire():
-    model = _paused_model(pipeline_status='paused', epic_statuses=('paused', 'active'))
+    model = _paused_model(pipeline_status='paused', initiative_statuses=('paused', 'active'))
     rows = deriv.build_plan_rows(model)
-    ordered = deriv.display_order(rows, model['epics'])
+    ordered = deriv.display_order(rows, model['initiatives'])
     pause = deriv.pause_state(model, ordered['rows'])
     by_id = {r['id']: r for r in ordered['rows']}
-    assert by_id[9001]['suppressed_by'] == ['pipeline', 'epic']
+    assert by_id[9001]['suppressed_by'] == ['pipeline', 'initiative']
 
 
 # ---------------------------------------------------------------------------
-# Epic-scoped reads and out-of-scope cross-epic dependencies
+# Initiative-scoped reads and out-of-scope cross-initiative dependencies
 #
-# Regression coverage for a code-review finding: `get_pipeline2_epic_composed`
+# Regression coverage for a code-review finding: `get_pipeline2_initiative_composed`
 # narrows `steps` at the gateway but fetches `step_deps` by `step_fk`, so an
-# OUTGOING cross-epic edge names a `dep_step_fk` this payload never fetched.
+# OUTGOING cross-initiative edge names a `dep_step_fk` this payload never fetched.
 # `eligibility` correctly, permanently refuses to launch such a step (it
 # cannot know whether the dependency is done) — the defect was that
 # `verify_order` reported this as `dangling-dependency`, which reads as data
 # corruption rather than "read the whole-plan render for the true state".
 # ---------------------------------------------------------------------------
 
-def _epic_scoped_model_with_outgoing_edge():
+def _initiative_scoped_model_with_outgoing_edge():
     return {
         'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active',
                     'execution_mode': 'parallel'},
-        'epics': [_epic(90)],                    # ONLY the requested epic
-        'steps': [_step(9001, 90)],               # ONLY that epic's own steps
+        'initiatives': [_initiative(90)],                    # ONLY the requested initiative
+        'steps': [_step(9001, 90)],               # ONLY that initiative's own steps
         'step_requirements': [], 'requirements': [],
-        # names a step in a DIFFERENT epic this payload never fetched
+        # names a step in a DIFFERENT initiative this payload never fetched
         'step_deps': [{'id': 1, 'step_fk': 9001, 'dep_step_fk': 8888}],
     }
 
 
-def test_epic_scoped_read_reports_out_of_scope_not_dangling():
-    model = _epic_scoped_model_with_outgoing_edge()
-    plan = deriv.derive_plan2(model, now='2026-08-09T00:00:00Z', epic_scoped=True)
+def test_initiative_scoped_read_reports_out_of_scope_not_dangling():
+    model = _initiative_scoped_model_with_outgoing_edge()
+    plan = deriv.derive_plan2(model, now='2026-08-09T00:00:00Z', initiative_scoped=True)
     assert plan['out_of_scope_dep_ids'] == [8888]
     assert [v for v in plan['violations'] if v['invariant'] == 'dangling-dependency'] == []
     # Still correctly NOT eligible — this payload cannot see whether 8888 is
@@ -1296,11 +1296,11 @@ def test_epic_scoped_read_reports_out_of_scope_not_dangling():
 
 
 def test_whole_plan_read_still_reports_a_genuinely_dangling_dependency():
-    """The SAME shape, read as a whole-plan payload (`epic_scoped=False`,
-    the default) — every epic is supposed to be present, so a missing dep
+    """The SAME shape, read as a whole-plan payload (`initiative_scoped=False`,
+    the default) — every initiative is supposed to be present, so a missing dep
     is a real defect (truncation or corruption) and must stay a loud
-    violation, unlike the epic-scoped case above."""
-    model = _epic_scoped_model_with_outgoing_edge()
+    violation, unlike the initiative-scoped case above."""
+    model = _initiative_scoped_model_with_outgoing_edge()
     plan = deriv.derive_plan2(model, now='2026-08-09T00:00:00Z')
     assert plan['out_of_scope_dep_ids'] == []
     dangling = [v for v in plan['violations'] if v['invariant'] == 'dangling-dependency']
@@ -1317,13 +1317,13 @@ def test_whole_plan_read_still_reports_a_genuinely_dangling_dependency():
 # ---------------------------------------------------------------------------
 
 def _serial_model(execution_mode='serial'):
-    """Three epics in turn order 90 -> 91 -> 92. Epic 90 holds no open work
-    (its turn is over), epic 91 holds open work (live), epic 92 too (waiting)."""
+    """Three initiatives in turn order 90 -> 91 -> 92. Initiative 90 holds no open work
+    (its turn is over), initiative 91 holds open work (live), initiative 92 too (waiting)."""
     return {
         'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active',
                     'execution_mode': execution_mode},
-        'epics': [_epic(90, sort_order=1), _epic(91, sort_order=2),
-                 _epic(92, sort_order=3)],
+        'initiatives': [_initiative(90, sort_order=1), _initiative(91, sort_order=2),
+                 _initiative(92, sort_order=3)],
         'steps': [_step(9001, 90), _step(9101, 91), _step(9201, 92)],
         'step_requirements': [{'step_fk': 9001, 'requirement_fk': 1},
                               {'step_fk': 9101, 'requirement_fk': 2},
@@ -1337,33 +1337,33 @@ def _serial_model(execution_mode='serial'):
 def test_serial_state_parallel_mode_holds_nothing():
     model = _serial_model(execution_mode='parallel')
     rows = deriv.build_plan_rows(model)
-    ordered = deriv.display_order(rows, model['epics'])
+    ordered = deriv.display_order(rows, model['initiatives'])
     deriv.pause_state(model, ordered['rows'])
-    serial = deriv.serial_state(model, ordered['rows'], ordered['epic_order'])
+    serial = deriv.serial_state(model, ordered['rows'], ordered['initiative_order'])
     assert serial == {
         'execution_mode': 'parallel', 'serial': False,
-        'epic_order': [90, 91, 92], 'closed_epic_ids': [90],
-        'live_epic_id': 91, 'waiting_epic_ids': [92], 'held_step_ids': []}
+        'initiative_order': [90, 91, 92], 'closed_initiative_ids': [90],
+        'live_initiative_id': 91, 'waiting_initiative_ids': [92], 'held_step_ids': []}
     by_id = {r['id']: r for r in ordered['rows']}
     assert by_id[9201]['launch_suppressed'] is False
 
 
-def test_serial_state_serial_mode_holds_the_waiting_epic():
+def test_serial_state_serial_mode_holds_the_waiting_initiative():
     model = _serial_model(execution_mode='serial')
     rows = deriv.build_plan_rows(model)
-    ordered = deriv.display_order(rows, model['epics'])
+    ordered = deriv.display_order(rows, model['initiatives'])
     deriv.pause_state(model, ordered['rows'])
-    serial = deriv.serial_state(model, ordered['rows'], ordered['epic_order'])
+    serial = deriv.serial_state(model, ordered['rows'], ordered['initiative_order'])
     assert serial['serial'] is True
-    assert serial['live_epic_id'] == 91
-    assert serial['waiting_epic_ids'] == [92]
+    assert serial['live_initiative_id'] == 91
+    assert serial['waiting_initiative_ids'] == [92]
     assert serial['held_step_ids'] == [9201]
     by_id = {r['id']: r for r in ordered['rows']}
     assert by_id[9201]['launch_suppressed'] is True
     assert by_id[9201]['suppressed_by'] == ['turn']
-    # The LIVE epic's own step is untouched.
+    # The LIVE initiative's own step is untouched.
     assert by_id[9101]['launch_suppressed'] is False
-    # A closed epic's step is never held either (it is behind, not ahead).
+    # A closed initiative's step is never held either (it is behind, not ahead).
     assert by_id[9001]['launch_suppressed'] is False
 
 
@@ -1371,8 +1371,8 @@ def test_serial_state_absent_execution_mode_reads_as_parallel():
     model = _serial_model(execution_mode=None)
     del model['pipeline']['execution_mode']
     rows = deriv.build_plan_rows(model)
-    ordered = deriv.display_order(rows, model['epics'])
-    serial = deriv.serial_state(model, ordered['rows'], ordered['epic_order'])
+    ordered = deriv.display_order(rows, model['initiatives'])
+    serial = deriv.serial_state(model, ordered['rows'], ordered['initiative_order'])
     assert serial['execution_mode'] == deriv.MODE_PARALLEL
     assert serial['serial'] is False
 
@@ -1381,13 +1381,13 @@ def test_turn_suppression_appends_to_pause_suppression():
     """A step held by BOTH a pause and a turn names both reasons — pause
     runs first and `serial_state` appends rather than replaces."""
     model = _serial_model(execution_mode='serial')
-    model['epics'][2] = {**model['epics'][2], 'epic_status': 'paused'}   # epic 92
+    model['initiatives'][2] = {**model['initiatives'][2], 'initiative_status': 'paused'}   # initiative 92
     rows = deriv.build_plan_rows(model)
-    ordered = deriv.display_order(rows, model['epics'])
+    ordered = deriv.display_order(rows, model['initiatives'])
     deriv.pause_state(model, ordered['rows'])
-    deriv.serial_state(model, ordered['rows'], ordered['epic_order'])
+    deriv.serial_state(model, ordered['rows'], ordered['initiative_order'])
     by_id = {r['id']: r for r in ordered['rows']}
-    assert by_id[9201]['suppressed_by'] == ['epic', 'turn']
+    assert by_id[9201]['suppressed_by'] == ['initiative', 'turn']
 
 
 def test_derive_plan2_carries_the_serial_block():
@@ -1400,8 +1400,8 @@ def test_derive_plan2_carries_the_serial_block():
     assert row['suppressed_by'] == ['turn']
 
 
-def test_forward_cross_epic_edge_under_serial_is_not_a_deadlock():
-    """The ORDINARY case: a later epic's step depends on an earlier epic's
+def test_forward_cross_initiative_edge_under_serial_is_not_a_deadlock():
+    """The ORDINARY case: a later initiative's step depends on an earlier initiative's
     step. That is exactly how serial execution is meant to work and must
     NOT be reported."""
     model = _serial_model(execution_mode='serial')
@@ -1410,12 +1410,12 @@ def test_forward_cross_epic_edge_under_serial_is_not_a_deadlock():
     assert [v for v in plan['violations'] if v['invariant'] == 'serial-deadlock'] == []
 
 
-def test_backward_cross_epic_edge_under_serial_is_a_loud_deadlock():
-    """The live epic's step depends on the WAITING epic's step — that
-    dependency can never be released (its epic never goes live while this
+def test_backward_cross_initiative_edge_under_serial_is_a_loud_deadlock():
+    """The live initiative's step depends on the WAITING initiative's step — that
+    dependency can never be released (its initiative never goes live while this
     one, blocked on it, never closes). Must be a LOUD violation."""
     model = _serial_model(execution_mode='serial')
-    # 9101 (epic 91, live) depends on 9201 (epic 92, waiting) — backward.
+    # 9101 (initiative 91, live) depends on 9201 (initiative 92, waiting) — backward.
     model['step_deps'] = [{'id': 1, 'step_fk': 9101, 'dep_step_fk': 9201}]
     plan = deriv.derive_plan2(model, now='2026-08-09T00:00:00Z')
     deadlocks = [v for v in plan['violations'] if v['invariant'] == 'serial-deadlock']
@@ -1444,10 +1444,10 @@ def test_backward_edge_under_parallel_mode_is_not_a_deadlock():
 
 def test_empty_plan_derives_cleanly():
     """`pipeline_conformance.json` case `empty-plan`, translated: the
-    degenerate input every loop here must survive. No epics, no steps — every
+    degenerate input every loop here must survive. No initiatives, no steps — every
     collection comes back empty and nothing raises."""
     model = {'pipeline': {'id': 1, 'title': 'Empty', 'pipeline_status': 'draft'},
-            'epics': [], 'steps': [], 'step_requirements': [], 'step_deps': [],
+            'initiatives': [], 'steps': [], 'step_requirements': [], 'step_deps': [],
             'requirements': []}
     plan = deriv.derive_plan2(model, now='2026-08-09T00:00:00Z')
     assert plan['display_order'] == []

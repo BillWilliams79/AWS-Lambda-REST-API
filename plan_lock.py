@@ -1,29 +1,29 @@
 """plan_lock.py — LOCKED is a relic in time (req #3649).
 
-`pipelines.locked`, `epics.locked` and `pipeline_steps.locked` (migration
+`pipelines.locked`, `initiatives.locked` and `pipeline_steps.locked` (migration
 20261019100448) say a plan-layer row may no longer be AUTHORED. This module is
 the one place that rule is enforced, and it sits at the gateway for the same
 reason the ownership registries do: the browser writes these five tables
 directly through the generic PUT/POST/DELETE (`Darwin/src/Steps/stepsApi.js`,
-`Epics/epicsApi.js`, `Pipelines/pipelinesApi.js`), so a check in darwin-mcp's
+`Initiatives/initiativesApi.js`, `Pipelines/pipelinesApi.js`), so a check in darwin-mcp's
 services would cover one of the two writers. Lambda-Rest is the single DB
 gateway (req #3050); a lock lives where every write passes.
 
 WHAT A LOCK FREEZES — structure AND authoring fields, cascading:
 
-  * a locked PIPELINE freezes itself, every epic in it and every step in
-    those epics; a locked EPIC freezes itself and its steps; a locked STEP
+  * a locked PIPELINE freezes itself, every initiative in it and every step in
+    those initiatives; a locked INITIATIVE freezes itself and its steps; a locked STEP
     freezes itself. "Effectively locked" = the row's own flag OR any
     ancestor's. There is one column per layer and no copy of an ancestor's
     state — the cascade is derived in one SELECT, never stored.
-  * frozen: creating, deleting or moving a child (an epic under the plan, a
-    step under the epic); linking or unlinking a requirement; adding or
+  * frozen: creating, deleting or moving a child (an initiative under the plan, a
+    step under the initiative); linking or unlinking a requirement; adding or
     removing a dependency edge; and every authoring field — title,
     description, notes, run, checkpoint, not_before, sort_order, category_fk,
     machine_fk, execution_mode, and the parent columns a move rewrites.
   * NOT frozen: the lock itself (so it can be lifted through the same call),
     and orchestration/lifecycle state — `pipeline_status` with its derived
-    `started_at`/`completed_at`, `epic_status`, `closed`. A step carries no
+    `started_at`/`completed_at`, `initiative_status`, `closed`. A step carries no
     lifecycle state at all (req #3750). A locked plan can still be orchestrated;
     it cannot be rewritten.
 
@@ -58,11 +58,11 @@ PLAN_LOCK = {
         'parent': None,
         'unlocked': frozenset({'locked', 'pipeline_status', 'started_at',
                                'completed_at'})},
-    'epics': {
+    'initiatives': {
         'parent': ('pipeline_fk', 'pipelines'),
-        'unlocked': frozenset({'locked', 'epic_status', 'closed'})},
+        'unlocked': frozenset({'locked', 'initiative_status', 'closed'})},
     'pipeline_steps': {
-        'parent': ('epic_fk', 'epics'),
+        'parent': ('initiative_fk', 'initiatives'),
         'unlocked': frozenset({'locked'})},
     'pipeline_step_requirements': {
         'parent': ('step_fk', 'pipeline_steps'),
@@ -82,27 +82,27 @@ _CHAINS = {
         'pipelines t',
         't',
         (('pipeline', 't.id', 't.locked'),)),
-    'epics': (
-        'epics t JOIN pipelines p ON p.id = t.pipeline_fk',
+    'initiatives': (
+        'initiatives t JOIN pipelines p ON p.id = t.pipeline_fk',
         't',
-        (('pipeline', 'p.id', 'p.locked'), ('epic', 't.id', 't.locked'))),
+        (('pipeline', 'p.id', 'p.locked'), ('initiative', 't.id', 't.locked'))),
     'pipeline_steps': (
-        'pipeline_steps t JOIN epics e ON e.id = t.epic_fk '
+        'pipeline_steps t JOIN initiatives e ON e.id = t.initiative_fk '
         'JOIN pipelines p ON p.id = e.pipeline_fk',
         't',
-        (('pipeline', 'p.id', 'p.locked'), ('epic', 'e.id', 'e.locked'),
+        (('pipeline', 'p.id', 'p.locked'), ('initiative', 'e.id', 'e.locked'),
          ('step', 't.id', 't.locked'))),
     'pipeline_step_requirements': (
         'pipeline_step_requirements t JOIN pipeline_steps s ON s.id = t.step_fk '
-        'JOIN epics e ON e.id = s.epic_fk JOIN pipelines p ON p.id = e.pipeline_fk',
+        'JOIN initiatives e ON e.id = s.initiative_fk JOIN pipelines p ON p.id = e.pipeline_fk',
         's',
-        (('pipeline', 'p.id', 'p.locked'), ('epic', 'e.id', 'e.locked'),
+        (('pipeline', 'p.id', 'p.locked'), ('initiative', 'e.id', 'e.locked'),
          ('step', 's.id', 's.locked'))),
     'pipeline_step_deps': (
         'pipeline_step_deps t JOIN pipeline_steps s ON s.id = t.step_fk '
-        'JOIN epics e ON e.id = s.epic_fk JOIN pipelines p ON p.id = e.pipeline_fk',
+        'JOIN initiatives e ON e.id = s.initiative_fk JOIN pipelines p ON p.id = e.pipeline_fk',
         's',
-        (('pipeline', 'p.id', 'p.locked'), ('epic', 'e.id', 'e.locked'),
+        (('pipeline', 'p.id', 'p.locked'), ('initiative', 'e.id', 'e.locked'),
          ('step', 's.id', 's.locked'))),
 }
 
@@ -184,7 +184,7 @@ def resolve_locks(cursor, table, where, params, authenticated_user):
     through to the ownership scoping every verb already applies.
 
     `where` is written against the chain's aliases (`t` for the table's own
-    row, `s`/`e`/`p` for step/epic/pipeline); `params` fill its placeholders.
+    row, `s`/`e`/`p` for step/initiative/pipeline); `params` fill its placeholders.
     """
     levels = _CHAINS[table][2]
     cursor.execute(_chain_sql(table, where), tuple(params) + (authenticated_user,))
@@ -207,12 +207,12 @@ def resolve_locks(cursor, table, where, params, authenticated_user):
 # ancestor. FROM clause with the deleted table as `t`, and the descendant
 # level each SELECT names.
 _BELOW = {
-    'epics': (
-        ('step', 'epics t JOIN pipeline_steps s ON s.epic_fk = t.id', 's'),),
+    'initiatives': (
+        ('step', 'initiatives t JOIN pipeline_steps s ON s.initiative_fk = t.id', 's'),),
     'pipelines': (
-        ('epic', 'pipelines t JOIN epics e ON e.pipeline_fk = t.id', 'e'),
-        ('step', 'pipelines t JOIN epics e ON e.pipeline_fk = t.id '
-                 'JOIN pipeline_steps s ON s.epic_fk = e.id', 's')),
+        ('initiative', 'pipelines t JOIN initiatives e ON e.pipeline_fk = t.id', 'e'),
+        ('step', 'pipelines t JOIN initiatives e ON e.pipeline_fk = t.id '
+                 'JOIN pipeline_steps s ON s.initiative_fk = e.id', 's')),
 }
 
 

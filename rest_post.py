@@ -63,8 +63,8 @@ def rest_post(post_method, conn, database, table, body, authenticated_user=None)
     if refusal is not None:
         return refusal
 
-    # req #3649 — a LOCKED plan-layer container accepts no new child: an epic
-    # under a locked plan, a step under a locked epic, a link or edge under a
+    # req #3649 — a LOCKED plan-layer container accepts no new child: an initiative
+    # under a locked plan, a step under a locked initiative, a link or edge under a
     # locked step. Answered 423 before the INSERT; see plan_lock.py.
     refusal = plan_lock_guard(conn, table, [body], authenticated_user,
                               post_method)
