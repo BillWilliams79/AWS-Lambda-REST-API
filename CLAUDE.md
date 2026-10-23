@@ -111,14 +111,15 @@ tables** — every `*_fk` on a `creator_fk`-bearing table whose target is also
 creator-scoped. (36 at req #3125; req #3186 added `swarm_sessions.pipeline_fk`
 and `.initiative_fk`; req #3224 added `orchestration_claims.pipeline_fk`, `.initiative_fk`
 and `.machine_fk`; req #3337 added four Pipeline 2.0 plan-layer columns;
-req #3369 added `orchestration_claims.pipeline2_fk` and `.epic2_fk`; req #3202
-added `swarm_completes.machine_fk`; req #3350 added `swarm_sessions.pipeline2_fk`
-and `.epic2_fk`; req #3355 dropped the retired middle tier's entry
+req #3369 added `orchestration_claims`' second-generation plan/initiative pair; req #3202
+added `swarm_completes.machine_fk`; req #3350 added `swarm_sessions`' second-generation
+plan/initiative pair; req #3355 dropped the retired middle tier's entry
 (`category_fk`, `initiative_fk`) and the requirement's reference to it, migration
 20260811033413; req #3356
-dropped the whole 1.0 plan layer, migration 20260812175325 — the `epics`,
-`pipelines` and `pipeline_steps` entries with their tables, plus 1.0's two
-`swarm_sessions` and two `orchestration_claims` attribution columns; req #3756
+dropped the whole 1.0 plan layer, migration 20260812175325 — the 1.0 initiative,
+pipeline and step entries with their tables, plus 1.0's two
+`swarm_sessions` and two `orchestration_claims` attribution columns, and renamed
+the second-generation pairs into their place (today's `pipeline_fk` / `initiative_fk`); req #3756
 added Orchestration Engine 2's eleven, migration 20261022073056. Every
 number is DERIVED — see the closing note of this section.)
 
@@ -237,8 +238,8 @@ KEYS are SQL identifiers* rule, which had already defeated two other registries.
 **The candidates are DERIVED, the classification is written down.**
 `tests/test_unit_enum_blank.py` re-parses `schema.sql` for every NOT NULL column that is
 a real `ENUM(...)` or a CHAR/VARCHAR no wider than 32 — 41 columns today (req #3355
-dropped the retired middle tier's status column; req #3356 dropped `epics.epic_status`,
-`pipelines.pipeline_status`/`.execution_mode` and `pipeline_steps.run`) — and fails
+dropped the retired middle tier's status column; req #3356 dropped the 1.0 initiative tier's status column,
+the 1.0 `pipeline_status`/`execution_mode` and the 1.0 step `run`) — and fails
 unless each is in `ENUM_COLUMNS` or `FREE_TEXT_NOT_NULL_COLUMNS` (36 + 5). A new enum
 column fails the build until registered.
 
