@@ -54,7 +54,7 @@ def rest_delete(delete_method, conn, database, table, body, authenticated_user=N
             return compose_rest_response(400, '', 'BAD REQUEST')
 
         # req #3649 — an effectively LOCKED plan-layer row (a step under a
-        # locked epic, a link or edge under a locked step...) is not deleted.
+        # locked initiative, a link or edge under a locked step...) is not deleted.
         # The keys are validated above, so they are safe as `t.<key>` here.
         refusal = plan_lock_guard_delete(
             conn, table, ' AND '.join(f"t.{key} = %s" for key in keys), values,

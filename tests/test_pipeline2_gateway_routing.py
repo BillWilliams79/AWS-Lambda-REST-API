@@ -10,7 +10,7 @@ ways:
 
 - **The Lambda-side half — asserted HERE.** `lambda_handler` correctly parses
   the path, applies `auth_utils` registration, and executes a real SQL query
-  for each of the five plan-layer tables (`pipelines`, `epics`,
+  for each of the five plan-layer tables (`pipelines`, `initiatives`,
   `pipeline_steps`, `pipeline_step_requirements`, `pipeline_step_deps` —
   named `pipeline2_*` until req #3356 dropped the first generation and
   renamed these into the freed plain names), proving no application-level
@@ -59,7 +59,7 @@ from auth_utils import CREATOR_FK_TABLES, JUNCTION_OWNERSHIP
 # test_unit_creator_fk_references.py / test_unit_junction_scoping.py, which
 # check each of these five names individually against schema.sql.
 PIPELINE_PLAN_LAYER_TABLES = (
-    'epics', 'pipelines', 'pipeline_steps',
+    'initiatives', 'pipelines', 'pipeline_steps',
     'pipeline_step_requirements', 'pipeline_step_deps',
 )
 

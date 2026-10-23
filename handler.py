@@ -16,7 +16,7 @@ from auth_utils import (get_authenticated_user, CREATOR_FK_TABLES,
 import pipeline2_compose
 
 # req #3367 — the ONE non-generic route (remediation B, composing form).
-# `pipeline_compose` / `pipeline_compose_epic` are not real tables; they are
+# `pipeline_compose` / `pipeline_compose_initiative` are not real tables; they are
 # reserved route names dispatched to `pipeline2_compose.py` BEFORE the generic
 # `{database}/{table}` gateway ever sees them. GET only, `id` as a query
 # string parameter — same grammar as every other single-row lookup
@@ -24,7 +24,7 @@ import pipeline2_compose
 # client needs no new URL-building code, only a new response-shape method.
 PIPELINE_COMPOSE_ROUTES = {
     'pipeline_compose': pipeline2_compose.compose_pipeline2,
-    'pipeline_compose_epic': pipeline2_compose.compose_pipeline2_epic,
+    'pipeline_compose_initiative': pipeline2_compose.compose_pipeline2_initiative,
 }
 
 
@@ -219,7 +219,7 @@ def _rest_pipeline_compose(table, conn, event, http_method, authenticated_user):
     try:
         composed = PIPELINE_COMPOSE_ROUTES[table](conn, row_id, authenticated_user)
     except ValueError as e:
-        # A data-integrity issue (epic names a pipeline_fk that does not
+        # A data-integrity issue (initiative names a pipeline_fk that does not
         # resolve for this creator) — real but not the caller's fault to fix
         # by retrying, so 500 rather than 400/404.
         print(f"{table} data integrity error: {e}")
