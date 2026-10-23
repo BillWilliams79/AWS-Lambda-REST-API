@@ -106,7 +106,7 @@ empty.
 
 ## Outbound references — owning a row is not owning what it points at (req #3125)
 
-`CREATOR_TABLE_REFERENCES` is the fourth registry: **40 columns across 26
+`CREATOR_TABLE_REFERENCES` is the fourth registry: **51 columns across 30
 tables** — every `*_fk` on a `creator_fk`-bearing table whose target is also
 creator-scoped. (36 at req #3125; req #3186 added `swarm_sessions.pipeline_fk`
 and `.epic_fk`; req #3224 added `orchestration_claims.pipeline_fk`, `.epic_fk`
@@ -118,7 +118,8 @@ and `.epic2_fk`; req #3355 dropped the retired middle tier's entry
 20260811033413; req #3356
 dropped the whole 1.0 plan layer, migration 20260812175325 — the `epics`,
 `pipelines` and `pipeline_steps` entries with their tables, plus 1.0's two
-`swarm_sessions` and two `orchestration_claims` attribution columns. Every
+`swarm_sessions` and two `orchestration_claims` attribution columns; req #3756
+added Orchestration Engine 2's eleven, migration 20261022073056. Every
 number is DERIVED — see the closing note of this section.)
 
 **The attack does not defeat `creator_fk` scoping, it rides on it.** The attacker
@@ -246,7 +247,9 @@ sweeps the shapes an enum is usually written in; a bounded domain declared wider
 and simply will not be swept. Two are — `swarm_completes.skill_name` VARCHAR(64)
 (`VALID_COMPLETE_SKILL_NAMES`, two members) and `user_integrations.provider` VARCHAR(50)
 (`'strava'`) — both accepted `''` silently until they were **registered by hand**, which
-brings `ENUM_COLUMNS` to **38 columns across 24 tables**. The test asks a different
+brings `ENUM_COLUMNS` to **38 columns across 24 tables** — **43 across 28** since req #3756
+registered Engine 2's five (`engine_states.desired_state`/`.actual_state`,
+`engine_decision_records.verdict`, `engine_outcomes.outcome_state`, `engine_inputs.input_kind`). The test asks a different
 question of those: they are checked to EXIST in the DDL, not to have been swept. Raising
 the bound instead would drag in every VARCHAR(64) name and `creator_fk` itself, trading a
 reviewable exemption list for an unreviewable one. NOT NULL `TINYINT` flags are outside
