@@ -240,10 +240,51 @@ class TestWholePlanCompose:
         and the corpus existed to catch it when they did. Proving two calls
         to the one remaining producer return identical bytes is what "one
         derivation, in one place" cashes out to once B is chosen."""
-        first = _get(owner, 'pipeline_compose', plan['pipeline'])
-        second = _get(owner, 'pipeline_compose', plan['pipeline'])
-        assert first['body'] == second['body']
-        assert json.loads(first['body'])['derived'] == json.loads(second['body'])['derived']
+        first = json.loads(_get(owner, 'pipeline_compose', plan['pipeline'])['body'])
+        second = json.loads(_get(owner, 'pipeline_compose', plan['pipeline'])['body'])
+        # `derived.now` is the read's own clock, so two reads that straddle a
+        # second boundary differ there and nowhere else — everything DERIVED
+        # must still be identical.
+        first['derived'].pop('now')
+        second['derived'].pop('now')
+        assert first == second
+
+
+class TestStallEvidence:
+    """req #3757 — the derivation answers "is anybody working this?" from rows
+    the route reads in the same invocation, so Engine 2 computes no stall."""
+
+    def _row(self, owner, plan, route='pipeline_compose', key='pipeline'):
+        body = json.loads(_get(owner, route, plan[key])['body'])
+        assert 'work_evidence' not in body
+        assert body['derived']['stall_evidence'] == 'complete'
+        return {r['id']: r for r in body['derived']['rows']}[plan['epic_a']]
+
+    def test_unworked_development_requirement_is_stalled_until_a_session_works_it(
+            self, owner, plan, db_connection):
+        assert self._row(owner, plan)['stall_req_ids'] == [plan['req_a']]
+        assert self._row(owner, plan, 'pipeline_compose_initiative',
+                         'initiative')['stall_req_ids'] == [plan['req_a']]
+        resp = owner('POST', '/darwin_dev/swarm_sessions', body={
+            'source_ref': f"requirement:{plan['req_a']}", 'swarm_status': 'active',
+            'task_name': 'p2compose-stall'})
+        assert resp['statusCode'] == 200, resp
+        session_id = int(extract_id(resp))
+        try:
+            assert self._row(owner, plan)['stall_req_ids'] == []
+        finally:
+            owner('DELETE', '/darwin_dev/swarm_sessions', body={'id': session_id})
+
+    def test_an_open_primary_birth_record_is_not_a_stall(self, owner, plan):
+        resp = owner('POST', '/darwin_dev/swarm_starts', body={
+            'arguments': f"primary req#{plan['req_a']}"})
+        assert resp['statusCode'] == 200, resp
+        start_id = int(extract_id(resp))
+        try:
+            assert self._row(owner, plan)['stall_req_ids'] == []
+        finally:
+            owner('DELETE', '/darwin_dev/swarm_starts', body={'id': start_id})
+        assert self._row(owner, plan)['stall_req_ids'] == [plan['req_a']]
 
 
 class TestInitiativeScopedCompose:
