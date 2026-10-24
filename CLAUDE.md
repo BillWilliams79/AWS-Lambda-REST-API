@@ -238,10 +238,11 @@ KEYS are SQL identifiers* rule, which had already defeated two other registries.
 
 **The candidates are DERIVED, the classification is written down.**
 `tests/test_unit_enum_blank.py` re-parses `schema.sql` for every NOT NULL column that is
-a real `ENUM(...)` or a CHAR/VARCHAR no wider than 32 — 41 columns today (req #3355
+a real `ENUM(...)` or a CHAR/VARCHAR no wider than 32 — 45 columns today (req #3355
 dropped the retired middle tier's status column; req #3356 dropped the 1.0 initiative tier's status column,
-the 1.0 `pipeline_status`/`execution_mode` and the 1.0 epic `run`) — and fails
-unless each is in `ENUM_COLUMNS` or `FREE_TEXT_NOT_NULL_COLUMNS` (36 + 5). A new enum
+the 1.0 `pipeline_status`/`execution_mode` and the 1.0 epic `run`; req #3756 added Engine 2's five;
+req #3822 dropped `pipelines.execution_mode`) — and fails
+unless each is in `ENUM_COLUMNS` or `FREE_TEXT_NOT_NULL_COLUMNS` (40 + 5). A new enum
 column fails the build until registered.
 
 **That width rule is a FILTER, NOT A PROOF, and the difference is load-bearing.** It
@@ -251,7 +252,8 @@ and simply will not be swept. Two are — `swarm_completes.skill_name` VARCHAR(6
 (`'strava'`) — both accepted `''` silently until they were **registered by hand**, which
 brings `ENUM_COLUMNS` to **38 columns across 24 tables** — **43 across 28** since req #3756
 registered Engine 2's five (`engine_states.desired_state`/`.actual_state`,
-`engine_decision_records.verdict`, `engine_outcomes.outcome_state`, `engine_inputs.input_kind`). The test asks a different
+`engine_decision_records.verdict`, `engine_outcomes.outcome_state`, `engine_inputs.input_kind`), and
+**42 across 28** since req #3822 dropped `pipelines.execution_mode`. The test asks a different
 question of those: they are checked to EXIST in the DDL, not to have been swept. Raising
 the bound instead would drag in every VARCHAR(64) name and `creator_fk` itself, trading a
 reviewable exemption list for an unreviewable one. NOT NULL `TINYINT` flags are outside

@@ -45,7 +45,7 @@ def plan(owner):
                  body={'category_name': 'planlock category', 'project_fk': ids['project']})
     ids['category'] = int(extract_id(resp))
     resp = owner('POST', '/darwin_dev/pipelines', body={
-        'title': 'planlock plan', 'pipeline_status': 'active', 'execution_mode': 'parallel'})
+        'title': 'planlock plan', 'pipeline_status': 'active'})
     ids['pipeline'] = int(extract_id(resp))
     for key, title in (('initiative_a', 'A'), ('initiative_b', 'B')):
         resp = owner('POST', '/darwin_dev/initiatives', body={
@@ -142,7 +142,7 @@ def test_a_locked_plan_freezes_everything_under_it(owner, plan):
     _set_locked(owner, 'pipelines', plan['pipeline'], 1)
     try:
         for table, row in (('pipelines', {'id': plan['pipeline'], 'title': 'x'}),
-                           ('pipelines', {'id': plan['pipeline'], 'execution_mode': 'serial'}),
+                           ('pipelines', {'id': plan['pipeline'], 'machine_fk': 'NULL'}),
                            ('initiatives', {'id': plan['initiative_b'], 'title': 'x'}),
                            ('epics', {'id': plan['b1'], 'title': 'x'})):
             resp = _put(owner, table, row)

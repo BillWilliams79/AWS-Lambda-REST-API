@@ -191,7 +191,7 @@ def test_a_put_writing_an_authoring_key_plans_the_row():
                              'PUT') == (['701'], [], None)
     assert plan_lock_lookups('initiatives', [{'id': 71, 'sort_order': 2}],
                              'PUT') == (['71'], [], None)
-    assert plan_lock_lookups('pipelines', [{'id': 8, 'execution_mode': 'serial'}],
+    assert plan_lock_lookups('pipelines', [{'id': 8, 'description': 'd'}],
                              'PUT') == (['8'], [], None)
 
 

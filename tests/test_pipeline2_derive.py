@@ -76,17 +76,9 @@ Translated and covered by a test in this file:
     `test_initiative_pause_suppresses_only_that_initiatives_epics`,
     `test_whole_plan_pause_suppresses_every_initiatives_epics`,
     `test_suppressed_by_names_both_reasons_when_both_fire`;
-  `serial-holds-every-initiative-but-the-live-one`,
-    `serial-advances-when-the-live-initiative-closes`,
-    `serial-terminal-statuses-close-an-initiative-like-met`,
-    `serial-and-pause-both-name-themselves`,
-    `serial-never-holds-a-epic-with-no-initiative-label` (N/A half: no epic can
-    have no initiative label — folds into the initiative_fk-is-a-column argument below),
-    `serial-all-initiatives-closed-holds-nothing`,
-    `parallel-is-the-default-and-suppresses-nothing`,
-    `absent-execution-mode-reads-as-parallel` → the whole serial-state block,
-    `test_serial_state_parallel_mode_holds_nothing` through
-    `test_backward_edge_under_parallel_mode_is_not_a_deadlock`;
+  `serial-*`, `parallel-is-the-default-and-suppresses-nothing`,
+    `absent-execution-mode-reads-as-parallel` → retired with execution mode
+    (req #3822); `test_derive_plan2_carries_no_serial_block` pins the removal;
   `launchable-status-matrix`, `launch-args-drop-met-requirements`,
     `unresolved-requirement-is-not-launchable` (their PER-EPIC half; the
     BATCH half is N/A below) →
@@ -98,8 +90,6 @@ Translated and covered by a test in this file:
     `test_manual_sort_order_orders_the_initiative_blocks`,
     `test_manual_sort_order_wins_over_derived_order`,
     `test_started_initiatives_order_by_earliest_activity_ahead_of_unstarted`;
-  `serial-turn-follows-the-initiative-sort-order` → `test_turn_suppression_appends_to_pause_suppression`
-    plus the sort-order tests above (both mechanisms read the same `initiative_order`);
   `initiative-sort-order-does-not-outrank-a-state-band` — retired with epic state
     (req #3750): there is no state band for sort order to outrank.
 
@@ -170,7 +160,7 @@ def _basic_model():
     both) — the same shape as `test_pipelines2.py`'s `plan2` fixture."""
     return {
         'pipeline': {'id': 900, 'title': 'Pipeline 2.0 Build',
-                     'pipeline_status': 'active', 'execution_mode': 'parallel'},
+                     'pipeline_status': 'active'},
         'initiatives': [_initiative(90)],
         'epics': [
             _epic(9001, 90, title='read service'),
@@ -231,17 +221,14 @@ def test_build_plan_rows_has_no_legacy_or_leaked_fields():
 
 
 # COVERS: DRV-021
-def test_no_batches_key_but_pause_serial_and_eligibility_are_present():
-    """Batch does not exist in 2.0 (Epic is the launch unit) — but `pause`,
-    `serial` and `eligible_epic_ids` ARE this requirement's: the first two
-    per the verification register (DRV-005/006/016/017/018), `serial` per
-    req #3349's own gate delta naming req #3388 (the register has no DRV
-    entry for it at all, which is a gap in the register, not a scope
-    exclusion — see the module docstring)."""
+def test_no_batches_key_but_pause_and_eligibility_are_present():
+    """Batch does not exist in 2.0 (Epic is the launch unit) — but `pause`
+    and `eligible_epic_ids` ARE this requirement's, per the verification
+    register (DRV-005/006/016/017/018)."""
     model = _basic_model()
     plan = deriv.derive_plan2(model, now='2026-08-09T00:00:00Z')
     assert 'batches' not in plan
-    for key in ('pause', 'serial', 'eligible_epic_ids'):
+    for key in ('pause', 'eligible_epic_ids'):
         assert key in plan
 
 
@@ -252,8 +239,7 @@ def test_no_batches_key_but_pause_serial_and_eligibility_are_present():
 # COVERS: DRV-008
 def test_requirement_counts_groups_by_the_seated_initiative_not_a_retired_middle_tier_chain():
     model = {
-        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active',
-                    'execution_mode': 'parallel'},
+        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active'},
         'initiatives': [_initiative(90), _initiative(91)],
         'epics': [_epic(9001, 90), _epic(9101, 91)],
         'epic_requirements': [
@@ -298,8 +284,7 @@ def test_overall_population_follows_model_requirements_not_the_whole_plan():
     plan's true total. A caller must label it as the initiative's number, not the
     plan's, on that resource."""
     model = {
-        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active',
-                    'execution_mode': 'parallel'},
+        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active'},
         'initiatives': [_initiative(90)],                    # ONE initiative, as an initiative-scoped
         'epics': [_epic(9001, 90)],               # composed read narrows to
         'epic_requirements': [{'epic_fk': 9001, 'requirement_fk': 5010}],
@@ -337,8 +322,7 @@ def test_manual_sort_order_orders_the_initiative_blocks():
     edge_is_legal_and_respected_topologically` below and the module
     docstring's item 4)."""
     model = {
-        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active',
-                    'execution_mode': 'parallel'},
+        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active'},
         'initiatives': [_initiative(90, sort_order=2), _initiative(91, sort_order=1)],
         'epics': [_epic(9001, 90), _epic(9101, 91)],
         'epic_requirements': [], 'epic_deps': [], 'requirements': [],
@@ -351,8 +335,7 @@ def test_manual_sort_order_orders_the_initiative_blocks():
 
 def test_manual_sort_order_wins_over_derived_order():
     model = {
-        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active',
-                    'execution_mode': 'parallel'},
+        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active'},
         # initiative 90 started (its epic's work is met) so would derive FIRST;
         # initiative 91 is unstarted and would derive LAST. A manual order on 91
         # overrides that.
@@ -368,8 +351,7 @@ def test_manual_sort_order_wins_over_derived_order():
 
 def test_started_initiatives_order_by_earliest_activity_ahead_of_unstarted():
     model = {
-        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active',
-                    'execution_mode': 'parallel'},
+        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active'},
         'initiatives': [_initiative(90), _initiative(91), _initiative(92)],
         'epics': [
             # initiative 90: unstarted (no work begun) -> creation order (id)
@@ -398,8 +380,7 @@ def test_display_order_has_no_state_band():
     unfinished work. Among rows whose dependencies have rendered, the order is
     the latest dependency's position, then initiative, then run mode, then id."""
     model = {
-        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active',
-                    'execution_mode': 'parallel'},
+        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active'},
         'initiatives': [_initiative(90)],
         'epics': [_epic(1, 90), _epic(2, 90), _epic(3, 90, run='manual'),
                   _epic(4, 90)],
@@ -427,8 +408,7 @@ def test_verify_order_has_no_banding_invariant():
 
 def test_cycle_within_one_initiative_is_detected_and_falls_back_to_stored_order():
     model = {
-        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active',
-                    'execution_mode': 'parallel'},
+        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active'},
         'initiatives': [_initiative(90)],
         'epics': [_epic(1, 90), _epic(2, 90)],
         'epic_requirements': [], 'requirements': [],
@@ -472,8 +452,7 @@ def test_cross_initiative_dependency_edge_is_legal_and_respected_topologically()
     LEGAL, reversing the original body text. An epic in initiative 91 gated on a
     epic in initiative 90 must never render before it."""
     model = {
-        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active',
-                    'execution_mode': 'parallel'},
+        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active'},
         'initiatives': [_initiative(90, sort_order=1), _initiative(91, sort_order=2)],
         'epics': [
             _epic(9001, 90),                    # gates 9101
@@ -570,7 +549,7 @@ def test_derive_plan2_shape_is_compact_ids_and_enums_only():
     model = _basic_model()
     plan = deriv.derive_plan2(model, now='2026-08-09T00:00:00Z')
     assert set(plan) == {
-        'now', 'initiative_order', 'display_order', 'rows', 'pause', 'serial',
+        'now', 'initiative_order', 'display_order', 'rows', 'pause',
         'eligible_epic_ids', 'launch_candidate_epic_ids',
         'launch_queue',
         'violations', 'stall_evidence', 'cycle_detected', 'cycle_epic_ids',
@@ -723,7 +702,7 @@ def _plan10_model():
     further-downstream gated epic, also carrying launch-ready work."""
     return {
         'pipeline': {'id': 10, 'title': 'Tip of the Spear',
-                     'pipeline_status': 'active', 'execution_mode': 'parallel'},
+                     'pipeline_status': 'active'},
         'initiatives': [_initiative(100, pipeline_fk=10)],
         'epics': [_epic(313, 100), _epic(315, 100), _epic(316, 100),
                   _epic(314, 100), _epic(317, 100)],
@@ -824,7 +803,7 @@ def _checkpoint_model(checkpoint_open=True):
     unrelated."""
     return {
         'pipeline': {'id': 11, 'title': 'Checkpoints',
-                     'pipeline_status': 'active', 'execution_mode': 'parallel'},
+                     'pipeline_status': 'active'},
         'initiatives': [_initiative(110, pipeline_fk=11)],
         'epics': [_epic(1, 110, title='checkpoint', checkpoint=1),
                   _epic(2, 110), _epic(3, 110), _epic(4, 110), _epic(5, 110)],
@@ -961,8 +940,7 @@ def test_a_holding_checkpoint_above_a_clear_epic_still_holds_its_downstream():
     the transitive walk they would read `eligible` and the engine would
     launch straight past the checkpoint."""
     model = {
-        'pipeline': {'id': 12, 'title': 'C1', 'pipeline_status': 'active',
-                     'execution_mode': 'parallel'},
+        'pipeline': {'id': 12, 'title': 'C1', 'pipeline_status': 'active'},
         'initiatives': [_initiative(120, pipeline_fk=12)],
         'epics': [_epic(10, 120, checkpoint=1), _epic(11, 120), _epic(12, 120),
                   _epic(13, 120), _epic(14, 120, checkpoint=1)],
@@ -1003,8 +981,7 @@ def test_an_initiative_scoped_read_sees_a_checkpoint_in_another_initiative():
     the plan's epics, edges, links and requirement statuses) so a checkpoint
     outside the initiative holds this initiative's epic exactly as a whole-plan read does."""
     model = {
-        'pipeline': {'id': 13, 'title': 'I1', 'pipeline_status': 'active',
-                     'execution_mode': 'parallel'},
+        'pipeline': {'id': 13, 'title': 'I1', 'pipeline_status': 'active'},
         'initiatives': [_initiative(131, pipeline_fk=13)],
         'epics': [_epic(2, 131)],
         'epic_requirements': [{'epic_fk': 2, 'requirement_fk': 20}],
@@ -1039,8 +1016,7 @@ def test_an_initiative_scoped_read_sees_a_checkpoint_in_another_initiative():
 def test_an_initiative_scoped_read_holds_behind_another_initiatives_checkpoint_with_work():
     """An outside checkpoint holds while any gating requirement is open."""
     model = {
-        'pipeline': {'id': 14, 'title': 'I1b', 'pipeline_status': 'active',
-                     'execution_mode': 'parallel'},
+        'pipeline': {'id': 14, 'title': 'I1b', 'pipeline_status': 'active'},
         'initiatives': [_initiative(141, pipeline_fk=14)],
         'epics': [_epic(2, 141)],
         'epic_requirements': [{'epic_fk': 2, 'requirement_fk': 20}],
@@ -1094,8 +1070,7 @@ def _queue_model():
     A carries implemented 31, deployed 32, implemented 30 (junction order);
     B carries deployed 41; C carries 51. A `run=manual` root M carries 61."""
     model = {
-        'pipeline': {'id': 15, 'title': 'Queue', 'pipeline_status': 'active',
-                     'execution_mode': 'parallel'},
+        'pipeline': {'id': 15, 'title': 'Queue', 'pipeline_status': 'active'},
         'initiatives': [_initiative(150, pipeline_fk=15)],
         'epics': [_epic(1, 150, title='A'), _epic(2, 150, title='B'),
                   _epic(3, 150, title='C'), _epic(4, 150, title='M', run='manual')],
@@ -1192,8 +1167,7 @@ def test_launch_queue_is_a_pure_function_of_candidates_rows_and_requirements():
 
 def _paused_model(pipeline_status='active', initiative_statuses=(None, None)):
     return {
-        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': pipeline_status,
-                    'execution_mode': 'parallel'},
+        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': pipeline_status},
         'initiatives': [
             {**_initiative(90), 'initiative_status': initiative_statuses[0] or 'active'},
             {**_initiative(91), 'initiative_status': initiative_statuses[1] or 'active'},
@@ -1272,8 +1246,7 @@ def test_suppressed_by_names_both_reasons_when_both_fire():
 
 def _initiative_scoped_model_with_outgoing_edge():
     return {
-        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active',
-                    'execution_mode': 'parallel'},
+        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active'},
         'initiatives': [_initiative(90)],                    # ONLY the requested initiative
         'epics': [_epic(9001, 90)],               # ONLY that initiative's own epics
         'epic_requirements': [], 'requirements': [],
@@ -1309,132 +1282,28 @@ def test_whole_plan_read_still_reports_a_genuinely_dangling_dependency():
 
 
 # ---------------------------------------------------------------------------
-# Serial execution (gate delta, req #3388) — restated for 2.0
-#
-# The verification register has NO DRV-* entry for this at all (on any
-# requirement), which is a gap in the register, not evidence the work
-# belongs elsewhere — req #3349's own GATE DELTAS section names it
-# explicitly. See the module docstring's Scope section.
+# Execution mode is retired (req #3822) — every initiative runs at once
 # ---------------------------------------------------------------------------
 
-def _serial_model(execution_mode='serial'):
-    """Three initiatives in turn order 90 -> 91 -> 92. Initiative 90 holds no open work
-    (its turn is over), initiative 91 holds open work (live), initiative 92 too (waiting)."""
-    return {
-        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active',
-                    'execution_mode': execution_mode},
-        'initiatives': [_initiative(90, sort_order=1), _initiative(91, sort_order=2),
-                 _initiative(92, sort_order=3)],
-        'epics': [_epic(9001, 90), _epic(9101, 91), _epic(9201, 92)],
+def test_derive_plan2_carries_no_serial_block():
+    """No `serial` block, no `turn` suppression and no `serial-deadlock`
+    violation — even for a backward cross-initiative edge, which is ordinary
+    topology now that a plan has no initiative turn order."""
+    model = {
+        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active'},
+        'initiatives': [_initiative(90, sort_order=1), _initiative(91, sort_order=2)],
+        'epics': [_epic(9001, 90), _epic(9101, 91)],
         'epic_requirements': [{'epic_fk': 9001, 'requirement_fk': 1},
-                              {'epic_fk': 9101, 'requirement_fk': 2},
-                              {'epic_fk': 9201, 'requirement_fk': 3}],
-        'epic_deps': [],
-        'requirements': [_req(1, status='met'), _req(2, status='swarm_ready'),
-                         _req(3, status='swarm_ready')],
+                              {'epic_fk': 9101, 'requirement_fk': 2}],
+        'epic_deps': [{'id': 1, 'epic_fk': 9001, 'dep_epic_fk': 9101}],
+        'requirements': [_req(1, status='swarm_ready'), _req(2, status='swarm_ready')],
     }
-
-
-def test_serial_state_parallel_mode_holds_nothing():
-    model = _serial_model(execution_mode='parallel')
-    rows = deriv.build_plan_rows(model)
-    ordered = deriv.display_order(rows, model['initiatives'])
-    deriv.pause_state(model, ordered['rows'])
-    serial = deriv.serial_state(model, ordered['rows'], ordered['initiative_order'])
-    assert serial == {
-        'execution_mode': 'parallel', 'serial': False,
-        'initiative_order': [90, 91, 92], 'closed_initiative_ids': [90],
-        'live_initiative_id': 91, 'waiting_initiative_ids': [92], 'held_epic_ids': []}
-    by_id = {r['id']: r for r in ordered['rows']}
-    assert by_id[9201]['launch_suppressed'] is False
-
-
-def test_serial_state_serial_mode_holds_the_waiting_initiative():
-    model = _serial_model(execution_mode='serial')
-    rows = deriv.build_plan_rows(model)
-    ordered = deriv.display_order(rows, model['initiatives'])
-    deriv.pause_state(model, ordered['rows'])
-    serial = deriv.serial_state(model, ordered['rows'], ordered['initiative_order'])
-    assert serial['serial'] is True
-    assert serial['live_initiative_id'] == 91
-    assert serial['waiting_initiative_ids'] == [92]
-    assert serial['held_epic_ids'] == [9201]
-    by_id = {r['id']: r for r in ordered['rows']}
-    assert by_id[9201]['launch_suppressed'] is True
-    assert by_id[9201]['suppressed_by'] == ['turn']
-    # The LIVE initiative's own epic is untouched.
-    assert by_id[9101]['launch_suppressed'] is False
-    # A closed initiative's epic is never held either (it is behind, not ahead).
-    assert by_id[9001]['launch_suppressed'] is False
-
-
-def test_serial_state_absent_execution_mode_reads_as_parallel():
-    model = _serial_model(execution_mode=None)
-    del model['pipeline']['execution_mode']
-    rows = deriv.build_plan_rows(model)
-    ordered = deriv.display_order(rows, model['initiatives'])
-    serial = deriv.serial_state(model, ordered['rows'], ordered['initiative_order'])
-    assert serial['execution_mode'] == deriv.MODE_PARALLEL
-    assert serial['serial'] is False
-
-
-def test_turn_suppression_appends_to_pause_suppression():
-    """An epic held by BOTH a pause and a turn names both reasons — pause
-    runs first and `serial_state` appends rather than replaces."""
-    model = _serial_model(execution_mode='serial')
-    model['initiatives'][2] = {**model['initiatives'][2], 'initiative_status': 'paused'}   # initiative 92
-    rows = deriv.build_plan_rows(model)
-    ordered = deriv.display_order(rows, model['initiatives'])
-    deriv.pause_state(model, ordered['rows'])
-    deriv.serial_state(model, ordered['rows'], ordered['initiative_order'])
-    by_id = {r['id']: r for r in ordered['rows']}
-    assert by_id[9201]['suppressed_by'] == ['initiative', 'turn']
-
-
-def test_derive_plan2_carries_the_serial_block():
-    model = _serial_model(execution_mode='serial')
     plan = deriv.derive_plan2(model, now='2026-08-09T00:00:00Z')
-    assert plan['serial']['serial'] is True
-    assert plan['serial']['held_epic_ids'] == [9201]
-    row = next(r for r in plan['rows'] if r['id'] == 9201)
-    assert row['launch_suppressed'] is True
-    assert row['suppressed_by'] == ['turn']
-
-
-def test_forward_cross_initiative_edge_under_serial_is_not_a_deadlock():
-    """The ORDINARY case: a later initiative's epic depends on an earlier initiative's
-    epic. That is exactly how serial execution is meant to work and must
-    NOT be reported."""
-    model = _serial_model(execution_mode='serial')
-    model['epic_deps'] = [{'id': 1, 'epic_fk': 9101, 'dep_epic_fk': 9001}]
-    plan = deriv.derive_plan2(model, now='2026-08-09T00:00:00Z')
-    assert [v for v in plan['violations'] if v['invariant'] == 'serial-deadlock'] == []
-
-
-def test_backward_cross_initiative_edge_under_serial_is_a_loud_deadlock():
-    """The live initiative's epic depends on the WAITING initiative's epic — that
-    dependency can never be released (its initiative never goes live while this
-    one, blocked on it, never closes). Must be a LOUD violation."""
-    model = _serial_model(execution_mode='serial')
-    # 9101 (initiative 91, live) depends on 9201 (initiative 92, waiting) — backward.
-    model['epic_deps'] = [{'id': 1, 'epic_fk': 9101, 'dep_epic_fk': 9201}]
-    plan = deriv.derive_plan2(model, now='2026-08-09T00:00:00Z')
-    deadlocks = [v for v in plan['violations'] if v['invariant'] == 'serial-deadlock']
-    assert deadlocks and set(deadlocks[0]['epic_ids']) == {9101, 9201}
-    # req #3597 — still LOUD, but no longer called a deadlock: the depending
-    # epic launches ahead of its dependency, so the plan runs.
-    assert 'never be honoured as an ordering' in deadlocks[0]['message']
-    assert 'can never open' not in deadlocks[0]['message']
-
-
-def test_backward_edge_under_parallel_mode_is_not_a_deadlock():
-    """The same backward edge under `parallel` execution is ordinary
-    topology (already checked elsewhere) — serial-deadlock only applies
-    when a turn order actually exists to violate."""
-    model = _serial_model(execution_mode='parallel')
-    model['epic_deps'] = [{'id': 1, 'epic_fk': 9101, 'dep_epic_fk': 9201}]
-    plan = deriv.derive_plan2(model, now='2026-08-09T00:00:00Z')
-    assert [v for v in plan['violations'] if v['invariant'] == 'serial-deadlock'] == []
+    assert 'serial' not in plan
+    assert not hasattr(deriv, 'serial_state')
+    assert {v['invariant'] for v in plan['violations']} == set()
+    assert all(r['launch_suppressed'] is False and r['suppressed_by'] == []
+               for r in plan['rows'])
 
 
 # ---------------------------------------------------------------------------
