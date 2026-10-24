@@ -275,6 +275,24 @@ class TestStallEvidence:
         finally:
             owner('DELETE', '/darwin_dev/swarm_sessions', body={'id': session_id})
 
+    def test_a_session_stranded_at_starting_with_no_terminal_is_a_stall(
+            self, owner, plan, db_connection):
+        """req #3881 — guards the SELECT's terminal columns, whose failure would
+        otherwise only read as `stall_evidence: unavailable`."""
+        resp = owner('POST', '/darwin_dev/swarm_sessions', body={
+            'source_ref': f"requirement:{plan['req_a']}", 'swarm_status': 'starting',
+            'task_name': 'p2compose-stranded'})
+        assert resp['statusCode'] == 200, resp
+        session_id = int(extract_id(resp))
+        try:
+            assert self._row(owner, plan)['stall_req_ids'] == [plan['req_a']]
+            put = owner('PUT', '/darwin_dev/swarm_sessions', body=[{
+                'id': session_id, 'terminal_window_id': '23029', 'terminal_number': 4}])
+            assert put['statusCode'] == 200, put
+            assert self._row(owner, plan)['stall_req_ids'] == []
+        finally:
+            owner('DELETE', '/darwin_dev/swarm_sessions', body={'id': session_id})
+
     def test_an_open_primary_birth_record_is_not_a_stall(self, owner, plan):
         resp = owner('POST', '/darwin_dev/swarm_starts', body={
             'arguments': f"primary req#{plan['req_a']}"})
