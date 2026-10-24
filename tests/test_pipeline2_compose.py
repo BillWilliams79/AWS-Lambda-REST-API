@@ -55,6 +55,10 @@ def _purge(conn, creator):
     import pymysql as _pymysql
     try:
         with conn.cursor() as cur:
+            # req #3823 — `dep_initiative_fk` is RESTRICT, so a plan's
+            # initiative edges must go before its initiatives can.
+            cur.execute("DELETE FROM initiative_deps WHERE initiative_fk IN "
+                        "(SELECT id FROM initiatives WHERE creator_fk = %s)", (creator,))
             cur.execute("DELETE FROM epic_deps WHERE epic_fk IN "
                         "(SELECT id FROM epics WHERE creator_fk = %s)", (creator,))
             cur.execute("DELETE FROM epic_requirements WHERE epic_fk IN "
@@ -163,8 +167,10 @@ class TestWholePlanCompose:
         assert resp['statusCode'] == 200, resp
         body = json.loads(resp['body'])
 
-        assert set(body) == {'pipeline', 'initiatives', 'epics', 'epic_requirements',
-                             'epic_deps', 'requirements', 'derived'}
+        assert set(body) == {'pipeline', 'initiatives', 'initiative_deps', 'epics',
+                             'epic_requirements', 'epic_deps', 'requirements', 'derived'}
+        # req #3823 — the plan's initiative edges ride the same read; none here.
+        assert body['initiative_deps'] == []
         assert body['pipeline']['title'] == 'p2compose plan'
         assert body['pipeline']['epic_count'] == 3
         assert [s['title'] for s in body['epics']] == ['read service', 'tools', 'gate']

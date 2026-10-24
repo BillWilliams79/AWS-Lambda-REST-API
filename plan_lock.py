@@ -3,7 +3,7 @@
 `pipelines.locked`, `initiatives.locked` and `epics.locked` (migration
 20261019100448) say a plan-layer row may no longer be AUTHORED. This module is
 the one place that rule is enforced, and it sits at the gateway for the same
-reason the ownership registries do: the browser writes these five tables
+reason the ownership registries do: the browser writes these six tables
 directly through the generic PUT/POST/DELETE (`Darwin/src/Epics/epicsApi.js`,
 `Initiatives/initiativesApi.js`, `Pipelines/pipelinesApi.js`), so a check in darwin-mcp's
 services would cover one of the two writers. Lambda-Rest is the single DB
@@ -18,7 +18,8 @@ WHAT A LOCK FREEZES — structure AND authoring fields, cascading:
     state — the cascade is derived in one SELECT, never stored.
   * frozen: creating, deleting or moving a child (an initiative under the plan, a
     epic under the initiative); linking or unlinking a requirement; adding or
-    removing a dependency edge; and every authoring field — title,
+    removing a dependency edge (an epic's, or an initiative's — req #3823);
+    and every authoring field — title,
     description, notes, run, checkpoint, not_before, sort_order, category_fk,
     machine_fk, and the parent columns a move rewrites.
   * NOT frozen: the lock itself (so it can be lifted through the same call),
@@ -70,6 +71,11 @@ PLAN_LOCK = {
     'epic_deps': {
         'parent': ('epic_fk', 'epics'),
         'unlocked': frozenset()},
+    # req #3823 — an initiative-to-initiative edge is the WAITING initiative's
+    # structure, exactly as an epic edge is its epic's: frozen with it.
+    'initiative_deps': {
+        'parent': ('initiative_fk', 'initiatives'),
+        'unlocked': frozenset()},
 }
 
 _ALWAYS_WRITABLE = frozenset({'id', 'creator_fk'})
@@ -104,6 +110,11 @@ _CHAINS = {
         's',
         (('pipeline', 'p.id', 'p.locked'), ('initiative', 'e.id', 'e.locked'),
          ('epic', 's.id', 's.locked'))),
+    'initiative_deps': (
+        'initiative_deps t JOIN initiatives e ON e.id = t.initiative_fk '
+        'JOIN pipelines p ON p.id = e.pipeline_fk',
+        'e',
+        (('pipeline', 'p.id', 'p.locked'), ('initiative', 'e.id', 'e.locked'))),
 }
 
 

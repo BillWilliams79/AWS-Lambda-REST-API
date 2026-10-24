@@ -3,6 +3,7 @@ import json
 from rest_api_utils import (compose_rest_response, compose_conflict_response,
                             error_detail, integrity_errno, parent_reference_guard)
 from plan_lock import plan_lock_guard
+from initiative_deps_guard import initiative_deps_guard
 from classifier import varDump, pretty_print_sql
 from auth_utils import (CREATOR_FK_TABLES, PROFILE_TABLE, check_body_keys,
                         check_enum_blanks, force_column)
@@ -68,6 +69,14 @@ def rest_post(post_method, conn, database, table, body, authenticated_user=None)
     # locked epic. Answered 423 before the INSERT; see plan_lock.py.
     refusal = plan_lock_guard(conn, table, [body], authenticated_user,
                               post_method)
+    if refusal is not None:
+        return refusal
+
+    # req #3823 — an initiative dependency that can never be satisfied
+    # (self, cross-plan, or a cycle on the combined initiative + epic
+    # graph), or an epic edge contradicting one. See initiative_deps_guard.py.
+    refusal = initiative_deps_guard(conn, table, [body], authenticated_user,
+                                    post_method)
     if refusal is not None:
         return refusal
 
@@ -330,6 +339,14 @@ def _rest_post_bulk(post_method, conn, table, body_list, authenticated_user):
     # req #3649 — every item, for the same one-statement reason as above.
     refusal = plan_lock_guard(conn, table, body_list, authenticated_user,
                               post_method)
+    if refusal is not None:
+        return refusal
+
+    # req #3823 — an initiative dependency that can never be satisfied
+    # (self, cross-plan, or a cycle on the combined initiative + epic
+    # graph), or an epic edge contradicting one. See initiative_deps_guard.py.
+    refusal = initiative_deps_guard(conn, table, body_list, authenticated_user,
+                                    post_method)
     if refusal is not None:
         return refusal
 
