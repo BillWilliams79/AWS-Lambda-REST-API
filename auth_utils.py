@@ -336,6 +336,14 @@ JUNCTION_OWNERSHIP = {
         'scope': ('epic_fk', 'epics'),
         'verify': (('requirement_fk', 'requirements'),),
     },
+    # Req #3823 (migration 20261024111150) — an initiative-to-initiative edge
+    # belongs to the initiative that WAITS. `dep_initiative_fk` is verified for
+    # the same reason as `dep_epic_fk`: it is ON DELETE RESTRICT, so a
+    # cross-tenant edge would make somebody else's initiative undeletable.
+    'initiative_deps': {
+        'scope': ('initiative_fk', 'initiatives'),
+        'verify': (('dep_initiative_fk', 'initiatives'),),
+    },
 
     # Swarm log junctions. `requirement_sessions` is the one whose old,
     # deliberately-unscoped behaviour was pinned by a test

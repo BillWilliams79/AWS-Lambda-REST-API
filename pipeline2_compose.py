@@ -14,8 +14,12 @@ payload this emits is what those functions used to build by hand over six
 gateway round trips — byte-compatible, so a consumer cannot tell which
 produced it. That module is now a ONE-CALL passthrough to this route.
 
-    {pipeline, initiatives[], epics[], epic_requirements[], epic_deps[],
-     requirements[], derived{}}
+    {pipeline, initiatives[], initiative_deps[], epics[], epic_requirements[],
+     epic_deps[], requirements[], derived{}}
+
+`initiative_deps[]` (req #3823) is the WHOLE PLAN's initiative-to-initiative
+edges on both reads — a handful of rows, and the initiative-scoped
+derivation needs every one of them to walk the gate transitively.
 
 `pipeline2_derive.derive_plan2` (moved here from darwin-mcp by this same
 requirement — see that module's docstring) computes `derived`. A deriver
@@ -249,6 +253,7 @@ _EPIC_COLUMNS = ('id', 'initiative_fk', 'title', 'run', 'checkpoint', 'locked',
 # enforces it.
 _LINK_COLUMNS = ('epic_fk', 'requirement_fk')
 _DEP_COLUMNS = ('id', 'epic_fk', 'dep_epic_fk')
+_INITIATIVE_DEP_COLUMNS = ('id', 'initiative_fk', 'dep_initiative_fk')
 _REQUIREMENT_COLUMNS = ('id', 'title', 'requirement_status', 'coordination_type',
                         'ai_model', 'effort', 'machine_fk', 'tracking',
                         'started_at', 'completed_at', 'deferred_at')
@@ -281,6 +286,31 @@ def _select(cursor, columns, table, where, params, order_by=None):
 
 def _in_clause(n):
     return '(' + ','.join(['%s'] * n) + ')'
+
+
+def _initiative_deps(cursor, initiative_ids):
+    """The plan's initiative-to-initiative edges (req #3823): every edge whose
+    WAITING side is one of `initiative_ids`, already scoped by `creator_fk`
+    where they were read. One light SELECT; none for an empty plan."""
+    if not initiative_ids:
+        return []
+    return _select(cursor, _INITIATIVE_DEP_COLUMNS, 'initiative_deps',
+                   f"initiative_fk IN {_in_clause(len(initiative_ids))}",
+                   tuple(sorted(initiative_ids)),
+                   order_by='initiative_fk ASC, id ASC')
+
+
+def _upstream_initiatives(initiative_id, edges):
+    """Every initiative `initiative_id` waits for, transitively, over `edges`."""
+    deps = pipeline2_derive.initiative_dep_map(edges)
+    seen, stack = set(), list(deps.get(initiative_id) or [])
+    while stack:
+        dep = stack.pop()
+        if dep in seen or dep == initiative_id:
+            continue
+        seen.add(dep)
+        stack.extend(deps.get(dep) or [])
+    return sorted(seen)
 
 
 def _outside_seats(cursor, plan_graph, requirement_ids):
@@ -357,6 +387,8 @@ def compose_pipeline2(conn, pipeline_id, authenticated_user):
                         (pipeline_id, authenticated_user), order_by='id ASC')  # read 2
 
         epics = []
+        initiative_deps = _initiative_deps(
+            cursor, [e['id'] for e in initiatives])                           # read 2b
         if initiatives:
             initiative_ids = sorted(e['id'] for e in initiatives)
             epics = _select(
@@ -386,7 +418,8 @@ def compose_pipeline2(conn, pipeline_id, authenticated_user):
         evidence = _work_evidence(cursor, requirements, authenticated_user)
 
     model = {
-        'pipeline': pipeline, 'initiatives': initiatives, 'epics': epics,
+        'pipeline': pipeline, 'initiatives': initiatives,
+        'initiative_deps': initiative_deps, 'epics': epics,
         'epic_requirements': links, 'epic_deps': deps,
         'requirements': requirements, 'work_evidence': evidence,
     }
@@ -458,13 +491,21 @@ def compose_pipeline2_initiative(conn, initiative_id, authenticated_user):
                 f"id IN {_in_clause(len(requirement_ids))} AND creator_fk = %s",
                 tuple(requirement_ids) + (authenticated_user,), order_by='id ASC')  # read 6
 
+        plan_initiative_ids = [row['id'] for row in _select(
+            cursor, ('id',), 'initiatives', 'pipeline_fk = %s AND creator_fk = %s',
+            (pipeline['id'], authenticated_user))]                            # read 6b
+        initiative_deps = _initiative_deps(cursor, plan_initiative_ids)       # read 6c
+        upstream = _upstream_initiatives(initiative_id, initiative_deps)
         plan_graph = _plan_graph_outside_initiative(cursor, pipeline['id'], initiative_id,
-                                              authenticated_user)
+                                              authenticated_user, upstream)
+        plan_graph['initiative_ids'] = plan_initiative_ids
+        plan_graph['upstream_initiative_ids'] = upstream
         plan_graph['outside_seats'] = _outside_seats(cursor, plan_graph, requirement_ids)
         evidence = _work_evidence(cursor, requirements, authenticated_user)
 
     model = {
-        'pipeline': pipeline, 'initiatives': [initiative], 'epics': epics,
+        'pipeline': pipeline, 'initiatives': [initiative],
+        'initiative_deps': initiative_deps, 'epics': epics,
         'epic_requirements': links, 'epic_deps': deps,
         'requirements': requirements, 'plan_graph': plan_graph,
         'work_evidence': evidence,
@@ -475,14 +516,21 @@ def compose_pipeline2_initiative(conn, initiative_id, authenticated_user):
     return _bounded(f"pipeline2_compose_initiative/{initiative_id}", model, initiative_scoped=True)
 
 
-def _plan_graph_outside_initiative(cursor, pipeline_id, initiative_id, authenticated_user):
+def _plan_graph_outside_initiative(cursor, pipeline_id, initiative_id, authenticated_user,
+                                   upstream_initiative_ids=()):
     """The plan's epics OUTSIDE this initiative, as the derivation's checkpoint walk
     needs them (`pipeline2_derive.plan_graph_outside`). Reads 7-10, each
-    skipped when the one before it finds nothing."""
+    skipped when the one before it finds nothing.
+
+    req #3823 — every outside epic carries its `initiative_fk` (the combined
+    graph lifts epic edges to initiative edges), and the links and requirement
+    rows are read for the epics of every initiative this one WAITS FOR
+    (`upstream_initiative_ids`) as well as for the checkpoints, so the
+    initiative gate is answered by the same rule as a whole-plan read."""
     graph = {'epics': [], 'epic_deps': [], 'epic_requirements': [],
              'requirements': []}
     graph['epics'] = _select(
-        cursor, ('id', 'checkpoint'), 'epics',
+        cursor, ('id', 'initiative_fk', 'checkpoint'), 'epics',
         'initiative_fk IN (SELECT id FROM initiatives WHERE pipeline_fk = %s '
         'AND creator_fk = %s) AND initiative_fk <> %s AND creator_fk = %s',
         (pipeline_id, authenticated_user, initiative_id, authenticated_user),
@@ -496,9 +544,12 @@ def _plan_graph_outside_initiative(cursor, pipeline_id, initiative_id, authentic
                                  ids)                                         # read 8
     # Only a CHECKPOINT's open work matters to the walk (req #3649): a
     # non-checkpoint outside epic contributes its edges for traversal and
-    # nothing else, so its links are not read.
+    # nothing else, so its links are not read — unless its initiative is one
+    # this initiative waits for (req #3823), whose open work is the gate.
+    upstream = set(upstream_initiative_ids or ())
     checkpoint_ids = tuple(sorted(s['id'] for s in graph['epics']
-                                  if s.get('checkpoint')))
+                                  if s.get('checkpoint')
+                                  or s.get('initiative_fk') in upstream))
     if not checkpoint_ids:
         return graph
     graph['epic_requirements'] = _select(

@@ -554,14 +554,17 @@ def test_derive_plan2_shape_is_compact_ids_and_enums_only():
         'launch_queue',
         'violations', 'stall_evidence', 'cycle_detected', 'cycle_epic_ids',
         'duplicate_epic_ids', 'unresolved_req_ids', 'out_of_scope_dep_ids',
-        'requirement_counts'}
+        'requirement_counts', 'initiative_rows'}
+    for entry in plan['initiative_rows']:
+        assert set(entry) == {'id', 'dep_initiative_ids', 'holds_open_work',
+                              'initiative_blocked_by'}
     for entry in plan['launch_queue']:
         assert set(entry) == {'epic_id', 'requirement_id'}
     for row in plan['rows']:
         assert set(row) == {
             'id', 'run', 'checkpoint', 'locked', 'eligible', 'open_req_ids',
             'gate_open', 'launch_candidate', 'checkpoint_blocked_by',
-            'initiative_id', 'dep_ids',
+            'initiative_blocked_by', 'initiative_id', 'dep_ids',
             'out_of_scope_dep_ids', 'req_ids', 'gating_req_ids', 'not_before',
             'stall_req_ids',
             'tracking_req_ids', 'unresolved_req_ids', 'launch_req_ids',
@@ -1473,3 +1476,199 @@ def test_an_initiative_read_reports_a_seat_in_another_initiative():
     plan = deriv.derive_plan2(model, now='2026-08-09T00:00:00Z', initiative_scoped=True)
     seat = [v for v in plan['violations'] if v['invariant'] == 'one-epic-per-requirement']
     assert [(v['requirement_id'], v['epic_ids']) for v in seat] == [(5010, [9001, 9100])]
+
+
+# ---------------------------------------------------------------------------
+# req #3823 — initiative-to-initiative dependencies: a GATE, derived
+# ---------------------------------------------------------------------------
+
+def _initiative_dep_model(a_status='development', b_dep=True, c_dep=True,
+                          a_has_work=True):
+    """Three initiatives of one plan: A (10) with work in `a_status`, B (20)
+    waiting on A, C (30) waiting on B — each with one swarm_ready epic."""
+    model = {
+        'pipeline': {'id': 7, 'title': 'I', 'pipeline_status': 'active'},
+        'initiatives': [_initiative(10, pipeline_fk=7), _initiative(20, pipeline_fk=7),
+                        _initiative(30, pipeline_fk=7)],
+        'initiative_deps': [],
+        'epics': [_epic(1, 10), _epic(2, 20), _epic(3, 30)],
+        'epic_requirements': [{'epic_fk': 2, 'requirement_fk': 200},
+                              {'epic_fk': 3, 'requirement_fk': 300}],
+        'epic_deps': [],
+        'requirements': [_req(200, status='swarm_ready'), _req(300, status='swarm_ready')],
+    }
+    if a_has_work:
+        model['epic_requirements'].insert(0, {'epic_fk': 1, 'requirement_fk': 100})
+        model['requirements'].insert(0, _req(100, status=a_status))
+    if b_dep:
+        model['initiative_deps'].append({'id': 1, 'initiative_fk': 20, 'dep_initiative_fk': 10})
+    if c_dep:
+        model['initiative_deps'].append({'id': 2, 'initiative_fk': 30, 'dep_initiative_fk': 20})
+    return model
+
+
+def test_an_initiative_waits_while_its_dependency_holds_open_work():
+    plan = deriv.derive_plan2(_initiative_dep_model(), now=NOW)
+    rows = _rows(plan)
+    assert rows[2]['initiative_blocked_by'] == [10]
+    assert rows[2]['launch_candidate'] is False
+    assert rows[2]['gate_open'] is False
+    assert rows[2]['eligible'] is False
+    # A barrier is a different gate and is not named for it.
+    assert rows[2]['checkpoint_blocked_by'] == []
+    assert 2 not in plan['launch_candidate_epic_ids']
+    assert all(item['epic_id'] != 2 for item in plan['launch_queue'])
+
+
+def test_the_hold_is_transitive():
+    """C waits on B waits on A: C is held while A holds open work, even
+    though B (a clear middle link) holds only launch-ready work of its own
+    — B's own swarm_ready work IS open work, so it is named too."""
+    plan = deriv.derive_plan2(_initiative_dep_model(), now=NOW)
+    assert _rows(plan)[3]['initiative_blocked_by'] == [10, 20]
+
+
+def test_the_hold_releases_when_the_dependency_s_work_is_all_closed():
+    for terminal in ('met', 'deferred', 'wontfix'):
+        plan = deriv.derive_plan2(_initiative_dep_model(a_status=terminal, c_dep=False),
+                                  now=NOW)
+        row = _rows(plan)[2]
+        assert row['initiative_blocked_by'] == []
+        assert row['launch_candidate'] is True
+        assert {'epic_id': 2, 'requirement_id': 200} in plan['launch_queue']
+
+
+def test_an_initiative_holding_no_work_holds_nothing():
+    plan = deriv.derive_plan2(_initiative_dep_model(a_has_work=False, c_dep=False), now=NOW)
+    assert _rows(plan)[2]['initiative_blocked_by'] == []
+    assert _rows(plan)[2]['launch_candidate'] is True
+
+
+def test_a_paused_dependency_still_holds_its_dependents():
+    model = _initiative_dep_model(c_dep=False)
+    model['initiatives'][0]['initiative_status'] = 'paused'
+    plan = deriv.derive_plan2(model, now=NOW)
+    rows = _rows(plan)
+    assert rows[2]['initiative_blocked_by'] == [10]
+    assert rows[2]['launch_candidate'] is False
+    # ...and B itself is not suppressed — the pause is A's, the gate is B's.
+    assert rows[2]['launch_suppressed'] is False
+
+
+def test_initiative_rows_report_each_initiative_s_gate():
+    plan = deriv.derive_plan2(_initiative_dep_model(), now=NOW)
+    by_id = {r['id']: r for r in plan['initiative_rows']}
+    assert by_id[10] == {'id': 10, 'dep_initiative_ids': [], 'holds_open_work': True,
+                         'initiative_blocked_by': []}
+    assert by_id[20] == {'id': 20, 'dep_initiative_ids': [10], 'holds_open_work': True,
+                         'initiative_blocked_by': [10]}
+    assert by_id[30]['initiative_blocked_by'] == [10, 20]
+
+
+def test_an_epic_edge_contradicting_an_initiative_edge_is_a_violation():
+    """B waits on A, and an epic in A waits on an epic in B: under the default
+    barrier the two hold each other forever. The gateway refuses writing it;
+    whatever slips in another way is flagged here."""
+    model = _initiative_dep_model(c_dep=False)
+    model['epic_deps'].append({'id': 9, 'epic_fk': 1, 'dep_epic_fk': 2})
+    plan = deriv.derive_plan2(model, now=NOW)
+    cycles = [v for v in plan['violations'] if v['invariant'] == 'initiative-cycle']
+    assert len(cycles) == 1
+    assert cycles[0]['initiative_ids'] == [20]
+    assert cycles[0]['epic_ids'] == [1, 2]
+    assert cycles[0]['message'].startswith(
+        'initiative 20 -> epic 1 -> epic 2 -> initiative 20 wait for each other')
+
+
+def test_a_pure_initiative_cycle_and_a_dangling_edge_are_violations():
+    model = _initiative_dep_model(c_dep=False)
+    model['initiative_deps'].append({'id': 3, 'initiative_fk': 10, 'dep_initiative_fk': 20})
+    model['initiative_deps'].append({'id': 4, 'initiative_fk': 30, 'dep_initiative_fk': 999})
+    plan = deriv.derive_plan2(model, now=NOW)
+    kinds = sorted(v['invariant'] for v in plan['violations'])
+    assert kinds == ['dangling-initiative-dependency', 'initiative-cycle']
+    # The dangling target is unknowable and HOLDS — loudly, by the violation.
+    assert _rows(plan)[3]['initiative_blocked_by'] == [999]
+
+
+def test_epic_edges_crossing_initiatives_both_ways_are_legal_without_an_initiative_edge():
+    model = _initiative_dep_model(b_dep=False, c_dep=False)
+    model['epic_deps'] += [{'id': 8, 'epic_fk': 1, 'dep_epic_fk': 2},
+                           {'id': 9, 'epic_fk': 3, 'dep_epic_fk': 1}]
+    plan = deriv.derive_plan2(model, now=NOW)
+    assert [v for v in plan['violations'] if 'initiative' in v['invariant']] == []
+
+
+def test_epic_edges_crossing_initiatives_are_judged_epic_by_epic():
+    """Code review, req #3823: C waits for A, with a1 -> b1 and b2 -> c1. Lifted
+    to initiatives that is A -> B -> C -> A, but b1 and b2 are unrelated epics:
+    c1 waits for a1, a1 for b1, b1 for nothing — satisfiable, not a cycle."""
+    epics = {1: 10, 21: 20, 22: 20, 3: 30}             # a1, b1, b2, c1
+    adj = deriv.gate_graph([(30, 10)], [(1, 21), (22, 3)], epics)
+    assert deriv.initiative_edge_cycle(adj, 30, 10, epics) is None
+    # ...and when it IS the same epic of B, it is a cycle, named epic by epic.
+    adj = deriv.gate_graph([(30, 10)], [(1, 21), (21, 3)], epics)
+    assert deriv.gate_cycle_text(deriv.initiative_edge_cycle(adj, 30, 10, epics)) == (
+        'initiative 30 -> epic 1 -> epic 21 -> epic 3 -> initiative 30')
+
+
+def test_gate_path_needs_a_gate_when_asked():
+    epics = {1: 10, 2: 20}
+    # An epic cycle alone is the epic layer's concern, not an initiative deadlock.
+    adj = deriv.gate_graph([], [(1, 2), (2, 1)], epics)
+    assert deriv.gate_path(adj, [('e', 2)], ('e', 1)) == [('e', 2), ('e', 1)]
+    assert deriv.gate_path(adj, [('e', 2)], ('e', 1), need_gate=True) is None
+    # Through an initiative edge (20 waits for 10) it counts.
+    adj = deriv.gate_graph([(20, 10)], [], epics)
+    assert deriv.gate_path(adj, [('e', 2)], ('e', 1), need_gate=True) == [
+        ('e', 2), ('g', 20), ('e', 1)]
+
+
+def test_an_empty_initiative_still_carries_the_hold_through_a_cycle():
+    """The derivation walks THROUGH an initiative holding no work, so A waits
+    for E waits for A holds A forever — and the gate graph says so."""
+    epics = {1: 10}
+    adj = deriv.gate_graph([(10, 50), (50, 10)], [], epics)
+    assert deriv.initiative_edge_cycle(adj, 10, 50, epics) == [
+        ('g', 10), ('g', 50), ('g', 10)]
+
+
+def test_an_initiative_scoped_read_sees_the_dependency_s_open_work():
+    """The initiative-scoped compose reads the plan's initiative ids, every
+    initiative edge, and the links + statuses of the epics of each initiative
+    this one waits for — so the gate is the whole-plan read's answer."""
+    model = {
+        'pipeline': {'id': 7, 'title': 'I', 'pipeline_status': 'active'},
+        'initiatives': [_initiative(20, pipeline_fk=7)],
+        'initiative_deps': [{'id': 1, 'initiative_fk': 20, 'dep_initiative_fk': 10}],
+        'epics': [_epic(2, 20)],
+        'epic_requirements': [{'epic_fk': 2, 'requirement_fk': 200}],
+        'epic_deps': [],
+        'requirements': [_req(200, status='swarm_ready')],
+        'plan_graph': {
+            'initiative_ids': [10, 20],
+            'upstream_initiative_ids': [10],
+            'epics': [{'id': 1, 'initiative_fk': 10, 'checkpoint': 0}],
+            'epic_deps': [],
+            'epic_requirements': [{'epic_fk': 1, 'requirement_fk': 100}],
+            'requirements': [{'id': 100, 'requirement_status': 'development',
+                              'tracking': 0}],
+        },
+    }
+    plan = deriv.derive_plan2(model, now=NOW, initiative_scoped=True)
+    assert plan['rows'][0]['initiative_blocked_by'] == [10]
+    assert plan['rows'][0]['launch_candidate'] is False
+    assert plan['violations'] == []
+    model['plan_graph']['requirements'][0]['requirement_status'] = 'met'
+    plan = deriv.derive_plan2(model, now=NOW, initiative_scoped=True)
+    assert plan['rows'][0]['initiative_blocked_by'] == []
+    assert plan['rows'][0]['launch_candidate'] is True
+
+
+def test_an_edge_inside_one_initiative_can_close_a_gate_cycle():
+    """Delta review, req #3823: X={a,b}, V={p}, Y={v}; V waits for Y; b->p and
+    v->a. Adding a->b (inside X) closes a -> b -> p -> g(V) -> v -> a."""
+    epics = {10: 1, 11: 1, 20: 2, 30: 3}
+    adj = deriv.gate_graph([(2, 3)], [(11, 20), (30, 10), (10, 11)], epics)
+    assert deriv.gate_path(adj, [('e', 11)], ('e', 10), need_gate=True) == [
+        ('e', 11), ('e', 20), ('g', 2), ('e', 30), ('e', 10)]

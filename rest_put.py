@@ -3,6 +3,7 @@ import json
 from rest_api_utils import (compose_rest_response, compose_conflict_response,
                             error_detail, integrity_errno, parent_reference_guard)
 from plan_lock import plan_lock_guard
+from initiative_deps_guard import initiative_deps_guard
 from classifier import varDump, pretty_print_sql
 from auth_utils import (CREATOR_FK_TABLES, PROFILE_TABLE, body_column,
                         check_body_keys, check_enum_blanks, force_column,
@@ -88,6 +89,14 @@ def rest_put(put_method, conn, database, table, body_list, authenticated_user=No
         # split, while every body still carries its `id`. See plan_lock.py.
         refusal = plan_lock_guard(conn, table, body_list, authenticated_user,
                                   put_method)
+        if refusal is not None:
+            return refusal
+
+        # req #3823 — an initiative dependency that can never be satisfied
+        # (self, cross-plan, or a cycle on the combined initiative + epic
+        # graph), or an epic edge contradicting one. See initiative_deps_guard.py.
+        refusal = initiative_deps_guard(conn, table, body_list, authenticated_user,
+                                        put_method)
         if refusal is not None:
             return refusal
 

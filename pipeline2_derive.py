@@ -163,6 +163,33 @@ A dependency is CLEAR when that epic's `open_req_ids` is empty; a checkpoint
 HOLDS while its own is not. An epic holding nothing holds nothing — it never gates.
 Answered fresh from requirement statuses on every read, nothing here can go
 stale when a requirement is added to an epic later; a stored "done" could.
+
+## AN INITIATIVE CAN WAIT FOR AN INITIATIVE (req #3823)
+
+`initiative_deps` says "initiative B waits for ALL of initiative A": no epic
+under B is announced while any epic under A holds open work. It is a GATE,
+not a launch priority — an epic edge is a priority (req #3597) because a free
+slot is worth more than the order, but an initiative edge exists precisely to
+say "wait", so a free slot does not override it. Transitive (C waits on B
+waits on A holds C while A or B holds open work), derived on every read from
+the same `open_req_ids` the barrier reads, and indifferent to pause (a paused
+initiative with open work still holds its dependents). An initiative that
+holds no work holds nothing. `initiative_blocked_by` names the holders on
+each row, kept apart from `checkpoint_blocked_by` so a reader can say which
+gate holds.
+
+THE COMBINED-GRAPH RULE. An initiative edge and the epic edges can contradict
+each other: B waits for A while an epic in A waits on an epic in B holds both
+forever under the default barrier. The test is made at EPIC granularity, on
+the gate graph (`gate_graph`): every epic waits on its initiative's gate, and
+an initiative edge sends that gate to every epic of the initiative waited on
+(and on to that initiative's own gate — the hold is transitive). A cycle
+through a gate is a real deadlock; lifting epic edges to initiative pairs
+would refuse plans that are satisfiable. The gateway REFUSES such a cycle
+when either edge is written (`initiative_deps_guard.py`); anything that slips
+in another way — an epic or initiative moved under existing edges — is
+FLAGGED here as an `initiative-cycle` violation. `gate_graph` / `gate_path`
+are the one implementation both use.
 """
 
 import re
@@ -178,6 +205,10 @@ __all__ = [
     'pause_state', 'requirement_counts', 'derive_plan2',
     'LIVE_SESSION_STATUSES', 'PRIMARY_START_TAG', 'STALL_GRACE_SECONDS',
     'work_evidence', 'stall_requirement_ids', 'seat_violations',
+    'initiative_dep_map', 'initiative_open_work', 'open_initiatives_upstream',
+    'plan_graph_initiative_open',
+    'gate_graph', 'gate_path', 'initiative_edge_cycle', 'gate_cycle_text',
+    'initiative_violations',
 ]
 
 # Requirement statuses that are no longer open work. Byte-identical to
@@ -825,7 +856,8 @@ def _gates_open(row, by_id, now):
     every predicate built on the gate honours it, not only candidacy.
     """
     return (_deps_clear(row, by_id) and _time_gate_passed(row, now)
-            and not _checkpoint_blockers(row, by_id))
+            and not _checkpoint_blockers(row, by_id)
+            and not (row or {}).get('_initiative_blockers'))
 
 
 def eligibility(row, by_id, now=None):
@@ -912,6 +944,34 @@ def plan_graph_outside(model, by_id):
     return outside
 
 
+def plan_graph_initiative_open(model, by_id):
+    """`{initiative_id: bool}` for the plan's initiatives an INITIATIVE-scoped
+    read does not carry but an initiative edge reaches (req #3823): the
+    compose names them in `plan_graph.upstream_initiative_ids` and reads
+    their epics' links and requirement rows, so their open work is computed
+    here by the rule applied inside the read. Empty for a whole-plan model,
+    which carries every epic as a row."""
+    graph = (model or {}).get('plan_graph') or {}
+    upstream = set(graph.get('upstream_initiative_ids') or [])
+    if not upstream:
+        return {}
+    reqs_by_id = _index_by_id(graph.get('requirements'))
+    links = {}
+    for link in graph.get('epic_requirements') or []:
+        links.setdefault(link['epic_fk'], []).append(link['requirement_fk'])
+    open_by = {iid: False for iid in upstream}
+    for epic in graph.get('epics') or []:
+        iid = epic.get('initiative_fk')
+        if epic['id'] in by_id or iid not in upstream:
+            continue
+        req_ids = links.get(epic['id'], [])
+        tracking_ids = [r for r in req_ids
+                        if is_tracking_requirement(reqs_by_id.get(r))]
+        if open_requirement_ids(req_ids, tracking_ids, reqs_by_id):
+            open_by[iid] = True
+    return open_by
+
+
 def open_checkpoints_upstream(row, by_id, outside=None):
     """Every CHECKPOINT this row depends on, directly or transitively, that
     still holds open work — in id order. Empty means no checkpoint holds it.
@@ -965,7 +1025,7 @@ def launch_candidacy(row, by_id=None, now=None):
     gate-open candidates first (`launch_candidate_epic_ids` carries that
     order) and then cascades down the dependency chain.
 
-    THREE CONJUNCTS:
+    FOUR CONJUNCTS:
 
     * At least one `launch_req_ids` entry — only `swarm_ready`, non-tracking
       work is ever launch-ready (rule 8, req #3360). An epic with nothing to
@@ -975,8 +1035,10 @@ def launch_candidacy(row, by_id=None, now=None):
     * No CHECKPOINT upstream is still open (`open_checkpoints_upstream`). A
       checkpoint epic — `epics.checkpoint`, ON by default (req
       #3649) — holds everything downstream of it while it holds open work,
-      the one dependency that stays a gate; an epic with the flag OFF is a launch
-      priority and nothing more.
+      the one EPIC dependency that stays a gate; an epic with the flag OFF is a
+      launch priority and nothing more.
+    * No initiative its initiative waits for (`initiative_deps`, req #3823),
+      directly or transitively, still holds open work.
 
     Pause is NOT a conjunct here, exactly as it is
     not a conjunct of `eligible`: it is SUPPRESSION, carried separately on
@@ -989,6 +1051,10 @@ def launch_candidacy(row, by_id=None, now=None):
     if not (row.get('launch_req_ids') or []):
         return False
     if not _time_gate_passed(row, now):
+        return False
+    # req #3823 — an initiative this epic's initiative waits for still holds
+    # open work. A gate, like the barrier: no free slot overrides it.
+    if (row or {}).get('_initiative_blockers'):
         return False
     return not _checkpoint_blockers(row, by_id)
 
@@ -1033,6 +1099,188 @@ def launch_queue(candidate_ids, by_id, reqs_by_id):
             _id_sort_key(rid)))
         queue.extend({'epic_id': epic_id, 'requirement_id': rid} for rid in ids)
     return queue
+
+
+# ---------------------------------------------------------------------------
+# Initiative-to-initiative dependencies (req #3823) — a gate, derived
+# ---------------------------------------------------------------------------
+
+def initiative_dep_map(edges):
+    """`{initiative_id: [dep_initiative_id, ...]}` from `initiative_deps` rows,
+    each list in row order with duplicates dropped."""
+    deps = {}
+    for edge in edges or []:
+        waiter, dep = edge.get('initiative_fk'), edge.get('dep_initiative_fk')
+        if waiter is None or dep is None:
+            continue
+        bucket = deps.setdefault(waiter, [])
+        if dep not in bucket:
+            bucket.append(dep)
+    return deps
+
+
+def initiative_open_work(rows, outside_open=None):
+    """`{initiative_id: bool}` — does any epic under the initiative hold open
+    work? Read from the rows' `open_req_ids` (the one fact, req #3750) and,
+    for the initiatives an initiative-scoped read does not carry, from
+    `outside_open` (`plan_graph_initiative_open`). An initiative with no epics
+    holds nothing and is simply absent here; `known` membership is the
+    caller's to judge."""
+    open_by = dict(outside_open or {})
+    for row in rows or []:
+        iid = row.get('initiative_id')
+        if iid is None:
+            continue
+        open_by[iid] = open_by.get(iid, False) or bool(row.get('open_req_ids'))
+    return open_by
+
+
+def open_initiatives_upstream(initiative_id, deps, open_by, known):
+    """Every initiative `initiative_id` waits for, directly or transitively,
+    that still holds open work — in id order. Empty means nothing holds it.
+
+    The walk goes THROUGH every upstream initiative, open or not, so a clear
+    middle link does not release what an open one further up still holds
+    (C -> B -> A: C waits while A holds work even when B holds none). An
+    upstream id outside `known` (the plan's initiatives) is unknowable — a
+    dangling edge the gateway should never have let in — and HOLDS: this is a
+    gate, and holding is the recoverable direction; `initiative_violations`
+    reports it. A `visited` set makes a cycle terminate."""
+    blockers, visited = set(), set()
+    stack = list(deps.get(initiative_id) or [])
+    while stack:
+        dep = stack.pop()
+        if dep in visited:
+            continue
+        visited.add(dep)
+        if dep not in known or open_by.get(dep):
+            blockers.add(dep)
+        stack.extend(deps.get(dep) or [])
+    return sorted(blockers, key=_id_sort_key)
+
+
+def gate_graph(initiative_edges, epic_edges, epic_initiative):
+    """THE GATE GRAPH (req #3823) — what an initiative edge MEANS, at the
+    granularity it is enforced at: the epic.
+
+    Nodes are epics `('e', id)` and one GATE per initiative `('g', id)` —
+    "everything this initiative's epics wait for". Every epic waits on its own
+    initiative's gate (`e -> g(X)`); an epic edge is itself (`a -> b`); an
+    initiative edge X waits for Y is `g(X) -> e` for every epic of Y, and
+    `g(X) -> g(Y)` because the hold is transitive (the derivation walks THROUGH
+    Y to whatever Y waits for, epics or none). A cycle through a gate node is a
+    deadlock the derivation would really hold forever; a cycle of epic edges
+    alone is the epic layer's own concern (`set_epic_deps`, `verify_order`).
+
+    Lifting epic edges to initiative pairs instead — the first cut — refused
+    satisfiable plans: with C waits for A, `a1 -> b1` and `b2 -> c1` lift to
+    A -> B -> C -> A, yet b1 and b2 are unrelated epics and nothing waits
+    forever (code review, req #3823).
+
+    `initiative_edges` are `(waiter, waited-on)` initiative pairs,
+    `epic_edges` `(waiter, waited-on)` epic pairs, `epic_initiative` maps every
+    epic of the plan to its initiative. Returns `{node: [successor, ...]}`,
+    successors in a fixed order so a walk is deterministic."""
+    adj = {}
+    epics_of = {}
+    for eid, iid in (epic_initiative or {}).items():
+        if iid is None:
+            continue
+        epics_of.setdefault(iid, []).append(eid)
+        adj.setdefault(('e', eid), []).append(('g', iid))
+    for a, b in epic_edges or []:
+        adj.setdefault(('e', a), []).append(('e', b))
+    for x, y in initiative_edges or []:
+        succ = adj.setdefault(('g', x), [])
+        succ.append(('g', y))
+        succ.extend(('e', eid) for eid in epics_of.get(y, []))
+    for succ in adj.values():
+        succ.sort(key=lambda n: (n[0], _id_sort_key(n[1])))
+    return adj
+
+
+def gate_path(adj, starts, target, need_gate=False):
+    """The shortest path from any of `starts` to `target` in `gate_graph`
+    output, as a node list, or None. `need_gate`: only a path that leaves a
+    gate node somewhere counts — what makes a cycle through a new EPIC edge an
+    initiative deadlock rather than a plain epic cycle. Breadth-first over
+    (node, left-a-gate) states, so the answer is deterministic."""
+    queue, parent = [], {}
+    for node in starts:
+        state = (node, False)
+        if state not in parent:
+            parent[state] = None
+            queue.append(state)
+    while queue:
+        state = queue.pop(0)
+        node, used = state
+        if node == target and (used or not need_gate):
+            path, cursor = [], state
+            while cursor is not None:
+                path.append(cursor[0])
+                cursor = parent[cursor]
+            return list(reversed(path))
+        for nxt in adj.get(node, ()):
+            nstate = (nxt, used or node[0] == 'g')
+            if nstate not in parent:
+                parent[nstate] = state
+                queue.append(nstate)
+    return None
+
+
+def initiative_edge_cycle(adj, waiter, dep, epic_initiative):
+    """The cycle an initiative edge `waiter` waits for `dep` closes, as a node
+    list from `g(waiter)` back to it — or None. Walks from what the edge
+    points at (`dep`'s gate and its epics) back to `waiter`'s gate."""
+    starts = [('g', dep)] + sorted(
+        (('e', e) for e, i in (epic_initiative or {}).items() if i == dep),
+        key=lambda n: _id_sort_key(n[1]))
+    back = gate_path(adj, starts, ('g', waiter))
+    return None if back is None else [('g', waiter)] + back
+
+
+def gate_cycle_text(path):
+    """A gate-graph cycle in words: `initiative 3 -> epic 9 -> epic 4 -> initiative 3`."""
+    return ' -> '.join(('initiative %s' if kind == 'g' else 'epic %s') % nid
+                       for kind, nid in path)
+
+
+def initiative_violations(initiative_edges, epic_edges, epic_initiative, known):
+    """`initiative-cycle` (an initiative edge on a cycle of the gate graph —
+    epics held forever) and `dangling-initiative-dependency` (an edge naming an
+    initiative outside this plan) — what slipped past the gateway's refusal.
+    One violation per distinct cycle; `initiative_ids` and `epic_ids` name the
+    initiatives and epics on it."""
+    violations, seen = [], set()
+    adj = gate_graph(initiative_edges, epic_edges, epic_initiative)
+    for waiter, dep in initiative_edges or []:
+        if dep not in known or waiter not in known:
+            violations.append({
+                'invariant': 'dangling-initiative-dependency', 'epic_ids': [],
+                'initiative_ids': [waiter, dep],
+                'message': (f"initiative {waiter} waits for initiative {dep}, which "
+                            "is not in this plan — it holds until the edge is removed"),
+            })
+            continue
+        cycle = initiative_edge_cycle(adj, waiter, dep, epic_initiative)
+        if cycle is None:
+            continue
+        key = frozenset(cycle)
+        if key in seen:
+            continue
+        seen.add(key)
+        initiative_ids, epic_ids = [], []
+        for kind, nid in cycle:
+            bucket = initiative_ids if kind == 'g' else epic_ids
+            if nid not in bucket:
+                bucket.append(nid)
+        violations.append({
+            'invariant': 'initiative-cycle', 'epic_ids': epic_ids,
+            'initiative_ids': initiative_ids,
+            'message': (f"{gate_cycle_text(cycle)} wait for each other — every epic "
+                        "on it is held until an edge is removed"),
+        })
+    return violations
 
 
 # ---------------------------------------------------------------------------
@@ -1337,6 +1585,52 @@ def _public_time(value):
 # The whole derivation, in one call
 # ---------------------------------------------------------------------------
 
+def _initiative_gate(model, rows, by_id):
+    """The initiative gate for one read (req #3823): `{blocked_by, rows,
+    violations}` — `blocked_by` per initiative id, the per-initiative rows the
+    payload carries, and the combined-graph violations.
+
+    The plan's initiatives are `model['initiatives']` plus, on an
+    initiative-scoped read, `plan_graph.initiative_ids` (the compose reads the
+    plan's ids so a dependency on another initiative is KNOWN, not dangling).
+    `model['initiative_deps']` is the whole plan's edges on both reads; the
+    epic edges the gate graph adds are this read's own plus, scoped, the
+    plan graph's (each outside epic carrying its `initiative_fk`)."""
+    graph = (model or {}).get('plan_graph') or {}
+    edges_rows = model.get('initiative_deps') or []
+    deps = initiative_dep_map(edges_rows)
+    known = {i.get('id') for i in model.get('initiatives') or []}
+    known |= set(graph.get('initiative_ids') or [])
+    open_by = initiative_open_work(rows, plan_graph_initiative_open(model, by_id))
+
+    waiting = set(deps)
+    blocked_by = {iid: open_initiatives_upstream(iid, deps, open_by, known)
+                  for iid in waiting}
+
+    initiative_of = {row['id']: row.get('initiative_id') for row in rows}
+    for epic in graph.get('epics') or []:
+        initiative_of.setdefault(epic['id'], epic.get('initiative_fk'))
+    epic_edges = sorted({(d.get('epic_fk'), d.get('dep_epic_fk'))
+                         for d in list(model.get('epic_deps') or [])
+                         + list(graph.get('epic_deps') or [])
+                         if d.get('epic_fk') is not None and d.get('dep_epic_fk') is not None},
+                        key=lambda e: (_id_sort_key(e[0]), _id_sort_key(e[1])))
+    initiative_edges = [(waiter, dep) for waiter, targets in deps.items()
+                        for dep in targets]
+    violations = initiative_violations(initiative_edges, epic_edges, initiative_of, known)
+
+    out_rows = []
+    for initiative in model.get('initiatives') or []:
+        iid = initiative.get('id')
+        out_rows.append({
+            'id': iid,
+            'dep_initiative_ids': list(deps.get(iid) or []),
+            'holds_open_work': bool(open_by.get(iid)),
+            'initiative_blocked_by': blocked_by.get(iid, []),
+        })
+    return {'blocked_by': blocked_by, 'rows': out_rows, 'violations': violations}
+
+
 def derive_plan2(model, now=None, initiative_scoped=False):
     """Everything this requirement derives from one composed 2.0 payload:
     derive -> order -> check. Pure CPU over rows the composed read already
@@ -1389,6 +1683,12 @@ def derive_plan2(model, now=None, initiative_scoped=False):
     for row in rows:
         row['_checkpoint_blockers'] = open_checkpoints_upstream(row, by_id,
                                                                 outside)
+    # req #3823 — the initiative gate, one walk per initiative, cached on each
+    # row before any predicate reads it (`_gates_open`, `launch_candidacy`).
+    initiative_gate = _initiative_gate(model, rows, by_id)
+    for row in rows:
+        row['_initiative_blockers'] = initiative_gate['blocked_by'].get(
+            row['initiative_id'], [])
     eligible_ids = [row['id'] for row in rows if eligibility(row, by_id, now)]
     eligible_set = set(eligible_ids)
     # req #3597 — the gate as a REPORT, and launch candidacy past it. The
@@ -1405,6 +1705,8 @@ def derive_plan2(model, now=None, initiative_scoped=False):
     queue = launch_queue(candidate_ids, by_id,
                          _index_by_id(model.get('requirements')))
     out_of_scope_set = set(out_of_scope_dep_ids)
+
+    violations = violations + initiative_gate['violations']
 
     unresolved = []
     for row in rows:
@@ -1438,6 +1740,11 @@ def derive_plan2(model, now=None, initiative_scoped=False):
             # work (req #3649: the flag, on by default). Non-empty means this
             # epic's work is NOT announced until they are.
             'checkpoint_blocked_by': row['_checkpoint_blockers'],
+            # req #3823 — the initiatives this epic's initiative waits for
+            # (transitively) that still hold open work. Non-empty means this
+            # epic's work is NOT announced until they hold none. Kept apart
+            # from `checkpoint_blocked_by`: a different gate, named apart.
+            'initiative_blocked_by': row['_initiative_blockers'],
             'initiative_id': row['initiative_id'],
             'dep_ids': row['dep_ids'],
             # Which of THIS row's own deps are out of scope (a subset of
@@ -1464,6 +1771,11 @@ def derive_plan2(model, now=None, initiative_scoped=False):
             'suppressed_by': row['suppressed_by'],
         } for row in rows],
         'pause': pause,
+        # req #3823 — one entry per initiative this read carries, in id
+        # order: the initiatives it waits for, whether it holds
+        # open work itself (so it holds its own dependents), and the ones
+        # holding it now.
+        'initiative_rows': initiative_gate['rows'],
         'eligible_epic_ids': eligible_ids,
         # req #3597 — every launch candidate, in launch PRIORITY order
         # (gate-open first, then display order), NOT display order.
