@@ -1206,18 +1206,42 @@ def _named_requirement_ids(arguments):
     return found
 
 
+def _is_stranded_start(session):
+    """A `starting` session that never reached a terminal (req #3881).
+
+    `/swarm-start` writes the session row at `starting` and the worker's
+    terminal is stamped once it is running. A launch that dies in `checkout`
+    leaves the row at `starting` with BOTH terminal columns null, still linked
+    to its requirement and with no terminal status — a LIVE status, so counting
+    it as work meant the requirement was never stalled and nothing anywhere told
+    a person. Only the composing route's row dicts can say so; a bare
+    `source_ref` string carries no terminal and counts as work, as it always did.
+    A fresh launch is also terminal-less for a moment: `STALL_GRACE_SECONDS`
+    covers that, as it covers every requirement just written to `development`."""
+    if not isinstance(session, dict):
+        return False
+    return (session.get('swarm_status') == 'starting'
+            and session.get('terminal_window_id') in (None, '')
+            and session.get('terminal_number') is None)
+
+
 def work_evidence(session_refs, start_rows):
     """`{live_req_ids, primary_req_ids}` from the rows the composing route read.
 
-    `session_refs` are the `source_ref` values of LIVE sessions. `start_rows`
+    `session_refs` are the LIVE sessions — each a `source_ref` string, or a row
+    dict (`source_ref`, `swarm_status`, `terminal_window_id`, `terminal_number`)
+    from which a session stranded at `starting` with no terminal is dropped
+    (req #3881: it is not work evidence). `start_rows`
     are `swarm_starts` rows (`id`, `arguments`, `linked_session_count`) — every
     primary birth record and every row after the oldest of them. A primary
     record is OPEN while no session is linked to it and no LATER start names
     its requirement (`pipeline_regression.open_primary_requirement_ids`, req
     #3290: the closeout's link is best-effort, so a later launch also retires
     it)."""
-    live = sorted({rid for rid in (_session_requirement_id(r) for r in session_refs or ())
-                   if rid is not None})
+    live = sorted({rid for rid in (
+        _session_requirement_id(r.get('source_ref') if isinstance(r, dict) else r)
+        for r in session_refs or () if not _is_stranded_start(r))
+        if rid is not None})
     rows = [r for r in start_rows or () if isinstance(r, dict) and isinstance(r.get('id'), int)]
     primary = set()
     for row in rows:

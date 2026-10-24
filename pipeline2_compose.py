@@ -315,7 +315,8 @@ def _work_evidence(cursor, requirements, authenticated_user):
     statuses = pipeline2_derive.LIVE_SESSION_STATUSES
     try:
         sessions = _select(
-            cursor, ('source_ref',), 'swarm_sessions',
+            cursor, ('source_ref', 'swarm_status', 'terminal_window_id', 'terminal_number'),
+            'swarm_sessions',
             f"creator_fk = %s AND swarm_status IN {_in_clause(len(statuses))} "
             f"AND source_ref IN {_in_clause(len(refs))}",
             (authenticated_user,) + tuple(statuses) + tuple(refs))
@@ -333,7 +334,7 @@ def _work_evidence(cursor, requirements, authenticated_user):
     except pymysql.Error as e:
         print(f"pipeline2_compose work evidence read failed: {e}")
         return None
-    return pipeline2_derive.work_evidence([r.get('source_ref') for r in sessions], starts)
+    return pipeline2_derive.work_evidence(sessions, starts)
 
 
 # ---------------------------------------------------------------------------

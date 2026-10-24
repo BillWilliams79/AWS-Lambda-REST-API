@@ -1418,6 +1418,33 @@ def test_work_evidence_retires_a_primary_record_by_link_or_later_launch():
     assert evidence == {'live_req_ids': [7], 'primary_req_ids': [5010]}
 
 
+def test_a_session_stranded_at_starting_with_no_terminal_is_not_work_evidence():
+    """req #3881: a launch that died in `checkout` leaves a `starting` row with
+    no terminal; it must not hide its requirement from `stall_req_ids`."""
+    def sess(rid, status, window=None, number=None):
+        return {'source_ref': 'requirement:%d' % rid, 'swarm_status': status,
+                'terminal_window_id': window, 'terminal_number': number}
+    starts = []
+    sessions = [
+        sess(1, 'starting'),                      # stranded -> not work
+        sess(2, 'starting', window=''),           # blank window id is null too
+        sess(3, 'starting', window='23029'),      # has a window -> work
+        sess(4, 'starting', number=4),            # has a number -> work
+        sess(5, 'active'),                        # past starting, no terminal -> work
+        sess(6, 'waiting'),
+        sess(7, 'starting'), sess(7, 'active'),   # one real session still counts
+    ]
+    assert deriv.work_evidence(sessions, starts)['live_req_ids'] == [3, 4, 5, 6, 7]
+
+
+def test_a_requirement_stranded_at_starting_is_stalled():
+    stranded = [{'source_ref': 'requirement:5010', 'swarm_status': 'starting',
+                 'terminal_window_id': None, 'terminal_number': None}]
+    evidence = deriv.work_evidence(stranded, [])
+    plan = deriv.derive_plan2(_stall_model(evidence=evidence), now='2026-08-09T01:00:00Z')
+    assert _rows(plan)[9001]['stall_req_ids'] == [5010]
+
+
 def test_a_requirement_on_two_epics_is_a_violation():
     model = _basic_model()
     model['epic_requirements'].append({'epic_fk': 9002, 'requirement_fk': 5010})
