@@ -247,12 +247,14 @@ PAUSED_STATUS = 'paused'
 # ---------------------------------------------------------------------------
 # Stall evidence (req #3757) — "is anybody working this?", answered HERE so the
 # engine computes nothing about the plan (rule R1, `memory/engine-rules.md`).
-# The predicate is `scripts/swarm/pipeline_regression.worked_requirement_ids`
-# (req #3290) restated over rows the composing route reads in the same
-# invocation: a live session names the requirement in `source_ref`, or an
-# OPEN primary birth record does. The two are kept apart there for a
-# diagnostic; here only their union matters, because a requirement either
-# of them covers is not stalled.
+# THIS IS THE ONE STALL PREDICATE (req #3898): the engine and
+# `scripts/swarm/status_report.py` both read `stall_req_ids` and judge nothing
+# themselves — the client-side copy in `pipeline_regression.py` was deleted
+# because the MCP session list it was fed omits the terminal columns (req
+# #3881). Over rows the composing route reads in the same invocation: a live
+# session names the requirement in `source_ref`, or an OPEN primary birth
+# record does (req #3290 — the Primary executes work under a birth record and
+# no session). Either kind of evidence covers a requirement.
 # ---------------------------------------------------------------------------
 
 # Every swarm session status that is NOT finished. Same list as
@@ -262,7 +264,7 @@ LIVE_SESSION_STATUSES = ('starting', 'waiting', 'planning', 'active', 'review',
 
 # The tag `primary-start-record.sh` writes into `swarm_starts.arguments` for a
 # `/primary-ai-swarm-start` birth record — the only mark of primary-executed
-# work (`pipeline_regression.PRIMARY_START_TAG`).
+# work.
 PRIMARY_START_TAG = 'primary req#'
 
 # How long a requirement must have been in `development` before nobody working
@@ -1414,7 +1416,7 @@ def requirement_counts(model):
 # ---------------------------------------------------------------------------
 
 def _session_requirement_id(source_ref):
-    """`requirement:<id>` -> id, else None (`pipeline_regression.session_requirement_id`)."""
+    """`requirement:<id>` -> id, else None — the `source_ref` shape `/swarm-start` writes."""
     if not isinstance(source_ref, str) or not source_ref.startswith('requirement:'):
         return None
     try:
@@ -1425,7 +1427,7 @@ def _session_requirement_id(source_ref):
 
 def _primary_requirement_id(arguments):
     """The requirement a primary birth record is for; None for a worker launch
-    or an unreadable id (`pipeline_regression.primary_start_requirement_id`)."""
+    or an unreadable id."""
     if not isinstance(arguments, str):
         return None
     text = arguments.strip()
@@ -1483,9 +1485,8 @@ def work_evidence(session_refs, start_rows):
     are `swarm_starts` rows (`id`, `arguments`, `linked_session_count`) — every
     primary birth record and every row after the oldest of them. A primary
     record is OPEN while no session is linked to it and no LATER start names
-    its requirement (`pipeline_regression.open_primary_requirement_ids`, req
-    #3290: the closeout's link is best-effort, so a later launch also retires
-    it)."""
+    its requirement (req #3290: the closeout's link is best-effort, so a later
+    launch also retires it)."""
     live = sorted({rid for rid in (
         _session_requirement_id(r.get('source_ref') if isinstance(r, dict) else r)
         for r in session_refs or () if not _is_stranded_start(r))
