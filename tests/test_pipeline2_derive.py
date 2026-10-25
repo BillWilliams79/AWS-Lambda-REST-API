@@ -1226,6 +1226,33 @@ def test_whole_plan_pause_suppresses_every_initiatives_epics():
     assert by_id[9101]['suppressed_by'] == ['pipeline']
 
 
+# req #3804 — a CLOSED plan is parked: every epic suppressed, `closed` first.
+def test_closed_plan_suppresses_every_epic_and_queues_nothing():
+    model = _paused_model()
+    model['pipeline']['closed'] = 1
+    plan = deriv.derive_plan2(model, now='2026-08-09T00:00:00Z')
+    assert plan['pause']['pipeline_closed'] is True
+    assert plan['pause']['pipeline_paused'] is False
+    assert set(plan['pause']['suppressed_epic_ids']) == {9001, 9101}
+    assert all(r['suppressed_by'] == ['closed'] for r in plan['rows'])
+    assert plan['launch_queue'] == []
+    # eligibility is untouched, as for a pause (DRV-016)
+    assert set(plan['eligible_epic_ids']) == {9001, 9101}
+
+
+def test_closed_reads_the_flag_not_its_spelling():
+    for value, closed in ((0, False), ('0', False), (None, False), ('', False),
+                          (1, True), ('1', True), (True, True)):
+        model = _paused_model(pipeline_status='paused')
+        model['pipeline']['closed'] = value
+        rows = deriv.build_plan_rows(model)
+        ordered = deriv.display_order(rows, model['initiatives'])
+        pause = deriv.pause_state(model, ordered['rows'])
+        assert pause['pipeline_closed'] is closed, value
+        assert ordered['rows'][0]['suppressed_by'] == (
+            ['closed', 'pipeline'] if closed else ['pipeline']), value
+
+
 def test_suppressed_by_names_both_reasons_when_both_fire():
     model = _paused_model(pipeline_status='paused', initiative_statuses=('paused', 'active'))
     rows = deriv.build_plan_rows(model)
