@@ -180,8 +180,19 @@ def test_a_put_writing_only_unlocked_keys_plans_no_lookup():
                         ('initiatives', {'id': 71, 'initiative_status': 'paused', 'closed': 1}),
                         ('pipelines', {'id': 8, 'pipeline_status': 'completed',
                                        'started_at': 'x', 'completed_at': 'y'}),
-                        ('pipelines', {'id': 8, 'LOCKED': 0, 'creator_fk': 'v'})):
+                        ('pipelines', {'id': 8, 'LOCKED': 0, 'creator_fk': 'v'}),
+                        # req #3804 — closing a plan and its card's place on the
+                        # Pipelines page are not plan content.
+                        ('pipelines', {'id': 8, 'closed': 1}),
+                        ('pipelines', {'id': 8, 'sort_order': -3})):
         assert plan_lock_lookups(table, [body], 'PUT') == ([], [], None), table
+
+
+def test_a_card_reorder_across_locked_plans_plans_no_lookup():
+    """req #3804 — a reorder renumbers every card in one bulk PUT; a locked
+    plan among them must not turn it into a 423."""
+    rows = [{'id': 8, 'sort_order': 0}, {'id': 9, 'sort_order': 1}]
+    assert plan_lock_lookups('pipelines', rows, 'PUT') == ([], [], None)
 
 
 def test_a_put_writing_an_authoring_key_plans_the_row():

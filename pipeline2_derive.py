@@ -1313,10 +1313,18 @@ def pause_state(model, rows):
     held. A missing `initiative_status` reads as `active` — the column's own
     default, and what every row written before an initiative pause ever existed
     is.
+
+    A CLOSED PLAN (req #3804) suppresses every epic too, as its own reason
+    `'closed'` — listed FIRST, because reopening is what has to happen before
+    anything else matters. It is a flag beside the lifecycle status, never a
+    status value, so a closed plan still says whether it was paused; and like
+    a pause it is per EPIC, so every orchestrator honours it. A missing
+    `closed` reads as open — the column's default.
     """
     pipeline = model.get('pipeline') or {}
     pipeline_status = pipeline.get('pipeline_status')
     pipeline_paused = pipeline_status == PAUSED_STATUS
+    pipeline_closed = _flag(pipeline.get('closed'), default=False)
 
     paused_initiatives = {initiative.get('id') for initiative in model.get('initiatives') or []
                     if initiative.get('initiative_status') == PAUSED_STATUS
@@ -1325,6 +1333,8 @@ def pause_state(model, rows):
     suppressed = []
     for row in rows:
         reasons = []
+        if pipeline_closed:
+            reasons.append('closed')
         if pipeline_paused:
             reasons.append('pipeline')
         if row.get('initiative_id') in paused_initiatives:
@@ -1337,6 +1347,7 @@ def pause_state(model, rows):
     return {
         'pipeline_status': pipeline_status,
         'pipeline_paused': pipeline_paused,
+        'pipeline_closed': pipeline_closed,
         'paused_initiative_ids': sorted(paused_initiatives, key=_id_sort_key),
         # In DISPLAY order — `derive_plan2` calls this after `display_order`,
         # so `rows` already carries the caller's rendered sequence.
