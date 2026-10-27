@@ -4,7 +4,7 @@ from rest_api_utils import (compose_rest_response, compose_conflict_response,
                             error_detail, integrity_errno, parent_reference_guard)
 from plan_lock import plan_lock_guard
 from initiative_deps_guard import initiative_deps_guard
-from classifier import varDump, pretty_print_sql
+from classifier import varDump, pretty_print_sql, print_failed_sql
 from auth_utils import (CREATOR_FK_TABLES, PROFILE_TABLE, check_body_keys,
                         check_enum_blanks, force_column)
 
@@ -110,6 +110,7 @@ def rest_post(post_method, conn, database, table, body, authenticated_user=None)
         errno, detail = error_detail(e)
         errorMsg = f"HTTP {post_method} failed: {errno} {detail}"
         print(errorMsg)
+        print_failed_sql(sql_statement, post_method)
         if integrity_errno(e):
             return compose_conflict_response(table, e, errorMsg)
         return compose_rest_response(500, '', errorMsg)
@@ -387,6 +388,7 @@ def _rest_post_bulk(post_method, conn, table, body_list, authenticated_user):
         errno, detail = error_detail(e)
         errorMsg = f"HTTP {post_method} bulk failed: {errno} {detail}"
         print(errorMsg)
+        print_failed_sql(sql_statement, post_method)
         if integrity_errno(e):
             return compose_conflict_response(table, e, errorMsg)
         return compose_rest_response(500, '', errorMsg)

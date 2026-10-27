@@ -4,7 +4,7 @@ from rest_api_utils import (compose_rest_response, compose_conflict_response,
                             error_detail, integrity_errno, parent_reference_guard)
 from plan_lock import plan_lock_guard
 from initiative_deps_guard import initiative_deps_guard
-from classifier import varDump, pretty_print_sql
+from classifier import varDump, pretty_print_sql, print_failed_sql
 from auth_utils import (CREATOR_FK_TABLES, PROFILE_TABLE, body_column,
                         check_body_keys, check_enum_blanks, force_column,
                         junction_scope_clause)
@@ -271,6 +271,7 @@ def rest_put(put_method, conn, database, table, body_list, authenticated_user=No
         errno, detail = error_detail(e)
         errorMsg = f"HTTP {put_method} SQL FAILED: {errno} {detail}"
         print(errorMsg)
+        print_failed_sql(sql_statement, put_method)
         if integrity_errno(e):
             return compose_conflict_response(table, e, errorMsg)
         return compose_rest_response(500, '', errorMsg)

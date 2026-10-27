@@ -6,7 +6,7 @@ AWS Lambda function serving a REST API backed by MySQL (RDS) via API Gateway pro
 
 - `handler.py` — Lambda entry point (`lambda_handler`). Parses the URL path into database + table, routes by httpMethod.
 - `rest_api_utils.py` — `compose_rest_response(status_code, body, http_message)` builds the API Gateway Lambda proxy response dict. Always calls `json.dumps(body)` on the body before inserting it. On error status codes (not 200/201/204), replaces body with http_message. Also owns the 409 CONFLICT mapping (see below).
-- `classifier.py` — `varDump(value, description, dump_type)` for debug printing, `pretty_print_sql()` collapses whitespace for readable SQL logs.
+- `classifier.py` — `varDump(value, description, dump_type)` for debug printing, `pretty_print_sql()` collapses whitespace for readable SQL logs. **Both are silent unless the Lambda env var `debug_log` is `1`/`true`/`yes` (req #4021)** — the POST body dump and the per-request SQL echo were ~82% of Lambda-Rest's CloudWatch log bytes (req #4019). Error-path logging is plain `print()` at the call sites and always runs; never route an error message through these two. The statement that FAILED is still logged, ungated, by `print_failed_sql()` in each `except pymysql.Error` branch of the GET/POST/PUT/DELETE statements — the SQL carries only `%s` placeholders, never values.
 - `pymysql/` — Vendored MySQL driver (do not modify)
 
 ### Request Flow
@@ -414,4 +414,4 @@ that way. Helpers + boundary are unit-tested in `tests/test_unit_conflict.py`
 - `exports.sh` contains database credentials (db_name, db_password, endpoint, username) — in `.gitignore`, never commit
 - Must be sourced before running tests: `. ./exports.sh` (use POSIX dot syntax, not `source`)
 - Database: MySQL on AWS RDS (darwin for production, darwin_dev for testing)
-- Env vars: `endpoint`, `username`, `db_password`, `db_name`
+- Env vars: `endpoint`, `username`, `db_password`, `db_name`; optional `debug_log` (default off — enables the `varDump`/`pretty_print_sql` debug dumps, req #4021)

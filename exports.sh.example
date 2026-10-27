@@ -10,3 +10,6 @@ export endpoint="your-rds-endpoint.rds.amazonaws.com"
 export username="your-db-username"
 export db_password="your-db-password"
 export db_name="darwin,darwin_dev"
+# Optional (req #4021): print the request body / SQL debug dumps. Off by default;
+# never leave it on in the deployed Lambda — it multiplies CloudWatch log volume.
+# export debug_log=1
