@@ -1,7 +1,7 @@
 import pymysql
 import json
 from rest_api_utils import compose_rest_response, error_detail
-from classifier import varDump, pretty_print_sql
+from classifier import varDump, pretty_print_sql, print_failed_sql
 from auth_utils import CREATOR_FK_TABLES, PROFILE_TABLE, junction_scope_clause
 
 def rest_get_table(get_method, conn, database, table, event, authenticated_user=None):
@@ -219,4 +219,5 @@ def rest_get_table(get_method, conn, database, table, event, authenticated_user=
         errno, detail = error_detail(e)
         errorMsg = f"HTTP {get_method} actual SQL select statement failed: {errno} {detail}"
         print(errorMsg)
+        print_failed_sql(sql_statement, get_method)
         return compose_rest_response(500, '', errorMsg)

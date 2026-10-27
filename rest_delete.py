@@ -2,7 +2,7 @@ import pymysql
 import json
 from rest_api_utils import (compose_rest_response, compose_conflict_response,
                             error_detail, integrity_errno)
-from classifier import varDump, pretty_print_sql
+from classifier import varDump, pretty_print_sql, print_failed_sql
 from auth_utils import CREATOR_FK_TABLES, PROFILE_TABLE, junction_scope_clause
 from plan_lock import plan_lock_guard_delete
 
@@ -37,6 +37,7 @@ def rest_delete(delete_method, conn, database, table, body, authenticated_user=N
     keys = list(body.keys())
     values = list(body.values())
 
+    sql_statement = None
     try:
         # Every key is interpolated straight into the WHERE clause, so a key is
         # SQL. Unvalidated, `{"id = 1 OR 1=1 OR id": 1}` renders as
@@ -103,6 +104,7 @@ def rest_delete(delete_method, conn, database, table, body, authenticated_user=N
         errno, detail = error_detail(e)
         errorMsg = f"HTTP {delete_method} SQL FAILED: {errno} {detail}"
         print(errorMsg)
+        print_failed_sql(sql_statement, delete_method)
         if integrity_errno(e):
             return compose_conflict_response(table, e, errorMsg)
         return compose_rest_response(500, '', errorMsg)
@@ -171,6 +173,7 @@ def _rest_delete_bulk(delete_method, conn, table, body_list, authenticated_user)
         errno, detail = error_detail(e)
         errorMsg = f"HTTP {delete_method} bulk SQL FAILED: {errno} {detail}"
         print(errorMsg)
+        print_failed_sql(sql_statement, delete_method)
         if integrity_errno(e):
             return compose_conflict_response(table, e, errorMsg)
         return compose_rest_response(500, '', errorMsg)
