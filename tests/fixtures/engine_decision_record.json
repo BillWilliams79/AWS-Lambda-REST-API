@@ -1,6 +1,6 @@
 {
   "inputs": {
-    "sha256:1c50482192c7e1860be6d6b7be3fb063c59ae2ce39829c8b198b4292addfac78": {
+    "sha256:354ce71f98a63ff04dbf0f4c775f023491cb6d4067708288cc5cb41cb2313bdf": {
       "cut": 0,
       "cycle": {
         "now": "2026-10-22T08:00:00Z",
@@ -36,12 +36,12 @@
         }
       ],
       "events": [],
-      "id": "sha256:1c50482192c7e1860be6d6b7be3fb063c59ae2ce39829c8b198b4292addfac78",
+      "id": "sha256:354ce71f98a63ff04dbf0f4c775f023491cb6d4067708288cc5cb41cb2313bdf",
       "inputs": {
         "capacity": "sha256:444eaae2846de9eed2df2ce8014d9bb5bea8349609890842c82dd5bcc706ca2c",
         "claims": "sha256:f44bc3d6d7108cb063c52414b615f1b6de7313f6f31bce8f9b4256bd0a7ffa77",
         "clock": "sha256:f95d2ef5020a865d486b1b759774ae25bbef87efa86aa7bd8b163f76bf0d4d7b",
-        "plan_payload": "sha256:1195082aad8ad13f1ae414a28907d31fdfdac6595b12594b5e243929a851e646",
+        "plan_payload": "sha256:df9afc22e8e9f942ba10520c2bf750ad2199a9c245c11b416e6b837cba3889c9",
         "prior_record": null
       },
       "launch": null,
@@ -125,7 +125,7 @@
       "live": 2,
       "reserved_elsewhere": 0
     },
-    "sha256:dc483b7286a7dccb9b8f92283d7ca92be590a0821fdc51997d417ca2646ff42a": {
+    "sha256:ced7ecf48fec7440a8b8e509499c0f3985c2c1b1b4717993c535bc5f49d63746": {
       "derived": {
         "cycle_detected": false,
         "cycle_epic_ids": [],
@@ -138,6 +138,14 @@
         ],
         "initiative_order": [
           90
+        ],
+        "initiative_rows": [
+          {
+            "dep_initiative_ids": [],
+            "holds_open_work": true,
+            "id": 90,
+            "initiative_blocked_by": []
+          }
         ],
         "launch_candidate_epic_ids": [
           101
@@ -164,8 +172,8 @@
         "out_of_scope_dep_ids": [],
         "pause": {
           "paused_initiative_ids": [],
-          "pipeline_paused": false,
-          "pipeline_status": "active",
+          "pipeline_orchestrating": true,
+          "pipeline_status": "orchestrating",
           "suppressed_epic_ids": []
         },
         "requirement_counts": {
@@ -195,6 +203,7 @@
               3004
             ],
             "id": 101,
+            "initiative_blocked_by": [],
             "initiative_id": 90,
             "launch_block": null,
             "launch_candidate": true,
@@ -282,7 +291,7 @@
         "id": 900,
         "locked": 0,
         "machine_fk": null,
-        "pipeline_status": "active",
+        "pipeline_status": "orchestrating",
         "title": "Scenario plan"
       },
       "requirements": [
@@ -404,13 +413,13 @@
       }
     ],
     "events": [],
-    "id": "sha256:84acd07b28854ff7ed492229e789697328a16f26f8159e492858abca54d35760",
+    "id": "sha256:27c29a0f21665169b42e5696571c054165c21e32ac7fab027d5e935984cd5334",
     "inputs": {
       "capacity": "sha256:c154fef3631103098948d6a8df861ee1bef089d4492f766077620b91df6187c4",
       "claims": "sha256:f44bc3d6d7108cb063c52414b615f1b6de7313f6f31bce8f9b4256bd0a7ffa77",
       "clock": "sha256:b7bb84a85c9c9e8ff4e760aff1bf55164b8d0032248cdd8e154c7f0eede0701b",
-      "plan_payload": "sha256:dc483b7286a7dccb9b8f92283d7ca92be590a0821fdc51997d417ca2646ff42a",
-      "prior_record": "sha256:1c50482192c7e1860be6d6b7be3fb063c59ae2ce39829c8b198b4292addfac78"
+      "plan_payload": "sha256:ced7ecf48fec7440a8b8e509499c0f3985c2c1b1b4717993c535bc5f49d63746",
+      "prior_record": "sha256:354ce71f98a63ff04dbf0f4c775f023491cb6d4067708288cc5cb41cb2313bdf"
     },
     "launch": {
       "items": [
@@ -492,7 +501,7 @@
         "state": "pending"
       }
     },
-    "prior_id": "sha256:1c50482192c7e1860be6d6b7be3fb063c59ae2ce39829c8b198b4292addfac78",
+    "prior_id": "sha256:354ce71f98a63ff04dbf0f4c775f023491cb6d4067708288cc5cb41cb2313bdf",
     "queue": [
       {
         "code": "ADMITTED",

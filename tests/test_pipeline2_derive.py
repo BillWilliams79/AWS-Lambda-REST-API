@@ -74,7 +74,7 @@ Translated and covered by a test in this file:
     `test_derive_plan2_unresolved_requirement_is_reported_not_silently_dropped`;
   `pause-suppresses-whole-plan`, `pause-suppresses-one-initiative-not-its-neighbour` →
     `test_initiative_pause_suppresses_only_that_initiatives_epics`,
-    `test_whole_plan_pause_suppresses_every_initiatives_epics`,
+    `test_a_plan_not_orchestrating_suppresses_every_initiatives_epics`,
     `test_suppressed_by_names_both_reasons_when_both_fire`;
   `serial-*`, `parallel-is-the-default-and-suppresses-nothing`,
     `absent-execution-mode-reads-as-parallel` → retired with execution mode
@@ -121,6 +121,8 @@ at the end of this file rather than left as a silent hole.
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import pipeline2_derive as deriv                        # noqa: E402
@@ -160,7 +162,7 @@ def _basic_model():
     both) — the same shape as `test_pipelines2.py`'s `plan2` fixture."""
     return {
         'pipeline': {'id': 900, 'title': 'Pipeline 2.0 Build',
-                     'pipeline_status': 'active'},
+                     'pipeline_status': 'orchestrating'},
         'initiatives': [_initiative(90)],
         'epics': [
             _epic(9001, 90, title='read service'),
@@ -239,7 +241,7 @@ def test_no_batches_key_but_pause_and_eligibility_are_present():
 # COVERS: DRV-008
 def test_requirement_counts_groups_by_the_seated_initiative_not_a_retired_middle_tier_chain():
     model = {
-        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active'},
+        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'orchestrating'},
         'initiatives': [_initiative(90), _initiative(91)],
         'epics': [_epic(9001, 90), _epic(9101, 91)],
         'epic_requirements': [
@@ -284,7 +286,7 @@ def test_overall_population_follows_model_requirements_not_the_whole_plan():
     plan's true total. A caller must label it as the initiative's number, not the
     plan's, on that resource."""
     model = {
-        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active'},
+        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'orchestrating'},
         'initiatives': [_initiative(90)],                    # ONE initiative, as an initiative-scoped
         'epics': [_epic(9001, 90)],               # composed read narrows to
         'epic_requirements': [{'epic_fk': 9001, 'requirement_fk': 5010}],
@@ -322,7 +324,7 @@ def test_manual_sort_order_orders_the_initiative_blocks():
     edge_is_legal_and_respected_topologically` below and the module
     docstring's item 4)."""
     model = {
-        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active'},
+        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'orchestrating'},
         'initiatives': [_initiative(90, sort_order=2), _initiative(91, sort_order=1)],
         'epics': [_epic(9001, 90), _epic(9101, 91)],
         'epic_requirements': [], 'epic_deps': [], 'requirements': [],
@@ -335,7 +337,7 @@ def test_manual_sort_order_orders_the_initiative_blocks():
 
 def test_manual_sort_order_wins_over_derived_order():
     model = {
-        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active'},
+        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'orchestrating'},
         # initiative 90 started (its epic's work is met) so would derive FIRST;
         # initiative 91 is unstarted and would derive LAST. A manual order on 91
         # overrides that.
@@ -351,7 +353,7 @@ def test_manual_sort_order_wins_over_derived_order():
 
 def test_started_initiatives_order_by_earliest_activity_ahead_of_unstarted():
     model = {
-        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active'},
+        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'orchestrating'},
         'initiatives': [_initiative(90), _initiative(91), _initiative(92)],
         'epics': [
             # initiative 90: unstarted (no work begun) -> creation order (id)
@@ -380,7 +382,7 @@ def test_display_order_has_no_state_band():
     unfinished work. Among rows whose dependencies have rendered, the order is
     the latest dependency's position, then initiative, then run mode, then id."""
     model = {
-        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active'},
+        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'orchestrating'},
         'initiatives': [_initiative(90)],
         'epics': [_epic(1, 90), _epic(2, 90), _epic(3, 90, run='manual'),
                   _epic(4, 90)],
@@ -408,7 +410,7 @@ def test_verify_order_has_no_banding_invariant():
 
 def test_cycle_within_one_initiative_is_detected_and_falls_back_to_stored_order():
     model = {
-        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active'},
+        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'orchestrating'},
         'initiatives': [_initiative(90)],
         'epics': [_epic(1, 90), _epic(2, 90)],
         'epic_requirements': [], 'requirements': [],
@@ -452,7 +454,7 @@ def test_cross_initiative_dependency_edge_is_legal_and_respected_topologically()
     LEGAL, reversing the original body text. An epic in initiative 91 gated on a
     epic in initiative 90 must never render before it."""
     model = {
-        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active'},
+        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'orchestrating'},
         'initiatives': [_initiative(90, sort_order=1), _initiative(91, sort_order=2)],
         'epics': [
             _epic(9001, 90),                    # gates 9101
@@ -705,7 +707,7 @@ def _plan10_model():
     further-downstream gated epic, also carrying launch-ready work."""
     return {
         'pipeline': {'id': 10, 'title': 'Tip of the Spear',
-                     'pipeline_status': 'active'},
+                     'pipeline_status': 'orchestrating'},
         'initiatives': [_initiative(100, pipeline_fk=10)],
         'epics': [_epic(313, 100), _epic(315, 100), _epic(316, 100),
                   _epic(314, 100), _epic(317, 100)],
@@ -806,7 +808,7 @@ def _checkpoint_model(checkpoint_open=True):
     unrelated."""
     return {
         'pipeline': {'id': 11, 'title': 'Checkpoints',
-                     'pipeline_status': 'active'},
+                     'pipeline_status': 'orchestrating'},
         'initiatives': [_initiative(110, pipeline_fk=11)],
         'epics': [_epic(1, 110, title='checkpoint', checkpoint=1),
                   _epic(2, 110), _epic(3, 110), _epic(4, 110), _epic(5, 110)],
@@ -943,7 +945,7 @@ def test_a_holding_checkpoint_above_a_clear_epic_still_holds_its_downstream():
     the transitive walk they would read `eligible` and the engine would
     launch straight past the checkpoint."""
     model = {
-        'pipeline': {'id': 12, 'title': 'C1', 'pipeline_status': 'active'},
+        'pipeline': {'id': 12, 'title': 'C1', 'pipeline_status': 'orchestrating'},
         'initiatives': [_initiative(120, pipeline_fk=12)],
         'epics': [_epic(10, 120, checkpoint=1), _epic(11, 120), _epic(12, 120),
                   _epic(13, 120), _epic(14, 120, checkpoint=1)],
@@ -984,7 +986,7 @@ def test_an_initiative_scoped_read_sees_a_checkpoint_in_another_initiative():
     the plan's epics, edges, links and requirement statuses) so a checkpoint
     outside the initiative holds this initiative's epic exactly as a whole-plan read does."""
     model = {
-        'pipeline': {'id': 13, 'title': 'I1', 'pipeline_status': 'active'},
+        'pipeline': {'id': 13, 'title': 'I1', 'pipeline_status': 'orchestrating'},
         'initiatives': [_initiative(131, pipeline_fk=13)],
         'epics': [_epic(2, 131)],
         'epic_requirements': [{'epic_fk': 2, 'requirement_fk': 20}],
@@ -1019,7 +1021,7 @@ def test_an_initiative_scoped_read_sees_a_checkpoint_in_another_initiative():
 def test_an_initiative_scoped_read_holds_behind_another_initiatives_checkpoint_with_work():
     """An outside checkpoint holds while any gating requirement is open."""
     model = {
-        'pipeline': {'id': 14, 'title': 'I1b', 'pipeline_status': 'active'},
+        'pipeline': {'id': 14, 'title': 'I1b', 'pipeline_status': 'orchestrating'},
         'initiatives': [_initiative(141, pipeline_fk=14)],
         'epics': [_epic(2, 141)],
         'epic_requirements': [{'epic_fk': 2, 'requirement_fk': 20}],
@@ -1073,7 +1075,7 @@ def _queue_model():
     A carries implemented 31, deployed 32, implemented 30 (junction order);
     B carries deployed 41; C carries 51. A `run=manual` root M carries 61."""
     model = {
-        'pipeline': {'id': 15, 'title': 'Queue', 'pipeline_status': 'active'},
+        'pipeline': {'id': 15, 'title': 'Queue', 'pipeline_status': 'orchestrating'},
         'initiatives': [_initiative(150, pipeline_fk=15)],
         'epics': [_epic(1, 150, title='A'), _epic(2, 150, title='B'),
                   _epic(3, 150, title='C'), _epic(4, 150, title='M', run='manual')],
@@ -1168,7 +1170,7 @@ def test_launch_queue_is_a_pure_function_of_candidates_rows_and_requirements():
 # Pause (DRV-016/017/018) — launch suppression, initiative-scoped
 # ---------------------------------------------------------------------------
 
-def _paused_model(pipeline_status='active', initiative_statuses=(None, None)):
+def _paused_model(pipeline_status='orchestrating', initiative_statuses=(None, None)):
     return {
         'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': pipeline_status},
         'initiatives': [
@@ -1211,50 +1213,49 @@ def test_launch_suppression_leaves_eligible_unchanged():
     assert 9001 in plan['eligible_epic_ids']         # eligibility is untouched
 
 
-# COVERS: DRV-018
-def test_whole_plan_pause_suppresses_every_initiatives_epics():
-    """A whole-plan pause binds a whole-plan orchestrator's every initiative —
-    suppression is a property of the EPIC regardless of which scope asks."""
-    model = _paused_model(pipeline_status='paused')
+# COVERS: DRV-018, DRV-040
+@pytest.mark.parametrize('status', ['authoring', 'authorized', 'orchestration_ready',
+                                    'met', 'wontfix', 'deferred', None, 'paused'])
+def test_a_plan_not_orchestrating_suppresses_every_initiatives_epics(status):
+    """req #3965 — only `orchestrating` launches. Every other status, a missing
+    one, and the retired `paused` alike suppress every epic of the plan, under
+    the one reason `'pipeline'` — suppression is a property of the EPIC
+    regardless of which scope asks (DRV-018)."""
+    model = _paused_model(pipeline_status=status)
     rows = deriv.build_plan_rows(model)
     ordered = deriv.display_order(rows, model['initiatives'])
     pause = deriv.pause_state(model, ordered['rows'])
-    assert pause['pipeline_paused'] is True
+    assert pause['pipeline_orchestrating'] is False
+    assert pause['pipeline_status'] == status
     assert set(pause['suppressed_epic_ids']) == {9001, 9101}
     by_id = {r['id']: r for r in ordered['rows']}
     assert by_id[9001]['suppressed_by'] == ['pipeline']
     assert by_id[9101]['suppressed_by'] == ['pipeline']
 
 
-# req #3804 — a CLOSED plan is parked: every epic suppressed, `closed` first.
-def test_closed_plan_suppresses_every_epic_and_queues_nothing():
-    model = _paused_model()
-    model['pipeline']['closed'] = 1
-    plan = deriv.derive_plan2(model, now='2026-08-09T00:00:00Z')
-    assert plan['pause']['pipeline_closed'] is True
-    assert plan['pause']['pipeline_paused'] is False
+def test_an_orchestrating_plan_suppresses_nothing_and_queues_its_work():
+    plan = deriv.derive_plan2(_paused_model(), now='2026-08-09T00:00:00Z')
+    assert plan['pause'] == {'pipeline_status': 'orchestrating',
+                             'pipeline_orchestrating': True,
+                             'paused_initiative_ids': [], 'suppressed_epic_ids': []}
+    assert all(r['suppressed_by'] == [] for r in plan['rows'])
+
+
+def test_a_finished_plan_queues_nothing_but_leaves_eligibility_alone():
+    """req #3965 replaced the `closed` flag (req #3804): a `met` plan is held
+    exactly as a closed one was, and eligibility is untouched (DRV-016)."""
+    plan = deriv.derive_plan2(_paused_model(pipeline_status='met'),
+                              now='2026-08-09T00:00:00Z')
     assert set(plan['pause']['suppressed_epic_ids']) == {9001, 9101}
-    assert all(r['suppressed_by'] == ['closed'] for r in plan['rows'])
     assert plan['launch_queue'] == []
-    # eligibility is untouched, as for a pause (DRV-016)
     assert set(plan['eligible_epic_ids']) == {9001, 9101}
-
-
-def test_closed_reads_the_flag_not_its_spelling():
-    for value, closed in ((0, False), ('0', False), (None, False), ('', False),
-                          (1, True), ('1', True), (True, True)):
-        model = _paused_model(pipeline_status='paused')
-        model['pipeline']['closed'] = value
-        rows = deriv.build_plan_rows(model)
-        ordered = deriv.display_order(rows, model['initiatives'])
-        pause = deriv.pause_state(model, ordered['rows'])
-        assert pause['pipeline_closed'] is closed, value
-        assert ordered['rows'][0]['suppressed_by'] == (
-            ['closed', 'pipeline'] if closed else ['pipeline']), value
+    assert 'pipeline_closed' not in plan['pause']
+    assert 'pipeline_paused' not in plan['pause']
 
 
 def test_suppressed_by_names_both_reasons_when_both_fire():
-    model = _paused_model(pipeline_status='paused', initiative_statuses=('paused', 'active'))
+    model = _paused_model(pipeline_status='orchestration_ready',
+                          initiative_statuses=('paused', 'active'))
     rows = deriv.build_plan_rows(model)
     ordered = deriv.display_order(rows, model['initiatives'])
     pause = deriv.pause_state(model, ordered['rows'])
@@ -1276,7 +1277,7 @@ def test_suppressed_by_names_both_reasons_when_both_fire():
 
 def _initiative_scoped_model_with_outgoing_edge():
     return {
-        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active'},
+        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'orchestrating'},
         'initiatives': [_initiative(90)],                    # ONLY the requested initiative
         'epics': [_epic(9001, 90)],               # ONLY that initiative's own epics
         'epic_requirements': [], 'requirements': [],
@@ -1320,7 +1321,7 @@ def test_derive_plan2_carries_no_serial_block():
     violation — even for a backward cross-initiative edge, which is ordinary
     topology now that a plan has no initiative turn order."""
     model = {
-        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'active'},
+        'pipeline': {'id': 900, 'title': 'p', 'pipeline_status': 'orchestrating'},
         'initiatives': [_initiative(90, sort_order=1), _initiative(91, sort_order=2)],
         'epics': [_epic(9001, 90), _epic(9101, 91)],
         'epic_requirements': [{'epic_fk': 9001, 'requirement_fk': 1},
@@ -1346,7 +1347,7 @@ def test_empty_plan_derives_cleanly():
     """`pipeline_conformance.json` case `empty-plan`, translated: the
     degenerate input every loop here must survive. No initiatives, no epics — every
     collection comes back empty and nothing raises."""
-    model = {'pipeline': {'id': 1, 'title': 'Empty', 'pipeline_status': 'draft'},
+    model = {'pipeline': {'id': 1, 'title': 'Empty', 'pipeline_status': 'authoring'},
             'initiatives': [], 'epics': [], 'epic_requirements': [], 'epic_deps': [],
             'requirements': []}
     plan = deriv.derive_plan2(model, now='2026-08-09T00:00:00Z')
@@ -1514,7 +1515,7 @@ def _initiative_dep_model(a_status='development', b_dep=True, c_dep=True,
     """Three initiatives of one plan: A (10) with work in `a_status`, B (20)
     waiting on A, C (30) waiting on B — each with one swarm_ready epic."""
     model = {
-        'pipeline': {'id': 7, 'title': 'I', 'pipeline_status': 'active'},
+        'pipeline': {'id': 7, 'title': 'I', 'pipeline_status': 'orchestrating'},
         'initiatives': [_initiative(10, pipeline_fk=7), _initiative(20, pipeline_fk=7),
                         _initiative(30, pipeline_fk=7)],
         'initiative_deps': [],
@@ -1665,7 +1666,7 @@ def test_an_initiative_scoped_read_sees_the_dependency_s_open_work():
     initiative edge, and the links + statuses of the epics of each initiative
     this one waits for — so the gate is the whole-plan read's answer."""
     model = {
-        'pipeline': {'id': 7, 'title': 'I', 'pipeline_status': 'active'},
+        'pipeline': {'id': 7, 'title': 'I', 'pipeline_status': 'orchestrating'},
         'initiatives': [_initiative(20, pipeline_fk=7)],
         'initiative_deps': [{'id': 1, 'initiative_fk': 20, 'dep_initiative_fk': 10}],
         'epics': [_epic(2, 20)],

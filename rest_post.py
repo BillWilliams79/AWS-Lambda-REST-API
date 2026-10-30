@@ -4,6 +4,7 @@ from rest_api_utils import (compose_rest_response, compose_conflict_response,
                             error_detail, integrity_errno, parent_reference_guard)
 from plan_lock import plan_lock_guard
 from initiative_deps_guard import initiative_deps_guard
+from pipeline_lifecycle import pipeline_lifecycle_guard
 from classifier import varDump, pretty_print_sql, print_failed_sql
 from auth_utils import (CREATOR_FK_TABLES, PROFILE_TABLE, check_body_keys,
                         check_enum_blanks, force_column)
@@ -77,6 +78,13 @@ def rest_post(post_method, conn, database, table, body, authenticated_user=None)
     # graph), or an epic edge contradicting one. See initiative_deps_guard.py.
     refusal = initiative_deps_guard(conn, table, [body], authenticated_user,
                                     post_method)
+    if refusal is not None:
+        return refusal
+
+    # req #3965 — a pipeline's status must be one of the seven, and it decides
+    # started_at / completed_at for every writer. See pipeline_lifecycle.py.
+    refusal = pipeline_lifecycle_guard(conn, table, [body], authenticated_user,
+                                       post_method)
     if refusal is not None:
         return refusal
 
@@ -348,6 +356,13 @@ def _rest_post_bulk(post_method, conn, table, body_list, authenticated_user):
     # graph), or an epic edge contradicting one. See initiative_deps_guard.py.
     refusal = initiative_deps_guard(conn, table, body_list, authenticated_user,
                                     post_method)
+    if refusal is not None:
+        return refusal
+
+    # req #3965 — every item, as above; a derived column added to one item is
+    # added to all of them so the batch keeps one column list.
+    refusal = pipeline_lifecycle_guard(conn, table, body_list, authenticated_user,
+                                       post_method)
     if refusal is not None:
         return refusal
 

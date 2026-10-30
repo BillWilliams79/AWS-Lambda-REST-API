@@ -132,7 +132,7 @@ def _build_plan(post, label):
     ids['category'] = extract_id(resp)
 
     resp = post('/darwin_dev/pipelines', {'title': f'{label} plan',
-                                                    'pipeline_status': 'draft'})
+                                                    'pipeline_status': 'authoring'})
     assert resp['statusCode'] == 200, f'{label} pipeline POST: {resp}'
     ids['pipeline'] = extract_id(resp)
 
