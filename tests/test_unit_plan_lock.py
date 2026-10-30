@@ -178,12 +178,12 @@ def _body(resp):
 def test_a_put_writing_only_unlocked_keys_plans_no_lookup():
     for table, body in (('epics', {'id': 701, 'locked': 0}),
                         ('initiatives', {'id': 71, 'initiative_status': 'paused', 'closed': 1}),
-                        ('pipelines', {'id': 8, 'pipeline_status': 'completed',
+                        ('pipelines', {'id': 8, 'pipeline_status': 'met',
                                        'started_at': 'x', 'completed_at': 'y'}),
                         ('pipelines', {'id': 8, 'LOCKED': 0, 'creator_fk': 'v'}),
-                        # req #3804 — closing a plan and its card's place on the
-                        # Pipelines page are not plan content.
-                        ('pipelines', {'id': 8, 'closed': 1}),
+                        # req #3804 — a card's place on the Pipelines page is
+                        # not plan content. (The plan's `closed` flag that sat
+                        # beside it here was dropped by req #3965.)
                         ('pipelines', {'id': 8, 'sort_order': -3})):
         assert plan_lock_lookups(table, [body], 'PUT') == ([], [], None), table
 
@@ -349,7 +349,7 @@ def test_the_lock_itself_and_lifecycle_state_write_without_a_cursor():
     for table, body in (('epics', {'id': 710, 'locked': 0}),
                         ('initiatives', {'id': 80, 'initiative_status': 'paused'}),
                         ('initiatives', {'id': 71, 'closed': 1, 'locked': 1}),
-                        ('pipelines', {'id': 8, 'pipeline_status': 'paused',
+                        ('pipelines', {'id': 8, 'pipeline_status': 'orchestration_ready',
                                        'completed_at': 'NULL'})):
         assert plan_lock_guard(ExplodingConn(), table, [body], USER, 'PUT') is None, table
 

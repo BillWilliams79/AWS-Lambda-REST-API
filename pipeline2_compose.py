@@ -240,15 +240,17 @@ def _bounded(uri, composed, *, initiative_scoped=False):
 # ---------------------------------------------------------------------------
 
 _PIPELINE_COLUMNS = ('id', 'title', 'description', 'pipeline_status',
-                     'locked', 'closed', 'sort_order', 'machine_fk', 'creator_fk',
+                     'locked', 'sort_order', 'machine_fk', 'creator_fk',
                      'started_at', 'completed_at', 'create_ts', 'update_ts')
 _INITIATIVE_COLUMNS = ('id', 'pipeline_fk', 'title', 'description', 'initiative_status',
                  'locked', 'sort_order', 'category_fk', 'closed')
 _EPIC_COLUMNS = ('id', 'initiative_fk', 'title', 'run', 'checkpoint', 'locked',
                  'not_before', 'notes', 'creator_fk',
                  'create_ts', 'update_ts')
-# `closed` / `sort_order` on the plan: req #3804 (migration 20261024230223).
-# `closed` feeds `pause_state` (a closed plan's every epic is launch-suppressed).
+# `sort_order` on the plan: req #3804 (migration 20261024230223). The plan's
+# `closed` flag that migration added is no longer projected (req #3965) —
+# `pipeline_status` alone feeds `pause_state`; the column itself is dormant
+# until #3965's follow-on drops it.
 # `checkpoint` and the three `locked` flags: req #3649 (migration
 # 20261019100448). `checkpoint` feeds the derivation's hold walk; `locked` is
 # carried so the view can draw the lock — the gateway (`plan_lock.py`) is what

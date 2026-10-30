@@ -110,7 +110,7 @@ def plan(owner):
 
     resp = owner('POST', '/darwin_dev/pipelines', body={
         'title': 'p2compose plan', 'description': 'the goal',
-        'pipeline_status': 'active'})
+        'pipeline_status': 'orchestrating'})
     assert resp['statusCode'] == 200, resp
     ids['pipeline'] = int(extract_id(resp))
 
@@ -375,7 +375,7 @@ def two_initiative_plan(owner):
     ids['category'] = int(extract_id(resp))
 
     resp = owner('POST', '/darwin_dev/pipelines', body={
-        'title': 'p2compose two initiatives', 'pipeline_status': 'active'})
+        'title': 'p2compose two initiatives', 'pipeline_status': 'orchestrating'})
     ids['pipeline'] = int(extract_id(resp))
 
     for key, title, order in (('initiative_a', 'initiative A', '1'), ('initiative_b', 'initiative B', '2')):
@@ -438,7 +438,7 @@ def checkpoint_plan(owner):
                 body={'category_name': 'p2compose ckpt category', 'project_fk': ids['project']})
     ids['category'] = int(extract_id(resp))
     resp = owner('POST', '/darwin_dev/pipelines', body={
-        'title': 'p2compose checkpoint', 'pipeline_status': 'active'})
+        'title': 'p2compose checkpoint', 'pipeline_status': 'orchestrating'})
     ids['pipeline'] = int(extract_id(resp))
     for key, title, order in (('initiative_a', 'ckpt initiative A', '1'), ('initiative_b', 'ckpt initiative B', '2')):
         resp = owner('POST', '/darwin_dev/initiatives', body={

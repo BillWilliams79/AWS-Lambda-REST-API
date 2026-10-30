@@ -4,6 +4,7 @@ from rest_api_utils import (compose_rest_response, compose_conflict_response,
                             error_detail, integrity_errno, parent_reference_guard)
 from plan_lock import plan_lock_guard
 from initiative_deps_guard import initiative_deps_guard
+from pipeline_lifecycle import pipeline_lifecycle_guard
 from classifier import varDump, pretty_print_sql, print_failed_sql
 from auth_utils import (CREATOR_FK_TABLES, PROFILE_TABLE, body_column,
                         check_body_keys, check_enum_blanks, force_column,
@@ -99,6 +100,15 @@ def rest_put(put_method, conn, database, table, body_list, authenticated_user=No
                                         put_method)
         if refusal is not None:
             return refusal
+
+    # req #3965 — a pipeline's status must be one of the seven, and it decides
+    # started_at / completed_at for every writer (the browser included). Here,
+    # before the single/CASE split, while every body still carries its `id`.
+    # See pipeline_lifecycle.py.
+    refusal = pipeline_lifecycle_guard(conn, table, body_list, authenticated_user,
+                                       put_method)
+    if refusal is not None:
+        return refusal
 
     # use the simple, more typical 'update' SQL syntax when updating a single record
     if len(body_list) == 1:

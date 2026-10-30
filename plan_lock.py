@@ -24,8 +24,9 @@ WHAT A LOCK FREEZES — structure AND authoring fields, cascading:
     machine_fk, and the parent columns a move rewrites.
   * NOT frozen: the lock itself (so it can be lifted through the same call),
     and orchestration/lifecycle state — `pipeline_status` with its derived
-    `started_at`/`completed_at`, `initiative_status`, `closed` (a plan's too, with
-    its list position `sort_order` — req #3804). An epic carries no
+    `started_at`/`completed_at` (derived at the gateway, req #3965),
+    `initiative_status`, an initiative's `closed`, and a plan's list position
+    `sort_order` (req #3804). An epic carries no
     lifecycle state at all (req #3750). A locked plan can still be orchestrated;
     it cannot be rewritten.
 
@@ -58,11 +59,12 @@ from rest_api_utils import compose_rest_response, error_detail
 PLAN_LOCK = {
     'pipelines': {
         'parent': None,
-        # req #3804 — `closed` parks the plan and `sort_order` is its card's
-        # place on the Pipelines page: neither is plan CONTENT, and a reorder
-        # renumbers every card at once, so one locked plan must not 423 it.
+        # req #3804 — `sort_order` is the card's place on the Pipelines page:
+        # not plan CONTENT, and a reorder renumbers every card at once, so one
+        # locked plan must not 423 it. (The plan's `closed` flag that sat here
+        # left with req #3965; its status replaces it.)
         'unlocked': frozenset({'locked', 'pipeline_status', 'started_at',
-                               'completed_at', 'closed', 'sort_order'})},
+                               'completed_at', 'sort_order'})},
     'initiatives': {
         'parent': ('pipeline_fk', 'pipelines'),
         'unlocked': frozenset({'locked', 'initiative_status', 'closed'})},

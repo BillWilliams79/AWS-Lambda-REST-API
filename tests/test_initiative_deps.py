@@ -62,7 +62,7 @@ def _new_plan(invoke, title):
     ids['category'] = int(extract_id(invoke('POST', '/darwin_dev/categories', body={
         'category_name': f'{title} category', 'project_fk': ids['project']})))
     ids['pipeline'] = int(extract_id(invoke('POST', '/darwin_dev/pipelines', body={
-        'title': title, 'pipeline_status': 'active'})))
+        'title': title, 'pipeline_status': 'orchestrating'})))
     for key, status in (('A', 'development'), ('B', 'swarm_ready'), ('C', 'swarm_ready')):
         ids[key] = int(extract_id(invoke('POST', '/darwin_dev/initiatives', body={
             'pipeline_fk': ids['pipeline'], 'title': key, 'initiative_status': 'active',

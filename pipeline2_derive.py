@@ -198,6 +198,7 @@ from datetime import datetime, timezone
 __all__ = [
     'TERMINAL_REQUIREMENT_STATUSES', 'LAUNCHABLE_REQUIREMENT_STATUSES',
     'PAUSED_STATUS',
+    'ORCHESTRATING_STATUS',
     'is_tracking_requirement', 'open_requirement_ids',
     'build_plan_rows', 'display_order', 'verify_order', 'eligibility',
     'launch_candidacy', 'is_checkpoint',
@@ -239,10 +240,15 @@ BLOCK_NO_LINKS = 'no-links'
 BLOCK_CONTAINERS = 'containers'
 BLOCK_NOT_READY = 'not-ready'
 
-# The one value that means "do not swarm-start this scope" (req #3223),
-# shared by `pipelines.pipeline_status`/`initiatives.initiative_status` and their 2.0
-# counterparts — one word, one meaning, at both scopes, in both eras.
+# The one `initiatives.initiative_status` value that means "do not swarm-start
+# this initiative" (req #3223). A PLAN has no pause since req #3965: its own
+# status says whether it launches.
 PAUSED_STATUS = 'paused'
+
+# req #3965 — the ONE `pipelines.pipeline_status` value whose work launches.
+# Every other status (authoring, authorized, orchestration_ready, and the
+# terminal met / wontfix / deferred) launch-suppresses every epic in the plan.
+ORCHESTRATING_STATUS = 'orchestrating'
 
 # ---------------------------------------------------------------------------
 # Stall evidence (req #3757) — "is anybody working this?", answered HERE so the
@@ -1290,19 +1296,21 @@ def initiative_violations(initiative_edges, epic_edges, epic_initiative, known):
 # ---------------------------------------------------------------------------
 
 def pause_state(model, rows):
-    """Which scopes are paused, and therefore which epics must not be
-    launched — restated for containment from `pipeline_derive.pause_state`,
-    and simpler here: an epic has exactly ONE initiative (a column, not a
-    tie-broken tally), so "the epic's dominant initiative is paused" collapses to
-    a plain membership test.
+    """Which epics must not be launched, and why.
 
-    TWO SCOPES, ONE RULE, unchanged from 1.0: an epic is suppressed when its
-    PLAN is paused, or when its OWN initiative is paused (DRV-017 — an initiative pause
-    suppresses that initiative's epics and not its neighbour, because containment
-    gives initiative pause a real scope key no 1.0 initiative ever had). An initiative pause
-    binds a WHOLE-PLAN orchestrator too (DRV-018): suppression is a property
-    of the EPIC, computed here regardless of which scope is asking, so there
-    is nothing for a whole-plan orchestrator to opt out of.
+    TWO REASONS, ONE RULE (req #3965). An epic is suppressed when its PLAN is
+    not `orchestrating` (reason `'pipeline'` — the plan is being authored, is
+    ready but not running, or is finished), or when its OWN initiative is
+    paused (reason `'initiative'`, DRV-017 — an initiative pause suppresses
+    that initiative's epics and not its neighbour). Both bind a WHOLE-PLAN
+    orchestrator too (DRV-018): suppression is a property of the EPIC,
+    computed here regardless of which scope is asking.
+
+    A plan has no pause of its own since req #3965 (user ruling 2026-10-30):
+    `/pipeline-stop` returns it to `orchestration_ready`, which suppresses
+    exactly as a pause did. The `closed` flag (req #3804) is gone with it —
+    a finished plan is `met` / `wontfix` / `deferred`, and those are
+    not-orchestrating like any other.
 
     `eligible` (from `eligibility` above) is left UNCHANGED by this function
     (DRV-016) — it is called separately, over the same rows, and neither
@@ -1311,22 +1319,14 @@ def pause_state(model, rows):
     reading both.
 
     `suppressed_by` is a LIST: when both clauses fire, naming only one would
-    leave a reader who unpaused just the plan surprised the epic is still
+    leave a reader who started just the plan surprised the epic is still
     held. A missing `initiative_status` reads as `active` — the column's own
-    default, and what every row written before an initiative pause ever existed
-    is.
-
-    A CLOSED PLAN (req #3804) suppresses every epic too, as its own reason
-    `'closed'` — listed FIRST, because reopening is what has to happen before
-    anything else matters. It is a flag beside the lifecycle status, never a
-    status value, so a closed plan still says whether it was paused; and like
-    a pause it is per EPIC, so every orchestrator honours it. A missing
-    `closed` reads as open — the column's default.
+    default. A missing `pipeline_status` reads as NOT orchestrating: a plan
+    the read could not place never launches.
     """
     pipeline = model.get('pipeline') or {}
     pipeline_status = pipeline.get('pipeline_status')
-    pipeline_paused = pipeline_status == PAUSED_STATUS
-    pipeline_closed = _flag(pipeline.get('closed'), default=False)
+    pipeline_orchestrating = pipeline_status == ORCHESTRATING_STATUS
 
     paused_initiatives = {initiative.get('id') for initiative in model.get('initiatives') or []
                     if initiative.get('initiative_status') == PAUSED_STATUS
@@ -1335,9 +1335,7 @@ def pause_state(model, rows):
     suppressed = []
     for row in rows:
         reasons = []
-        if pipeline_closed:
-            reasons.append('closed')
-        if pipeline_paused:
+        if not pipeline_orchestrating:
             reasons.append('pipeline')
         if row.get('initiative_id') in paused_initiatives:
             reasons.append('initiative')
@@ -1348,8 +1346,7 @@ def pause_state(model, rows):
 
     return {
         'pipeline_status': pipeline_status,
-        'pipeline_paused': pipeline_paused,
-        'pipeline_closed': pipeline_closed,
+        'pipeline_orchestrating': pipeline_orchestrating,
         'paused_initiative_ids': sorted(paused_initiatives, key=_id_sort_key),
         # In DISPLAY order — `derive_plan2` calls this after `display_order`,
         # so `rows` already carries the caller's rendered sequence.

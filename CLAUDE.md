@@ -268,6 +268,32 @@ the Cyclemeter/Strava/KML import found), `agents.ai_model` (the RESOLVED model i
 `opus[1m]`, which the schema comment marks as explicitly NOT the family enum — while
 `agents.effort` IS that family and is registered).
 
+## Pipeline lifecycle — the one domain this gateway enforces (req #3965)
+
+`pipeline_lifecycle.py` runs on every POST (single + bulk) and PUT to `pipelines`
+whose body names `pipeline_status`. Since req #3965 that column uses the
+requirement vocabulary — `authoring | authorized | orchestration_ready |
+orchestrating | met | wontfix | deferred`, born `authoring` — and only
+`orchestrating` launches work (`pipeline2_derive.pause_state`).
+
+- **It derives `started_at` / `completed_at` for every writer**: entering
+  `orchestrating` stamps `started_at` if unset and clears `completed_at`;
+  `met`/`wontfix`/`deferred` stamp `completed_at` if unset; the other three clear
+  `completed_at`. A PUT reads the current stamps in one creator-scoped SELECT; a
+  caller that names a stamp itself keeps its value. darwin-mcp derived these until
+  #3965, which is why the browser could not write a status at all — every pipeline
+  editor now can, so the rule moved to where every write passes.
+- **It is the exception to § Bounded value domains' "only blank is refused,
+  never the domain"**: a status this file does not know has no timestamp rule, so
+  it is a **400** before any statement runs. The list is duplicated in darwin-mcp
+  (`_VALID_PIPELINE2_STATUSES`) and held equal by
+  `tests/test_unit_pipeline_lifecycle.py`.
+- A plan has no `paused` status and nothing reads or writes its `closed` flag any
+  more (migration `20261030185042`; the dormant column is dropped by #3965's
+  follow-on, after this code is live, because the code deployed before it
+  selected the column by name). `plan_lock.py` still lets the status and its
+  stamps write on a locked plan.
+
 ## Error Status Contract
 
 Every failure used to be a 500 whose body was the raw pymysql string, so a client

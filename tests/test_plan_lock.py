@@ -45,7 +45,7 @@ def plan(owner):
                  body={'category_name': 'planlock category', 'project_fk': ids['project']})
     ids['category'] = int(extract_id(resp))
     resp = owner('POST', '/darwin_dev/pipelines', body={
-        'title': 'planlock plan', 'pipeline_status': 'active'})
+        'title': 'planlock plan', 'pipeline_status': 'orchestrating'})
     ids['pipeline'] = int(extract_id(resp))
     for key, title in (('initiative_a', 'A'), ('initiative_b', 'B')):
         resp = owner('POST', '/darwin_dev/initiatives', body={
@@ -155,9 +155,9 @@ def test_a_locked_plan_freezes_everything_under_it(owner, plan):
         resp = owner('DELETE', '/darwin_dev/pipelines', body={'id': plan['pipeline']})
         assert resp['statusCode'] == 423, resp
         # The plan still runs: its status writes, and its stamps with it.
-        resp = _put(owner, 'pipelines', {'id': plan['pipeline'], 'pipeline_status': 'paused'})
+        resp = _put(owner, 'pipelines', {'id': plan['pipeline'], 'pipeline_status': 'orchestration_ready'})
         assert resp['statusCode'] in (200, 204), resp
-        resp = _put(owner, 'pipelines', {'id': plan['pipeline'], 'pipeline_status': 'active'})
+        resp = _put(owner, 'pipelines', {'id': plan['pipeline'], 'pipeline_status': 'orchestrating'})
         assert resp['statusCode'] in (200, 204), resp
     finally:
         _set_locked(owner, 'pipelines', plan['pipeline'], 0)
