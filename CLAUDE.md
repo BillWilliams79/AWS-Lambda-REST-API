@@ -289,9 +289,9 @@ orchestrating | met | wontfix | deferred`, born `authoring` — and only
   (`_VALID_PIPELINE2_STATUSES`) and held equal by
   `tests/test_unit_pipeline_lifecycle.py`.
 - A plan has no `paused` status and nothing reads or writes its `closed` flag any
-  more (migration `20261030185042`; the dormant column is dropped by #3965's
-  follow-on, after this code is live, because the code deployed before it
-  selected the column by name). `plan_lock.py` still lets the status and its
+  more (migration `20261030185042`; the column was dropped by req #4091,
+  migration `20261031112355`, after this code was live, because the code
+  deployed before it selected the column by name). `plan_lock.py` still lets the status and its
   stamps write on a locked plan.
 
 ## Error Status Contract

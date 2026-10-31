@@ -249,8 +249,8 @@ _EPIC_COLUMNS = ('id', 'initiative_fk', 'title', 'run', 'checkpoint', 'locked',
                  'create_ts', 'update_ts')
 # `sort_order` on the plan: req #3804 (migration 20261024230223). The plan's
 # `closed` flag that migration added is no longer projected (req #3965) —
-# `pipeline_status` alone feeds `pause_state`; the column itself is dormant
-# until #3965's follow-on drops it.
+# `pipeline_status` alone feeds `pause_state`; the column was dropped by
+# req #4091 (migration 20261031112355).
 # `checkpoint` and the three `locked` flags: req #3649 (migration
 # 20261019100448). `checkpoint` feeds the derivation's hold walk; `locked` is
 # carried so the view can draw the lock — the gateway (`plan_lock.py`) is what
