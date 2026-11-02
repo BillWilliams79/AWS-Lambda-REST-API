@@ -421,7 +421,22 @@ that way. Helpers + boundary are unit-tested in `tests/test_unit_conflict.py`
 
 ### Security
 
-- **SQL injection (all rest_* modules)**: All SQL statements are built with f-string interpolation. Table names, column values, query string parameter keys and values are inserted directly into SQL without parameterized queries or escaping. API Gateway provides some upstream validation, but the Lambda itself performs no input sanitization.
+- **SQL injection — RESOLVED, and this note used to say otherwise (req #4161 audit, 2026-11-01).**
+  Every value binds as a `%s` placeholder on GET, POST (single + bulk), PUT (single + CASE) and
+  DELETE; every identifier a request can name — QSP filter keys, `fields`, `sort`, DELETE body
+  keys, POST/PUT body keys — is validated against `DESC {table}` or the `[A-Za-z0-9_$]+` charset
+  (`check_body_keys`) before it is interpolated, and the table name itself passes
+  `SAFE_NAME_RE` in `handler.py`. The earlier text here ("values inserted directly into SQL
+  without parameterized queries") was out of date: value binding dates from 2026-02-13
+  (`memory/lambda-patterns.md`), and the identifier checks on DELETE keys and body keys came
+  with req #3122/#3125. It was measured false during the pipeline security assessment
+  (`memory/pipeline-security-assessment.md` § 4). Keep it that way: a new filter grammar binds
+  its values and validates its names.
+  **One caveat the binding inherits from the driver:** PyMySQL below 1.1.1 escapes a dict
+  value's VALUES but not its KEYS (CVE-2024-36039), so a JSON object sent as a free-text
+  column's value would reach the SQL text unescaped. Nothing at the gateway refuses a
+  non-scalar value. The deploy scripts therefore pin `pymysql>=1.1.1`
+  (`scripts/lambda-rest-deploy.sh`); the deployed zip measured 1.2.3 on 2026-11-01.
 
 ## URL Path Structure
 
